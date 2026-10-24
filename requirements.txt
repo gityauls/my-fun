@@ -1,0 +1,4 @@
+PyQt5==5.15.11
+av==19.0.2
+numpy==2.5.4
+sounddevice==0.5.6
