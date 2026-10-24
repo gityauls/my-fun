@@ -104,3 +104,10 @@ def short_wav(tmp_path_factory):
     path = tmp_path_factory.mktemp("audio") / "short.wav"
     _write_wav(path, _tone_signal()[:882], RATE, 2)
     return str(path)
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    from PyQt5.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
