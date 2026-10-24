@@ -4,7 +4,7 @@ from PyQt5.QtCore import QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMenu, QPushButton, QShortcut, QStyle, QToolButton, QVBoxLayout, QWidget,
+    QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
 from funplayer.controller import PlayerController
@@ -69,6 +69,8 @@ class PlayerPanel(QWidget):
         font.setPointSize(12)
         font.setBold(True)
         self.title_label.setFont(font)
+        self.title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.title_label.setMinimumWidth(0)
         root.addWidget(self.title_label)
 
         row = QHBoxLayout()
@@ -121,6 +123,8 @@ class PlayerPanel(QWidget):
 
         self.status_label = QLabel()
         self.status_label.setStyleSheet("color: #B3261E;")
+        self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.status_label.setMinimumWidth(0)
         root.addWidget(self.status_label)
 
     def _wire(self) -> None:
@@ -283,8 +287,9 @@ class PlayerPanel(QWidget):
         duration = c.duration
         position = c.position
 
-        self.title_label.setText(c.title)
-        self.elapsed_label.setText(format_time(position))
+        self._set_elided(self.title_label, c.title)
+        shown = self.seek_slider.value() / 1000 if self._dragging else position
+        self.elapsed_label.setText(format_time(shown))
         self.total_label.setText(format_time(duration))
 
         seek = self.seek_slider
@@ -317,7 +322,15 @@ class PlayerPanel(QWidget):
             self._list_version = c.playlist.version
 
         self.count_label.setText(f"{len(c.playlist)}곡")
-        self.status_label.setText(c.status)
+        self._set_elided(self.status_label, c.status)
+
+    @staticmethod
+    def _set_elided(label: QLabel, text: str) -> None:
+        label.setToolTip(text)
+        if label.isVisible():
+            label.setText(label.fontMetrics().elidedText(text, Qt.ElideRight, label.width()))
+        else:
+            label.setText(text)
 
     def _rebuild_list(self) -> None:
         pl = self.controller.playlist

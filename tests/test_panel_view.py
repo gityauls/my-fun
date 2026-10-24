@@ -56,3 +56,10 @@ def test_track_end_signal_advances(panel, tmp_path):
 def test_shutdown_closes_player(qapp):
     fake = FakePlayer(); p = PlayerPanel(Settings({}, lambda: None), player=fake)
     p.shutdown(); assert fake.closed
+
+def test_long_title_does_not_widen_panel(panel, tmp_path):
+    p, _ = panel; p.resize(380, 480); p.show()
+    stem = "x" * 150
+    p.controller.open([str(make_songs(tmp_path, [stem + ".mp3"]))]); p.refresh()
+    assert p.minimumSizeHint().width() < 380 and p.width() == 380
+    assert p.title_label.text().endswith("…") and p.title_label.toolTip() == stem

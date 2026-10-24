@@ -2,7 +2,7 @@ import pytest
 from PyQt5.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt5.QtGui import QDropEvent
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QStyle, QStyleOptionSlider
 from fakes import FakePlayer, make_songs
 from funplayer.core.settings import Settings
 from funplayer.engine.player import State
@@ -43,6 +43,7 @@ def test_seek_drag_seeks_on_release(rig):
     s.setSliderDown(True); s.setSliderPosition(60000)
     assert p.elapsed_label.text() == "1:00" and fake.seeks == []
     p.refresh(); assert s.value() == 60000
+    assert p.elapsed_label.text() == "1:00"
     s.setSliderDown(False)
     assert fake.seeks == [60.0]
 
@@ -109,3 +110,11 @@ def test_drop_adds_files(rig):
     mime = QMimeData(); mime.setUrls([QUrl.fromLocalFile(str(song))])
     p.dropEvent(QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
     assert len(p.controller.playlist) == 4
+
+def test_jump_slider_handle_click_keeps_value(qapp):
+    s = JumpSlider(Qt.Horizontal); s.setRange(0, 1000); s.resize(200, 20); s.show()
+    s.setValue(500)
+    opt = QStyleOptionSlider(); s.initStyleOption(opt)
+    handle = s.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, s)
+    QTest.mouseClick(s, Qt.LeftButton, Qt.NoModifier, handle.center())
+    assert s.value() == 500

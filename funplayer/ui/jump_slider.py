@@ -15,9 +15,10 @@ class JumpSlider(QSlider):
                 QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
             groove = self.style().subControlRect(
                 QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
-            span = max(1, groove.width() - handle.width())
-            pos = int(event.pos().x()) - groove.x() - handle.width() // 2
-            value = QStyle.sliderValueFromPosition(
-                self.minimum(), self.maximum(), pos, span, opt.upsideDown)
-            self.setValue(value)
+            if not handle.contains(event.pos()):
+                span = max(1, groove.width() - handle.width())
+                pos = int(event.pos().x()) - groove.x() - handle.width() // 2
+                value = QStyle.sliderValueFromPosition(
+                    self.minimum(), self.maximum(), pos, span, opt.upsideDown)
+                self.setValue(value)
         super().mousePressEvent(event)
