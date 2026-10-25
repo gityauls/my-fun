@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
 OFF_COLOR = QColor("#5F6368")
@@ -50,3 +50,44 @@ def shuffle_icon(color: QColor) -> QIcon:
     p.drawPath(path)
     p.end()
     return QIcon(pm)
+
+
+def mini_icon(color: QColor) -> QIcon:
+    pm, p = _begin(color)
+    p.drawRoundedRect(QRectF(2.5, 3.5, 13, 11), 1.5, 1.5)
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    p.drawRoundedRect(QRectF(8.6, 8.8, 5.4, 4.2), 0.8, 0.8)
+    p.end()
+    return QIcon(pm)
+
+
+def full_icon(color: QColor) -> QIcon:
+    pm, p = _begin(color)
+    p.drawRoundedRect(QRectF(3.5, 2.5, 11, 13), 1.5, 1.5)
+    p.drawLine(QPointF(3.5, 6), QPointF(14.5, 6))
+    p.end()
+    return QIcon(pm)
+
+
+def note_art(size: int) -> QPixmap:
+    # 기본 앨범 그림: 배율 1, 정확히 size×size, 투명 바탕 (_begin 쓰지 않는다)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#E3E6EA"))
+    p.drawRoundedRect(QRectF(0, 0, size, size), size * 0.08, size * 0.08)
+    s = size / 56
+    ink = QColor("#9AA1AB")
+    p.setBrush(ink)
+    p.drawEllipse(QRectF(17 * s, 33 * s, 11 * s, 9 * s))
+    p.drawEllipse(QRectF(31 * s, 29 * s, 11 * s, 9 * s))
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(ink, 2.6 * s, Qt.SolidLine, Qt.FlatCap, Qt.RoundJoin))
+    path = QPainterPath()
+    path.moveTo(27 * s, 37 * s); path.lineTo(27 * s, 16 * s); path.lineTo(41 * s, 12 * s); path.lineTo(41 * s, 33 * s)
+    p.drawPath(path)
+    p.end()
+    return pm
