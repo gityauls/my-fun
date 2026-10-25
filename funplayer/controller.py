@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import os
 
+from funplayer.core import taginfo
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
 from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
 from funplayer.core.tracks import expand_paths
+from funplayer.engine import tags
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
 
@@ -26,9 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 class PlayerController:
-    def __init__(self, player, settings: Settings, rng=None) -> None:
+    def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None) -> None:
         self._player = player
         self._settings = settings
+        self._read_info = read_info or tags.read_info
+        self._session_path = session_path
+        self._info_cache: taginfo.TrackInfo | None = None
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
@@ -38,6 +43,28 @@ class PlayerController:
     @property
     def state(self) -> State:
         return self._player.state
+
+    @property
+    def info(self) -> taginfo.TrackInfo | None:
+        track = self.playlist.current
+        if track is None:
+            return None
+        if self._info_cache is None or self._info_cache.path != track.path:
+            self._info_cache = self._read_info(track.path)
+        return self._info_cache
+
+    def info_for(self, index: int) -> taginfo.TrackInfo:
+        path = self.playlist.tracks[index].path
+        if self._info_cache is not None and self._info_cache.path == path:
+            return self._info_cache
+        return self._read_info(path)
+
+    @property
+    def subtitle(self) -> str:
+        return taginfo.subtitle(self.info)
+
+    def notify(self, msg: str) -> None:
+        self._info(msg)
 
     @property
     def position(self) -> float:

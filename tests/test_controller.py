@@ -340,3 +340,40 @@ def test_value_errors_are_reported_not_raised(ctl, tmp_path, monkeypatch):
     assert (c.status, c.status_error) == ("불러올 수 없음: x.m3u8", True) and len(c.playlist) == 3
     c.save_playlist(str(tmp_path / "y.m3u8"))
     assert (c.status, c.status_error) == ("저장할 수 없음: y.m3u8", True)
+
+from funplayer.core.taginfo import TrackInfo
+
+def counting_reader(calls):
+    def read(path):
+        calls.append(path)
+        return TrackInfo(path, artist="Band", album=os.path.basename(path))
+    return read
+
+def info_ctl(calls):
+    return PlayerController(FakePlayer(), Settings({}, lambda: None), read_info=counting_reader(calls))
+
+def test_info_follows_current_track_and_reads_once(tmp_path):
+    calls = []; c = info_ctl(calls)
+    assert c.info is None and c.subtitle == "" and calls == []
+    c.open([str(make_songs(tmp_path, ABC))])
+    assert c.subtitle == "Band · 01 a.mp3"; c.info; c.info
+    assert len(calls) == 1
+    c.next()
+    assert c.info.album == "02 b.mp3" and len(calls) == 2
+
+def test_info_for_other_row_keeps_current_cache(tmp_path):
+    calls = []; c = info_ctl(calls); c.open([str(make_songs(tmp_path, ABC))]); c.info
+    assert c.info_for(2).album == "03 c.mp3" and len(calls) == 2
+    assert c.info.album == "01 a.mp3" and c.info_for(0).album == "01 a.mp3" and len(calls) == 2
+
+def test_info_cleared_with_list(tmp_path):
+    calls = []; c = info_ctl(calls); c.open([str(make_songs(tmp_path, ABC))]); c.clear()
+    assert c.info is None and c.subtitle == ""
+
+def test_default_reader_handles_empty_files(ctl, tmp_path):
+    c, *_ = ctl; c.open([str(make_songs(tmp_path, ABC))])
+    assert c.info.path.endswith("01 a.mp3") and c.info.title == "" and c.subtitle == ""
+
+def test_notify_sets_info_status(ctl):
+    c, *_ = ctl; c.notify("안내")
+    assert (c.status, c.status_error) == ("안내", False)
