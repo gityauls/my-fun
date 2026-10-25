@@ -179,7 +179,7 @@ def test_bottom_row_and_menus(rig):
     assert [a.text() for a in p.open_button.menu().actions()] == ["파일…\tL", "폴더…", "재생목록…\tCtrl+O"]
     assert [a.text() for a in p.add_button.menu().actions()] == ["파일…", "폴더…", "재생목록…"]
     assert [a.text() for a in p.list_menu.actions()] == [
-        "저장…\tCtrl+S", "", "선택한 곡 지우기\tDel", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
+        "재생목록 저장…\tCtrl+S", "", "선택한 곡 지우기\tDel", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
     assert [a.text() for a in p.list_menu.actions()[5].menu().actions()] == ["이름순", "폴더·이름순"]
 
 def test_save_and_open_playlist_with_keys(rig, monkeypatch):

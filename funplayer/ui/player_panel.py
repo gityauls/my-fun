@@ -210,7 +210,7 @@ class PlayerPanel(QWidget):
 
     def _make_list_menu(self) -> None:
         menu = self.list_menu = QMenu(self.list_button)
-        self._add_action(menu, "save", "저장…\tCtrl+S", self.save_playlist)
+        self._add_action(menu, "save", "재생목록 저장…\tCtrl+S", self.save_playlist)
         menu.addSeparator()
         menu.addAction(self.actions["remove"])
         self._add_action(menu, "dedupe", "중복 곡 지우기", self.remove_duplicates)
