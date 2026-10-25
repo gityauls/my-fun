@@ -19,8 +19,9 @@ class WindowKeeper(QObject):
         panel = self._panel
         if self._settings.mini:
             panel.set_mini(True)
-        self._apply(panel.is_mini)
+        # 항상 위 플래그를 먼저: 자리를 잡은 뒤 플래그를 바꾸면 Qt가 숨은 창을 move해 자리가 틀 기준이 된다
         self._apply_on_top()
+        self._apply(panel.is_mini)
         panel.miniChanged.connect(self._on_mini)
         panel.miniOnTopChanged.connect(self._apply_on_top)
 
@@ -28,7 +29,8 @@ class WindowKeeper(QObject):
         self._store(self._panel.is_mini)
 
     def _store(self, mini: bool) -> None:
-        g = self._panel.geometry()
+        panel = self._panel
+        g = panel.normalGeometry() if panel.isMaximized() else panel.geometry()
         rect = [g.x(), g.y(), g.width(), g.height()]
         if mini:
             self._settings.mini_geometry = rect
@@ -37,19 +39,26 @@ class WindowKeeper(QObject):
 
     def _on_mini(self, on: bool) -> None:
         self._store(not on)
+        if on and self._panel.isMaximized():
+            self._panel.showNormal()
         self._apply(on)
         self._apply_on_top()
 
     def _apply(self, mini: bool) -> None:
         panel = self._panel
+        # 앞 모드의 고정 크기를 풀고 배치를 다시 계산해야 sizeHint와 최소 크기가 지금 모드를 따른다
+        panel.setMinimumSize(0, 0)
+        panel.setMaximumSize(_QWIDGETSIZE_MAX, _QWIDGETSIZE_MAX)
+        panel.layout().activate()
         if mini:
             panel.setFixedHeight(panel.sizeHint().height())
-            saved = self._settings.mini_geometry
-            x, y, w = (saved[0], saved[1], saved[2]) if saved else (panel.x(), panel.y(), panel.width())
-            rect = QRect(x, y, w, panel.height())
+            saved = self._settings.mini_geometry or self._settings.geometry
+            if saved:
+                rect = QRect(saved[0], saved[1], saved[2], panel.height())
+            else:
+                rect = QRect(0, 0, DEFAULT_SIZE[0], panel.height())
+                self._center(rect)
         else:
-            panel.setMinimumHeight(0)
-            panel.setMaximumHeight(_QWIDGETSIZE_MAX)
             saved = self._settings.geometry
             if saved:
                 rect = QRect(*saved)

@@ -11,7 +11,8 @@ def make(qapp):
     made = []
     def build(store):
         s = Settings(store, lambda: None)
-        p = PlayerPanel(s, player=FakePlayer()); k = WindowKeeper(p, s); k.start()
+        p = PlayerPanel(s, player=FakePlayer()); k = WindowKeeper(p, s); k.start(); p.show()
+        qapp.processEvents()
         made.append(p); return p, k
     yield build
     for p in made:
@@ -32,16 +33,17 @@ def test_offscreen_geometry_is_centered(make):
     assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 480)
 
 def test_starts_in_mini_on_top_at_saved_place(make):
-    p, _ = make({"player_mini": True, "player_mini_geometry": [30, 40, 380, 92]})
-    assert p.is_mini and on_top(p) and (p.x(), p.y(), p.width()) == (30, 40, 380)
+    p, _ = make({"player_mini": True, "player_mini_geometry": [30, 40, 380, 92]}); g = p.geometry()
+    assert p.is_mini and on_top(p) and (g.x(), g.y(), g.width()) == (30, 40, 380)
     assert p.minimumHeight() == p.maximumHeight() == p.sizeHint().height()
 
 def test_toggle_saves_each_mode_and_restores_other(make):
     store = {"player_geometry": [50, 60, 400, 500]}; p, _ = make(store)
     p.set_mini(True)
     assert store["player_geometry"] == [50, 60, 400, 500] and on_top(p)
-    p.move(70, 80); p.set_mini(False)
-    assert store["player_mini_geometry"][:2] == [70, 80] and p.geometry() == QRect(50, 60, 400, 500)
+    p.move(70, 80); g = p.geometry(); p.set_mini(False)   # 보이는 창의 move는 틀 기준이라 안쪽 자리로 비교
+    assert store["player_mini_geometry"][:2] == [g.x(), g.y()] and g.x() >= 70
+    assert p.geometry() == QRect(50, 60, 400, 500)
     assert not on_top(p) and p.maximumHeight() == 16777215
 
 def test_on_top_option(make):
@@ -53,3 +55,28 @@ def test_on_top_option(make):
 def test_save_writes_current_mode(make):
     store = {}; p, k = make(store); p.setGeometry(20, 30, 390, 470); k.save()
     assert store["player_geometry"] == [20, 30, 390, 470]
+
+def test_runtime_mini_is_as_short_as_its_content(make, qapp):
+    p, _ = make({}); p.set_mini(True); qapp.processEvents()
+    assert p.height() == p.sizeHint().height() and p.height() < 100
+
+def test_back_to_normal_keeps_layout_minimum_height(make, qapp):
+    p, _ = make({}); p.set_mini(True); qapp.processEvents(); p.set_mini(False); qapp.processEvents()
+    assert p.minimumHeight() == p.layout().totalMinimumSize().height() and p.minimumHeight() > 200
+
+def test_mini_start_without_mini_place_uses_normal_place(make):
+    p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 500]}); g = p.geometry()
+    assert p.is_mini and (g.x(), g.y(), g.width()) == (50, 60, 400)
+
+def test_mini_start_without_any_place_uses_default_width_centered(make):
+    p, _ = make({"player_mini": True})
+    screen = QGuiApplication.primaryScreen().availableGeometry()
+    assert p.is_mini and p.width() == 380 and p.geometry().center().x() in (screen.center().x(), screen.center().x() + 1)
+
+def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
+    store = {"player_geometry": [50, 60, 400, 500]}; p, k = make(store)
+    p.showMaximized(); qapp.processEvents(); assert p.isMaximized()
+    k.save(); assert store["player_geometry"] == [50, 60, 400, 500]
+    p.set_mini(True); qapp.processEvents()
+    assert not p.isMaximized() and store["player_geometry"] == [50, 60, 400, 500]
+    g = p.geometry(); assert (g.x(), g.y(), g.width()) == (50, 60, 400) and g.height() < 100

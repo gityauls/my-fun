@@ -290,8 +290,8 @@ def test_set_mini_hides_moves_and_restores(rig):
             (p.prev_button, p.play_button, p.stop_button, p.next_button)] == [0, 1, 2, 3]
 
 def test_mini_is_short(rig):
-    p, *_ = rig; p.set_mini(True)
-    assert p.sizeHint().height() < 130
+    p, *_ = rig; p.set_mini(True); p.layout().activate()
+    assert p.sizeHint().height() < 100
 
 def test_mini_toggles_by_key_button_and_title_double_click(rig):
     p, *_ = rig
