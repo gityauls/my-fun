@@ -6,10 +6,12 @@ def test_fix_text_surrogate_cp949():
     s = "천상천하".encode("cp949").decode("utf-8", "surrogateescape")
     assert fix_text(s) == "천상천하"
 
-def test_fix_text_latin1_cp949():
-    assert fix_text("투투".encode("cp949").decode("latin-1")) == "투투"
+@pytest.mark.parametrize("s", ["투투", "천상천하", "클럽음악", "햇살 밴드", "똠양꿍 노래"])
+def test_fix_text_latin1_cp949(s):
+    assert fix_text(s.encode("cp949").decode("latin-1")) == s
 
-@pytest.mark.parametrize("s", ["", "Britney Spears", "너만은 모르길", "Café del Mar", "Beyoncé", "Größe", "naïve"])
+@pytest.mark.parametrize("s", ["", "Britney Spears", "너만은 모르길", "Café del Mar", "Beyoncé", "Größe", "naïve",
+                               "Die Ärzte", "Ásgeir", "Álvaro Soler", "Âme"])
 def test_fix_text_keeps_western_names(s):
     assert fix_text(s) == s
 

@@ -31,9 +31,14 @@ def fix_text(s: str) -> str:
             fixed = s.encode("latin-1").decode("cp949")
         except UnicodeDecodeError:
             return s
-        if any("가" <= c <= "힣" for c in fixed):
+        if any(_ksx1001_hangul(c) for c in fixed):
             return fixed
     return s
+
+
+# KS X 1001(완성형) 한글인가: 두 바이트가 모두 0xA1 이상. "Ärzte"의 "Är" 같은 확장 UHC 짝은 아니다
+def _ksx1001_hangul(c: str) -> bool:
+    return "가" <= c <= "힣" and all(b >= 0xA1 for b in c.encode("cp949"))
 
 
 _COVER_STEMS = ("cover", "folder", "front", "album")

@@ -1,14 +1,25 @@
 """테스트용 태그 파일 만들기: 손으로 쓴 ID3v2.3(글자 인코딩 0)·ID3v1 태그를 MP3 앞뒤에 붙인다."""
+import random
 import struct
 import zlib
 from pathlib import Path
 
 
-def png_1x1() -> bytes:
+def _png(side: int, pixels: bytes) -> bytes:
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00")) + chunk(b"IEND", b""))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+
+
+def png_1x1() -> bytes:
+    return _png(1, b"\x00\xff\x00\x00")
+
+
+def noise_png(side: int) -> bytes:
+    """잘 압축되지 않는 side×side RGB PNG (큰 표지 그림 대신)."""
+    rng = random.Random(0)
+    return _png(side, b"".join(b"\x00" + rng.randbytes(3 * side) for _ in range(side)))
 
 
 def _frame(fid: str, data: bytes) -> bytes:
