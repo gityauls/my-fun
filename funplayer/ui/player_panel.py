@@ -30,7 +30,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Down", "volume_down"), ("M", "toggle_mute"), ("L", "open_files"),
     ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
-    ("Ctrl+A", "select_all"),
+    ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
 ]
 
 
@@ -132,11 +132,11 @@ class PlayerPanel(QWidget):
         bottom.setSpacing(4)
         self.open_button = QPushButton("열기")
         self.add_button = QPushButton("추가")
-        self.clear_button = QPushButton("비우기")
+        self.list_button = QPushButton("목록")
         self.count_label = QLabel("0곡")
         bottom.addWidget(self.open_button)
         bottom.addWidget(self.add_button)
-        bottom.addWidget(self.clear_button)
+        bottom.addWidget(self.list_button)
         bottom.addStretch(1)
         bottom.addWidget(self.count_label)
         root.addLayout(bottom)
@@ -155,10 +155,6 @@ class PlayerPanel(QWidget):
         self.mute_button.clicked.connect(self.toggle_mute)
         self.repeat_button.clicked.connect(self.cycle_repeat)
         self.shuffle_button.clicked.connect(self.toggle_shuffle)
-        self.clear_button.clicked.connect(self._clear)
-
-        self._open_menu = self._make_menu(self.open_button, self.open_files, self.open_folder)
-        self._add_menu = self._make_menu(self.add_button, self.add_files, self.add_folder)
 
         self.volume_slider.valueChanged.connect(c.set_volume)
         self.seek_slider.sliderPressed.connect(self._seek_pressed)
@@ -168,6 +164,13 @@ class PlayerPanel(QWidget):
         self.playlist_view.rowsMoved.connect(self._rows_moved)
         self.playlist_view.filesDropped.connect(self._files_dropped)
         self._make_context_menu()
+        self._open_menu = self._make_menu(self.open_button, [
+            ("파일…	L", self.open_files), ("폴더…", self.open_folder),
+            ("재생목록…	Ctrl+O", self.open_playlist)])
+        self._add_menu = self._make_menu(self.add_button, [
+            ("파일…", self.add_files), ("폴더…", self.add_folder),
+            ("재생목록…", self.add_playlist)])
+        self._make_list_menu()
 
         self.shortcuts: dict[str, QShortcut] = {}
         for key, name in SHORTCUTS:
@@ -198,26 +201,87 @@ class PlayerPanel(QWidget):
         view.customContextMenuRequested.connect(
             lambda pos: self.context_menu.exec_(view.viewport().mapToGlobal(pos)))
 
+    def _add_action(self, menu: QMenu, key: str, text: str, slot) -> QAction:
+        act = QAction(text, menu)
+        act.triggered.connect(lambda _=False, f=slot: f())
+        menu.addAction(act)
+        self.actions[key] = act
+        return act
+
+    def _make_list_menu(self) -> None:
+        menu = self.list_menu = QMenu(self.list_button)
+        self._add_action(menu, "save", "저장…	Ctrl+S", self.save_playlist)
+        menu.addSeparator()
+        menu.addAction(self.actions["remove"])
+        self._add_action(menu, "dedupe", "중복 곡 지우기", self.remove_duplicates)
+        self._add_action(menu, "remove_unplayable", "없는·깨진 파일 지우기", self.remove_unplayable)
+        sort_menu = menu.addMenu("정렬")
+        self._add_action(sort_menu, "sort_name", "이름순", lambda: self.sort_by("name"))
+        self._add_action(sort_menu, "sort_path", "폴더·이름순", lambda: self.sort_by("path"))
+        menu.addSeparator()
+        self._add_action(menu, "clear", "목록 비우기", self.clear_list)
+        menu.aboutToShow.connect(self._update_actions)
+        self.list_button.setMenu(menu)
+
     def _update_actions(self) -> None:
         self.actions["remove"].setEnabled(bool(self.selected_rows()))
         self.actions["play_selected"].setEnabled(self.playlist_view.currentRow() >= 0)
+        has_tracks = len(self.controller.playlist) > 0
+        for key in ("save", "dedupe", "remove_unplayable", "sort_name", "sort_path", "clear"):
+            self.actions[key].setEnabled(has_tracks)
 
-    def _make_menu(self, button: QPushButton, files_slot, folder_slot) -> QMenu:
+    def _make_menu(self, button: QPushButton, items: list[tuple[str, object]]) -> QMenu:
         menu = QMenu(button)
-        a_files = QAction("파일…", menu)
-        a_files.triggered.connect(lambda _=False: files_slot())
-        a_folder = QAction("폴더…", menu)
-        a_folder.triggered.connect(lambda _=False: folder_slot())
-        menu.addAction(a_files)
-        menu.addAction(a_folder)
+        for text, slot in items:
+            act = QAction(text, menu)
+            act.triggered.connect(lambda _=False, f=slot: f())
+            menu.addAction(act)
         button.setMenu(menu)
         return menu
 
     # ---- 입력 ----
 
-    def _clear(self) -> None:
+    def clear_list(self) -> None:
         self.controller.clear()
         self.refresh()
+
+    def remove_duplicates(self) -> None:
+        self.controller.remove_duplicates()
+        self.refresh()
+
+    def remove_unplayable(self) -> None:
+        self.controller.remove_unplayable()
+        self.refresh()
+
+    def sort_by(self, by: str) -> None:
+        self.controller.sort(by)
+        self.refresh()
+
+    def ask_playlist_open(self) -> str:
+        return QFileDialog.getOpenFileName(
+            self, "재생목록 열기", "", "재생목록 (*.m3u8 *.m3u)")[0]
+
+    def ask_playlist_save(self) -> str:
+        return QFileDialog.getSaveFileName(
+            self, "재생목록 저장", "재생목록.m3u8", "재생목록 (*.m3u8)")[0]
+
+    def open_playlist(self) -> None:
+        path = self.ask_playlist_open()
+        if path:
+            self._load([path], self.controller.open)
+
+    def add_playlist(self) -> None:
+        path = self.ask_playlist_open()
+        if path:
+            self._load([path], self.controller.add)
+
+    def save_playlist(self) -> None:
+        if len(self.controller.playlist) == 0:
+            return
+        path = self.ask_playlist_save()
+        if path:
+            self.controller.save_playlist(path)
+            self.refresh()
 
     def _seek_pressed(self) -> None:
         self._dragging = True

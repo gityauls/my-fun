@@ -26,7 +26,7 @@ def test_buttons(rig):
     QTest.mouseClick(p.play_button, Qt.LeftButton); assert fake.state is State.PAUSED
     QTest.mouseClick(p.stop_button, Qt.LeftButton); assert fake.state is State.STOPPED
     QTest.mouseClick(p.mute_button, Qt.LeftButton); assert fake.gain == 0.0
-    QTest.mouseClick(p.clear_button, Qt.LeftButton)
+    p.actions["clear"].trigger()
     assert len(p.controller.playlist) == 0 and p.title_label.text() == "곡을 추가하세요"
 
 def test_double_click_plays_row(rig):
@@ -54,8 +54,8 @@ def test_jump_slider_click(qapp):
 
 def test_shortcut_table(rig):
     p, *_ = rig
-    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L", "R", "S",
-                             "Delete", "Return", "Enter", "Ctrl+A"}
+    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
+                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A"}
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 
@@ -96,7 +96,7 @@ def test_real_keypress_reaches_shortcut(rig):
 
 def test_menus(rig, monkeypatch):
     p, fake, _, tmp = rig
-    assert [a.text() for a in p.open_button.menu().actions()] == ["파일…", "폴더…"]
+    assert [a.text() for a in p.open_button.menu().actions()][:2] == ["파일…	L", "폴더…"]
     folder = make_songs(tmp / "f", ["01 x.mp3"])
     monkeypatch.setattr(p, "ask_folder", lambda: [str(folder)])
     p.add_button.menu().actions()[1].trigger(); assert len(p.controller.playlist) == 4
@@ -172,3 +172,43 @@ def test_file_drop_on_list_adds(rig):
     mime = QMimeData(); mime.setUrls([QUrl.fromLocalFile(str(song))])
     v.dropEvent(QDropEvent(QPointF(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
     assert len(p.controller.playlist) == 4
+
+def test_bottom_row_and_menus(rig):
+    p, *_ = rig
+    assert not hasattr(p, "clear_button") and p.list_button.text() == "목록"
+    assert [a.text() for a in p.open_button.menu().actions()] == ["파일…	L", "폴더…", "재생목록…	Ctrl+O"]
+    assert [a.text() for a in p.add_button.menu().actions()] == ["파일…", "폴더…", "재생목록…"]
+    assert [a.text() for a in p.list_menu.actions()] == [
+        "저장…	Ctrl+S", "", "선택한 곡 지우기	Del", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
+    assert [a.text() for a in p.list_menu.actions()[5].menu().actions()] == ["이름순", "폴더·이름순"]
+
+def test_save_and_open_playlist_with_keys(rig, monkeypatch):
+    p, fake, _, tmp = rig
+    monkeypatch.setattr(p, "ask_playlist_save", lambda: str(tmp / "목록"))
+    p.shortcuts["Ctrl+S"].activated.emit()
+    assert (tmp / "목록.m3u8").exists() and p.status_label.text() == "저장했습니다: 목록.m3u8"
+    p.actions["clear"].trigger(); assert len(p.controller.playlist) == 0
+    monkeypatch.setattr(p, "ask_playlist_open", lambda: str(tmp / "목록.m3u8"))
+    p.shortcuts["Ctrl+O"].activated.emit()
+    assert [t.title for t in p.controller.playlist.tracks] == ["01 a", "02 b", "03 c"]
+
+def test_add_playlist_menu(rig, monkeypatch):
+    p, _, _, tmp = rig
+    p.controller.save_playlist(str(tmp / "l.m3u8"))
+    monkeypatch.setattr(p, "ask_playlist_open", lambda: str(tmp / "l.m3u8"))
+    p.add_button.menu().actions()[2].trigger(); assert len(p.controller.playlist) == 6
+
+def test_save_skipped_when_cancelled_or_empty(rig, monkeypatch):
+    p, *_ = rig; asked = []
+    monkeypatch.setattr(p, "ask_playlist_save", lambda: asked.append(1) or "")
+    p.save_playlist(); assert asked == [1] and p.controller.status == ""
+    p.actions["clear"].trigger(); p.save_playlist(); assert asked == [1]
+    p.list_menu.aboutToShow.emit(); assert not p.actions["save"].isEnabled()
+
+def test_list_menu_edit_actions(rig):
+    p, *_ = rig
+    p.playlist_view.clearSelection(); p.list_menu.aboutToShow.emit()
+    assert p.actions["save"].isEnabled() and not p.actions["remove"].isEnabled()
+    p.actions["sort_path"].trigger(); p.actions["dedupe"].trigger()
+    assert p.status_label.text() == "중복 곡이 없습니다"
+    p.actions["remove_unplayable"].trigger(); assert p.status_label.text() == "지울 곡이 없습니다"
