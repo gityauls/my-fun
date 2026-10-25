@@ -497,3 +497,71 @@ def test_session_write_failure_is_silent(tmp_path, monkeypatch):
     monkeypatch.setattr(ctrl, "write_playlist", boom)
     c, fake, _ = session_ctl(tmp_path); c.open([str(make_songs(tmp_path / "m", ABC))])
     assert fake.state is State.PLAYING and not c.status_error
+
+def test_add_and_kept_remove_keep_resume_position(tmp_path):
+    c, fake, store = session_ctl(tmp_path); c.open([str(make_songs(tmp_path / "m", ABC))])
+    fake.position = 50.0
+    c.add([str(make_songs(tmp_path / "n", ["09 z.mp3"]))])
+    assert store["player_last_position"] == 50.0 and c.state is State.PLAYING
+    c.remove([2])
+    assert store["player_last_position"] == 50.0 and store["player_last_track"].endswith("01 a.mp3")
+
+def test_next_past_last_while_cued_ends_cue(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "03 c.mp3", 72.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session(); assert c.cued
+    c.next()
+    assert not c.cued and not c.can_seek and fake.state is State.STOPPED
+
+def test_seek_past_end_while_cued_ends_cue(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "03 c.mp3", 72.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    fake.position = 175.0; c.seek_by(1)
+    assert not c.cued and not c.can_seek
+
+def test_add_while_cued_only_appends(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    c.add([str(make_songs(tmp_path / "n", ["09 z.mp3"]))])
+    assert fake.state is State.STOPPED and c.cued and c.playlist.index == 1
+    assert len(fake.loaded) == 1 and fake.position == 72.0 and len(c.playlist) == 4
+    assert store["player_last_position"] == 72.0
+
+def test_resume_notice_cleared_when_cue_ends_by_stop_or_seek(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, _, _ = session_ctl(tmp_path, dict(store)); c.restore_session()
+    c.stop(); assert c.status == ""
+    c, _, _ = session_ctl(tmp_path, dict(store)); c.restore_session()
+    c.seek_to(30.0); assert c.status == ""
+    c, fake, _ = session_ctl(tmp_path, dict(store)); c.restore_session()
+    c.seek_by(1); assert c.status == ""
+
+def test_resume_notice_kept_on_play_and_other_messages_kept(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, _, _ = session_ctl(tmp_path, dict(store)); c.restore_session()
+    c.toggle(); assert c.status == "이어 듣기: 1:12부터"
+    c, _, _ = session_ctl(tmp_path, dict(store)); c.restore_session()
+    c.notify("안내"); c.stop(); assert c.status == "안내"
+
+def test_failed_restore_keeps_saved_resume_pair(tmp_path):
+    store, paths = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    for p in paths:
+        os.remove(p)
+    c, fake, _ = session_ctl(tmp_path, store, missing_fails=True); c.restore_session()
+    last = store["player_last_track"]
+    c.save_session()
+    assert store["player_last_position"] == 72.0 and store["player_last_track"] == last
+    c.sort("name"); c.remove([0])
+    assert store["player_last_position"] == 72.0 and store["player_last_track"] == last
+    c.play_index(0); c.save_session()
+    assert store["player_last_position"] != 72.0
+
+@pytest.mark.parametrize("drop", ["open", "remove_current"])
+def test_failed_restore_hold_dropped(tmp_path, drop):
+    store, paths = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    for p in paths:
+        os.remove(p)
+    c, fake, _ = session_ctl(tmp_path, store, missing_fails=True); c.restore_session()
+    if drop == "open": c.open([str(make_songs(tmp_path / "n", ["09 z.mp3"]))])
+    if drop == "remove_current": c.remove([1])
+    c.save_session()
+    assert store["player_last_position"] == 0.0

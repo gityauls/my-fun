@@ -38,6 +38,8 @@ class PlayerController:
         self._session_path = session_path
         self._info_cache: taginfo.TrackInfo | None = None
         self._cued = False
+        self._resume_notice = ""
+        self._held_position: float | None = None   # 이어 듣기 곡을 못 열었을 때 지켜 둘 위치
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
@@ -163,14 +165,14 @@ class PlayerController:
         if not found:
             self._error(error or NO_FILES_MSG)
             return
-        was_stopped = self._player.state is State.STOPPED
+        was_stopped = self._player.state is State.STOPPED and not self._cued   # 대기 중이면 일시정지처럼
         start = len(self.playlist)
         first = self.playlist.add(found)
         missing = self._mark_missing(start)
         if was_stopped and first is not None:
             self.play_index(first)
         self._report_load(error, missing)
-        self._remember()
+        self._remember(self._resume_position())
 
     def _mark_missing(self, start: int) -> int:
         count = 0
@@ -205,13 +207,14 @@ class PlayerController:
         result = self.playlist.remove(rows, wrap=self._wrap)
         if result != "kept":
             self._cued = False
+            self._held_position = None
             self._player.stop()
             self._player.unload()
         if result == "next" and was_playing:
             self.play_index(self.playlist.index)
         if not len(self.playlist):
             self._set_status("")   # 목록 비우기와 같게
-        self._remember()
+        self._remember(self._resume_position())
 
     def remove_duplicates(self) -> None:
         self._remove_auto(self.playlist.duplicate_indices(), DUP_MSG, NO_DUP_MSG)
@@ -243,6 +246,7 @@ class PlayerController:
 
     def _play_index(self, i: int) -> None:
         self._cued = False
+        self._held_position = None
         self._set_status("")
         tried: set[int] = set()
         for _ in range(2 * len(self.playlist)):   # 한 바퀴 돌아 다시 만나는 곡도 있어 넉넉히
@@ -283,12 +287,24 @@ class PlayerController:
             self.play_index(self.playlist.index)
 
     def stop(self) -> None:
-        self._cued = False
+        self._end_cue()
         self._player.stop()
+
+    def _end_cue(self) -> None:
+        """대기(불러와 자리 잡고 아직 시작 안 함)를 끝낸다. 이어 듣기 안내가 그대로면 지운다."""
+        if self._cued:
+            self._cued = False
+            self._drop_resume_notice()
+
+    def _drop_resume_notice(self) -> None:
+        if self._resume_notice and self.status == self._resume_notice:
+            self._set_status("")
+        self._resume_notice = ""
 
     def next(self) -> None:
         nxt = self.playlist.next_index(self._wrap)
         if nxt is None:
+            self._end_cue()
             self._player.stop()
         else:
             self.play_index(nxt)
@@ -310,6 +326,8 @@ class PlayerController:
     def seek_by(self, direction: int) -> None:
         if not self.can_seek:
             return
+        if self._cued:
+            self._drop_resume_notice()
         target = max(0.0, self._player.position + direction * self._settings.seek_step)
         duration = self._player.duration
         if duration > 0 and target >= duration:
@@ -320,6 +338,8 @@ class PlayerController:
     def seek_to(self, sec: float) -> None:
         if not self.can_seek:
             return
+        if self._cued:
+            self._drop_resume_notice()
         self._player.seek(min(max(sec, 0.0), self._player.duration))
 
     def set_volume(self, v: int) -> None:
@@ -332,6 +352,7 @@ class PlayerController:
 
     def clear(self) -> None:
         self._cued = False
+        self._held_position = None
         self._player.stop()
         self._player.unload()
         self.playlist.clear()
@@ -339,6 +360,8 @@ class PlayerController:
         self._remember()
 
     def _resume_position(self) -> float:
+        if self._held_position is not None:
+            return self._held_position
         if self._player.state is State.STOPPED and not self._cued:
             return 0.0
         return self._player.position
@@ -400,6 +423,7 @@ class PlayerController:
                 self.playlist.mark_failed(i)
             else:
                 self.playlist.mark_missing(i)
+            self._held_position = position   # USB를 뺀 채 켰다 꺼도 저장된 자리를 잃지 않게
             return
         self.playlist.mark_ok(i)
         duration = self._player.duration
@@ -407,7 +431,8 @@ class PlayerController:
             position = 0.0
         if position > 0:
             self._player.seek(position)
-            self._info(RESUME_MSG.format(time=format_time(position)))
+            self._resume_notice = RESUME_MSG.format(time=format_time(position))
+            self._info(self._resume_notice)
         self._cued = True
 
     def on_player_error(self, msg: str) -> None:
