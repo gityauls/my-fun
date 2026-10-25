@@ -9,6 +9,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import QApplication
 
 from funplayer.core.settings import JsonStore, Settings
+from funplayer.ui import media_keys as media_keys_mod
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.window_keeper import WindowKeeper
 
@@ -46,7 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyle("Fusion")
     store = JsonStore(app_dir() / "settings.json")
     settings = Settings(store.data, store.save)
-    panel = PlayerPanel(settings, session_path=str(app_dir() / "last.m3u8"))
+    panel = PlayerPanel(
+        settings, session_path=str(app_dir() / "last.m3u8"),
+        media_keys=media_keys_mod.MediaKeys(api=media_keys_mod.default_api()))
     panel.setWindowTitle("my-fun")
     keeper = WindowKeeper(panel, settings)
     keeper.start()

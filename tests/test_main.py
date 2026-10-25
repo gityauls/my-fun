@@ -25,6 +25,8 @@ def test_setup_logging(tmp_path):
 def test_main_smoke(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    import funplayer.ui.media_keys as mk
+    monkeypatch.setattr(mk, "default_api", lambda: None)
     QTimer.singleShot(0, QApplication.instance().quit)
     try:
         assert entry.main([]) == 0

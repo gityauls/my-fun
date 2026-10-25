@@ -83,3 +83,21 @@ class FakeRng:
 
     def randint(self, a: int, b: int) -> int:
         return a
+
+
+class FakeApi:
+    """MediaKeys용 가짜 단축키 API: busy에 든 가상 키는 등록에 실패한다."""
+
+    def __init__(self, busy=()):
+        self.busy, self.registered, self.calls = set(busy), {}, []
+
+    def register(self, hid: int, vk: int) -> bool:
+        self.calls.append(("reg", hid, vk))
+        ok = vk not in self.busy
+        if ok:
+            self.registered[hid] = vk
+        return ok
+
+    def unregister(self, hid: int) -> None:
+        self.calls.append(("unreg", hid))
+        self.registered.pop(hid, None)

@@ -304,7 +304,7 @@ def test_mini_toggles_by_key_button_and_title_double_click(rig):
 def test_view_menu_mini_items(rig):
     p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)
     assert [a.text() for a in p.view_menu.actions()] == [
-        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "", "작게 볼 때 항상 위"]
+        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "", "작게 볼 때 항상 위", "멀티미디어 키 사용"]
     p.view_menu.aboutToShow.emit()
     assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()
     p.actions["mini"].trigger(); assert p.is_mini
@@ -316,3 +316,46 @@ def test_shortcuts_still_work_in_mini(rig):
     p, fake, *_ = rig; p.set_mini(True)
     p.shortcuts["Space"].activated.emit()
     assert fake.state is State.PAUSED
+
+
+from fakes import FakeApi
+from funplayer.ui.media_keys import HOTKEY_ID_BASE, MediaKeys
+
+def keys_panel(qapp, tmp_path, store, api):
+    fake = FakePlayer()
+    p = PlayerPanel(Settings(store, lambda: None), player=fake, media_keys=MediaKeys(api=api))
+    p.controller.open([str(make_songs(tmp_path / "m", ABC))]); p.refresh()
+    return p, fake
+
+def test_panel_media_keys_wiring(qapp, tmp_path):
+    api = FakeApi(); p, fake = keys_panel(qapp, tmp_path, {}, api)
+    k = p.media_keys
+    k.handle_hotkey(HOTKEY_ID_BASE + 0xB3); assert fake.state is State.PAUSED
+    k.handle_hotkey(HOTKEY_ID_BASE + 0xB0); assert p.controller.playlist.index == 1
+    k.handle_hotkey(HOTKEY_ID_BASE + 0xB2); assert fake.state is State.STOPPED
+    p.shutdown(); p.deleteLater()
+    assert api.registered == {}
+
+def test_panel_media_keys_busy_notice(qapp):
+    api = FakeApi(busy={0xB3})
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), media_keys=MediaKeys(api=api))
+    assert (p.controller.status, p.controller.status_error) == ("멀티미디어 키를 다른 프로그램이 쓰고 있습니다", False)
+    assert set(api.registered.values()) == {0xB0, 0xB1, 0xB2}
+    p.shutdown(); p.deleteLater()
+    assert api.registered == {}
+
+def test_media_keys_option(qapp, tmp_path):
+    api = FakeApi(); store = {"player_media_keys": False}
+    p, _ = keys_panel(qapp, tmp_path, store, api)
+    assert api.registered == {}
+    p.view_menu.aboutToShow.emit(); act = p.actions["media_keys"]
+    assert act.text() == "멀티미디어 키 사용" and not act.isChecked()
+    act.trigger(); assert store["player_media_keys"] is True and len(api.registered) == 4
+    act.trigger(); assert store["player_media_keys"] is False and api.registered == {}
+    p.shutdown(); p.deleteLater()
+
+def test_focused_media_shortcuts(rig):
+    p, fake, *_ = rig
+    assert len(p.media_shortcuts) == 5
+    assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.media_shortcuts)
+    p.media_shortcuts[0].activated.emit(); assert fake.state is State.PAUSED

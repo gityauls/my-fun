@@ -17,6 +17,7 @@ from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, repeat_icon, shuffle_icon
 from funplayer.ui.info_dialog import TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
+from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
 from funplayer.ui.playlist_view import PlaylistView
 
 REFRESH_MS = 200
@@ -60,7 +61,7 @@ class PlayerPanel(QWidget):
     miniOnTopChanged = pyqtSignal(bool)
 
     def __init__(self, settings: Settings, player=None, parent=None, *,
-                 session_path: str | None = None, read_info=None) -> None:
+                 session_path: str | None = None, read_info=None, media_keys=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
@@ -81,6 +82,7 @@ class PlayerPanel(QWidget):
         self._bridge.ended.connect(self._on_ended, Qt.QueuedConnection)
         self._bridge.error.connect(self._on_error, Qt.QueuedConnection)
 
+        self.media_keys = media_keys if media_keys is not None else MediaKeys(self)
         self._build()
         self._wire()
         self.setAcceptDrops(True)
@@ -92,6 +94,9 @@ class PlayerPanel(QWidget):
         if session_path:
             self.controller.restore_session()
         self.refresh()
+        if self._settings.media_keys and not self.media_keys.enable():
+            self.controller.notify(MEDIA_KEYS_BUSY_MSG)
+            self.refresh()
 
     # ---- 만들기 ----
 
@@ -241,6 +246,20 @@ class PlayerPanel(QWidget):
             sc.activated.connect(getattr(self, name))
             self.shortcuts[key] = sc
 
+        k = self.media_keys
+        k.play_pause_pressed.connect(self.toggle)
+        k.next_pressed.connect(self.next)
+        k.prev_pressed.connect(self.prev)
+        k.stop_pressed.connect(self.stop)
+        self.media_shortcuts: list[QShortcut] = []
+        for key, slot in ((Qt.Key_MediaTogglePlayPause, self.toggle), (Qt.Key_MediaPlay, self.toggle),
+                          (Qt.Key_MediaNext, self.next), (Qt.Key_MediaPrevious, self.prev),
+                          (Qt.Key_MediaStop, self.stop)):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+            self.media_shortcuts.append(sc)
+
     # 글자 크기에 맞춘 최소 폭 (스타일의 기본 최소폭 75~80px을 덮어쓴다)
     def _fit_min_width(self, button: QPushButton) -> None:
         st = self.style()
@@ -305,8 +324,24 @@ class PlayerPanel(QWidget):
         on_top = self._add_action(menu, "mini_on_top", "작게 볼 때 항상 위", self._mini_on_top_clicked)
         on_top.setCheckable(True)
         on_top.setChecked(self._settings.mini_on_top)
+        keys = self._add_action(menu, "media_keys", "멀티미디어 키 사용", self._media_keys_clicked)
+        keys.setCheckable(True)
+        keys.setChecked(self._settings.media_keys)
         menu.aboutToShow.connect(self._update_actions)
         self.view_button.setMenu(menu)
+
+    def _media_keys_clicked(self) -> None:
+        self.set_media_keys(self.actions["media_keys"].isChecked())
+
+    def set_media_keys(self, on: bool) -> None:
+        on = bool(on)
+        self._settings.media_keys = on
+        if on:
+            if not self.media_keys.enable():
+                self.controller.notify(MEDIA_KEYS_BUSY_MSG)
+        else:
+            self.media_keys.disable()
+        self.refresh()
 
     def _mini_on_top_clicked(self) -> None:
         checked = self.actions["mini_on_top"].isChecked()
@@ -359,6 +394,7 @@ class PlayerPanel(QWidget):
         self.actions["info_row"].setEnabled(row >= 0)
         self.actions["mini"].setChecked(self.is_mini)
         self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
+        self.actions["media_keys"].setChecked(self._settings.media_keys)
         self.actions["info"].setEnabled(self.controller.playlist.index is not None or row >= 0)
         has_tracks = len(self.controller.playlist) > 0
         for key in ("save", "dedupe", "remove_unplayable", "sort_name", "sort_path", "clear"):
@@ -717,5 +753,6 @@ class PlayerPanel(QWidget):
 
     def shutdown(self) -> None:
         self.controller.save_session()
+        self.media_keys.disable()
         self._timer.stop()
         self._player.close()
