@@ -54,7 +54,7 @@ def test_jump_slider_click(qapp):
 
 def test_shortcut_table(rig):
     p, *_ = rig
-    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L"}
+    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L", "R", "S"}
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 
@@ -66,7 +66,9 @@ def test_shortcut_table(rig):
     ("Right", lambda p, f: f.seeks == [5.0]),
     ("Up", lambda p, f: p.controller.volume == 75),
     ("Down", lambda p, f: p.controller.volume == 65),
-    ("M", lambda p, f: p.controller.muted)])
+    ("M", lambda p, f: p.controller.muted),
+    ("R", lambda p, f: p.controller.repeat == "all"),
+    ("S", lambda p, f: p.controller.shuffle)])
 def test_shortcuts_trigger(rig, key, check):
     p, fake, *_ = rig
     p.shortcuts[key].activated.emit()
@@ -111,10 +113,10 @@ def test_drop_adds_files(rig):
     p.dropEvent(QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
     assert len(p.controller.playlist) == 4
 
-def test_jump_slider_handle_click_keeps_value(qapp):
-    s = JumpSlider(Qt.Horizontal); s.setRange(0, 1000); s.resize(200, 20); s.show()
-    s.setValue(500)
+def test_jump_slider_handle_edge_click_keeps_value(qapp):
+    s = JumpSlider(Qt.Horizontal); s.setRange(0, 180000); s.resize(200, 20); s.show()
+    s.setValue(90000)
     opt = QStyleOptionSlider(); s.initStyleOption(opt)
     handle = s.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, s)
-    QTest.mouseClick(s, Qt.LeftButton, Qt.NoModifier, handle.center())
-    assert s.value() == 500
+    QTest.mouseClick(s, Qt.LeftButton, Qt.NoModifier, QPoint(handle.left() + 1, handle.center().y()))
+    assert s.value() == 90000

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt, QTimer
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWidget,
@@ -13,15 +13,21 @@ from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
+from funplayer.ui.icons import OFF_COLOR, repeat_icon, shuffle_icon
 from funplayer.ui.jump_slider import JumpSlider
 
 REFRESH_MS = 200
 VOLUME_STEP = 5
+ERROR_COLOR = "#B3261E"
+INFO_COLOR = "#5F6368"
+REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
+SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
     ("Left", "seek_back"), ("Right", "seek_forward"), ("Up", "volume_up"),
     ("Down", "volume_down"), ("M", "toggle_mute"), ("L", "open_files"),
+    ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
 ]
 
 
@@ -32,6 +38,8 @@ class PlayerPanel(QWidget):
         self.controller = PlayerController(self._player, settings)
         self._dragging = False
         self._list_version = -1
+        self._icon_key: tuple[str, bool] | None = None
+        self._status_error: bool | None = None
 
         self._bridge = PlayerBridge(self._player, self)
         self._bridge.ended.connect(self._on_ended, Qt.QueuedConnection)
@@ -89,12 +97,19 @@ class PlayerPanel(QWidget):
         self.play_button = self._tool(QStyle.SP_MediaPlay, "재생", 34, 22)
         self.stop_button = self._tool(QStyle.SP_MediaStop, "정지")
         self.next_button = self._tool(QStyle.SP_MediaSkipForward, "다음 곡")
+        self.repeat_button = self._tool(QStyle.SP_MediaPlay)
+        self.shuffle_button = self._tool(QStyle.SP_MediaPlay)
+        for b in (self.repeat_button, self.shuffle_button):
+            b.setCheckable(True)
         self.mute_button = self._tool(QStyle.SP_MediaVolume, "음소거")
         self.volume_slider = JumpSlider(Qt.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setFixedWidth(90)
         for w in (self.prev_button, self.play_button, self.stop_button, self.next_button):
             ctl.addWidget(w)
+        ctl.addSpacing(8)
+        ctl.addWidget(self.repeat_button)
+        ctl.addWidget(self.shuffle_button)
         ctl.addStretch(1)
         ctl.addWidget(self.mute_button)
         ctl.addWidget(self.volume_slider)
@@ -122,7 +137,6 @@ class PlayerPanel(QWidget):
         root.addLayout(bottom)
 
         self.status_label = QLabel()
-        self.status_label.setStyleSheet("color: #B3261E;")
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.status_label.setMinimumWidth(0)
         root.addWidget(self.status_label)
@@ -134,6 +148,8 @@ class PlayerPanel(QWidget):
         self.stop_button.clicked.connect(self.stop)
         self.next_button.clicked.connect(self.next)
         self.mute_button.clicked.connect(self.toggle_mute)
+        self.repeat_button.clicked.connect(self.cycle_repeat)
+        self.shuffle_button.clicked.connect(self.toggle_shuffle)
         self.clear_button.clicked.connect(self._clear)
 
         self._open_menu = self._make_menu(self.open_button, self.open_files, self.open_folder)
@@ -218,6 +234,14 @@ class PlayerPanel(QWidget):
 
     def toggle_mute(self) -> None:
         self.controller.toggle_mute()
+        self.refresh()
+
+    def cycle_repeat(self) -> None:
+        self.controller.cycle_repeat()
+        self.refresh()
+
+    def toggle_shuffle(self) -> None:
+        self.controller.toggle_shuffle()
         self.refresh()
 
     def ask_files(self) -> list[str]:
@@ -321,8 +345,26 @@ class PlayerPanel(QWidget):
             self._rebuild_list()
             self._list_version = c.playlist.version
 
+        self._refresh_modes()
         self.count_label.setText(f"{len(c.playlist)}곡")
+        if c.status_error != self._status_error:
+            self._status_error = c.status_error
+            color = ERROR_COLOR if c.status_error else INFO_COLOR
+            self.status_label.setStyleSheet(f"color: {color};")
         self._set_elided(self.status_label, c.status)
+
+    def _refresh_modes(self) -> None:
+        c = self.controller
+        mode, shuffle = c.repeat, c.shuffle
+        self.repeat_button.setChecked(mode != "off")
+        self.shuffle_button.setChecked(shuffle)
+        self.repeat_button.setToolTip(REPEAT_TIPS[mode])
+        self.shuffle_button.setToolTip(SHUFFLE_TIPS[shuffle])
+        if (mode, shuffle) != self._icon_key:
+            self._icon_key = (mode, shuffle)
+            on = self.palette().color(QPalette.Highlight)
+            self.repeat_button.setIcon(repeat_icon(mode, OFF_COLOR if mode == "off" else on))
+            self.shuffle_button.setIcon(shuffle_icon(on if shuffle else OFF_COLOR))
 
     @staticmethod
     def _set_elided(label: QLabel, text: str) -> None:

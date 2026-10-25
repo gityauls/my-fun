@@ -4,7 +4,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 from fakes import FakePlayer, make_songs
 from funplayer.core.settings import Settings
-from funplayer.ui.player_panel import PlayerPanel
+from funplayer.ui.player_panel import ERROR_COLOR, INFO_COLOR, PlayerPanel
 
 ABC = ["01 a.mp3", "02 bad.mp3", "03 c.mp3"]
 
@@ -63,3 +63,27 @@ def test_long_title_does_not_widen_panel(panel, tmp_path):
     p.controller.open([str(make_songs(tmp_path, [stem + ".mp3"]))]); p.refresh()
     assert p.minimumSizeHint().width() < 380 and p.width() == 380
     assert p.title_label.text().endswith("…") and p.title_label.toolTip() == stem
+
+def test_repeat_and_shuffle_buttons(panel):
+    p, _ = panel
+    assert p.repeat_button.toolTip() == "반복: 끔" and not p.repeat_button.isChecked()
+    p.repeat_button.click(); assert p.repeat_button.toolTip() == "반복: 전체" and p.repeat_button.isChecked()
+    p.repeat_button.click(); assert p.repeat_button.toolTip() == "반복: 한 곡" and p.repeat_button.isChecked()
+    p.repeat_button.click(); assert p.repeat_button.toolTip() == "반복: 끔" and not p.repeat_button.isChecked()
+    p.shuffle_button.click()
+    assert p.controller.shuffle and p.shuffle_button.isChecked() and p.shuffle_button.toolTip() == "무작위: 켬"
+    p.shuffle_button.click(); assert not p.shuffle_button.isChecked()
+
+def test_buttons_follow_saved_settings(qapp):
+    p = PlayerPanel(Settings({"player_repeat": "one", "player_shuffle": True}, lambda: None), player=FakePlayer())
+    try:
+        assert p.repeat_button.toolTip() == "반복: 한 곡" and p.shuffle_button.isChecked()
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_status_color(panel, tmp_path):
+    p, _ = panel
+    p.controller.on_player_error("소리 장치를 열 수 없습니다"); p.refresh()
+    assert ERROR_COLOR in p.status_label.styleSheet()
+    p.controller.open([str(make_songs(tmp_path, ["01 a.mp3"]))]); p.controller.remove_duplicates(); p.refresh()
+    assert p.status_label.text() == "중복 곡이 없습니다" and INFO_COLOR in p.status_label.styleSheet()
