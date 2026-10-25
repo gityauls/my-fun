@@ -209,7 +209,7 @@ def test_open_playlist_keeps_file_order_and_marks_missing(ctl, tmp_path):
     write_playlist(str(pl), [str(m / "03 c.mp3"), str(m / "ghost.mp3"), str(m / "01 a.mp3")])
     c.open([str(pl)])
     assert [t.title for t in c.playlist.tracks] == ["03 c", "ghost", "01 a"]
-    assert c.playlist.tracks[1].failed and names(fake) == ["03 c.mp3"]
+    assert c.playlist.tracks[1].missing and names(fake) == ["03 c.mp3"]
     assert (c.status, c.status_error) == ("없는 파일 1곡", False)
 
 def test_add_mixed_drop_music_first_then_playlist(ctl, tmp_path):
@@ -285,3 +285,34 @@ def test_sort_and_move_keep_playing(ctl, tmp_path):
     assert c.playlist.current.title == "01 a"
     c.sort("name"); assert [t.title for t in c.playlist.tracks] == ["01 a", "02 b", "03 c"]
     assert c.state is State.PLAYING and len(fake.loaded) == 1
+
+
+def flaky(fake, broken):
+    """broken 경로 집합에 든 파일은 열 때 DecodeError를 내게 한다 (고치면 집합에서 뺀다)."""
+    from funplayer.engine.decoder import DecodeError
+    orig = fake.load
+    def load(path):
+        if path in broken:
+            fake.loaded.append(path); fake.has_track = False; fake.state = State.STOPPED
+            raise DecodeError(path)
+        orig(path)
+    fake.load = load
+
+def test_failed_track_recovers_and_is_not_removed_while_playing(ctl, tmp_path):
+    c, fake, _ = ctl; m = make_songs(tmp_path, ["01 a.mp3", "02 b.mp3"]); broken = {str(m / "02 b.mp3")}
+    flaky(fake, broken); c.open([str(m)])
+    c.play_index(1); assert c.playlist.tracks[1].failed
+    broken.clear(); c.play_index(1)
+    assert not c.playlist.tracks[1].failed and c.state is State.PLAYING
+    c.remove_unplayable()
+    assert len(c.playlist) == 2 and c.state is State.PLAYING and c.playlist.current.title == "02 b"
+    assert c.status == "지울 곡이 없습니다"
+
+def test_missing_at_open_is_not_removed_after_files_return(ctl, tmp_path):
+    c, fake, _ = ctl; m = tmp_path / "usb"; pl = tmp_path / "l.m3u8"
+    write_playlist(str(pl), [str(m / n) for n in ABC])
+    c.open([str(pl)])
+    assert c.playlist.tracks[1].missing and c.playlist.tracks[2].missing
+    make_songs(m, ABC)
+    c.remove_unplayable()
+    assert len(c.playlist) == 3 and c.status == "지울 곡이 없습니다"

@@ -548,7 +548,7 @@ class PlayerPanel(QWidget):
         font = item.font()
         font.setBold(current)
         item.setFont(font)
-        item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed else None)
+        item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed or track.missing else None)
 
     # ---- 끝내기 ----
 

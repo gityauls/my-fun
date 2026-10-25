@@ -13,7 +13,8 @@ PREV_THRESHOLD = 3.0
 @dataclass
 class Track:
     path: str
-    failed: bool = False
+    failed: bool = False    # 파일은 있는데 열 수 없었다
+    missing: bool = False   # 마지막으로 확인했을 때 파일이 없었다
 
     @property
     def title(self) -> str:
@@ -90,6 +91,16 @@ class Playlist:
     def mark_failed(self, i: int) -> None:
         self.tracks[i].failed = True
         self.version += 1
+
+    def mark_missing(self, i: int) -> None:
+        self.tracks[i].missing = True
+        self.version += 1
+
+    def mark_ok(self, i: int) -> None:
+        t = self.tracks[i]
+        if t.failed or t.missing:
+            t.failed = t.missing = False
+            self.version += 1
 
     def remove(self, rows: Iterable[int], wrap: bool = False) -> str:
         gone = {r for r in rows if 0 <= r < len(self.tracks)}

@@ -121,3 +121,10 @@ def test_remove_last_in_shuffle_with_wrap_picks_new_lap_head():
     pl = Playlist(FakeRng()); pl.set_shuffle(True); pl.replace(P5)       # order [4,3,2,1,0]
     for i in (3, 2, 1, 0): pl.set_current(i)
     assert pl.remove([0], wrap=True) == "next" and pl.current.title == "04 e"
+
+def test_mark_ok_clears_flags_and_bumps_version_once():
+    pl = Playlist(); pl.replace(P); pl.mark_failed(0); pl.mark_missing(0)
+    assert pl.tracks[0].failed and pl.tracks[0].missing
+    v = pl.version; pl.mark_ok(0)
+    assert not pl.tracks[0].failed and not pl.tracks[0].missing and pl.version == v + 1
+    pl.mark_ok(0); assert pl.version == v + 1

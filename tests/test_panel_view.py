@@ -87,3 +87,18 @@ def test_status_color(panel, tmp_path):
     assert ERROR_COLOR in p.status_label.styleSheet()
     p.controller.open([str(make_songs(tmp_path, ["01 a.mp3"]))]); p.controller.remove_duplicates(); p.refresh()
     assert p.status_label.text() == "중복 곡이 없습니다" and INFO_COLOR in p.status_label.styleSheet()
+
+def test_gray_row_returns_to_default_in_place_after_playing(panel, tmp_path):
+    from funplayer.engine.decoder import DecodeError
+    p, fake = panel; m = make_songs(tmp_path, ["01 a.mp3", "02 b.mp3"]); broken = [True]
+    orig = fake.load
+    def load(path):
+        if broken[0] and path.endswith("02 b.mp3"):
+            fake.has_track = False; raise DecodeError(path)
+        orig(path)
+    fake.load = load
+    p.controller.open([str(m)]); p.controller.play_index(1); p.refresh()
+    item = p.playlist_view.item(1)
+    assert item.foreground().color() == QColor(Qt.gray)
+    broken[0] = False; p.controller.play_index(1); p.refresh()
+    assert p.playlist_view.item(1) is item and item.data(Qt.ForegroundRole) is None

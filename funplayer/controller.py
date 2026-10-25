@@ -134,7 +134,7 @@ class PlayerController:
         count = 0
         for i in range(start, len(self.playlist)):
             if not os.path.exists(self.playlist.tracks[i].path):
-                self.playlist.mark_failed(i)
+                self.playlist.mark_missing(i)
                 count += 1
         return count
 
@@ -196,13 +196,17 @@ class PlayerController:
             try:
                 self._player.load(track.path)
             except DecodeError:
-                self.playlist.mark_failed(i)
+                if os.path.exists(track.path):
+                    self.playlist.mark_failed(i)
+                else:
+                    self.playlist.mark_missing(i)
                 self._error(FAIL_MSG.format(name=os.path.basename(track.path)))
                 nxt = self.playlist.next_index(self._wrap)
                 if nxt is None:
                     break
                 i = nxt
                 continue
+            self.playlist.mark_ok(i)
             self._player.play()
             return
         self._player.stop()
