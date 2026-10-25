@@ -190,25 +190,30 @@ class PlayerController:
 
     def play_index(self, i: int) -> None:
         self._set_status("")
-        for _ in range(len(self.playlist)):
+        tried: set[int] = set()
+        for _ in range(2 * len(self.playlist)):   # 한 바퀴 돌아 다시 만나는 곡도 있어 넉넉히
             self.playlist.set_current(i)
-            track = self.playlist.tracks[i]
-            try:
-                self._player.load(track.path)
-            except DecodeError:
-                if os.path.exists(track.path):
-                    self.playlist.mark_failed(i)
+            if i not in tried:
+                tried.add(i)
+                track = self.playlist.tracks[i]
+                try:
+                    self._player.load(track.path)
+                except DecodeError:
+                    if os.path.exists(track.path):
+                        self.playlist.mark_failed(i)
+                    else:
+                        self.playlist.mark_missing(i)
+                    self._error(FAIL_MSG.format(name=os.path.basename(track.path)))
                 else:
-                    self.playlist.mark_missing(i)
-                self._error(FAIL_MSG.format(name=os.path.basename(track.path)))
-                nxt = self.playlist.next_index(self._wrap)
-                if nxt is None:
-                    break
-                i = nxt
-                continue
-            self.playlist.mark_ok(i)
-            self._player.play()
-            return
+                    self.playlist.mark_ok(i)
+                    self._player.play()
+                    return
+            if len(tried) == len(self.playlist):
+                break
+            nxt = self.playlist.next_index(self._wrap)
+            if nxt is None:
+                break
+            i = nxt
         self._player.stop()
 
     def toggle(self) -> None:

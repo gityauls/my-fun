@@ -316,3 +316,12 @@ def test_missing_at_open_is_not_removed_after_files_return(ctl, tmp_path):
     make_songs(m, ABC)
     c.remove_unplayable()
     assert len(c.playlist) == 3 and c.status == "지울 곡이 없습니다"
+
+@pytest.mark.parametrize("seed", range(30))
+def test_shuffle_repeat_all_skip_finds_the_only_playable_track(tmp_path, seed):
+    songs = [f"{i:02} bad.mp3" for i in range(6)]; songs[3] = "03 good.mp3"
+    c, fake, _ = make_ctl({"player_shuffle": True, "player_repeat": "all"}, rng=random.Random(seed))
+    c.open([str(make_songs(tmp_path, songs))])
+    for k in (0, 1, 2, 4, 5):
+        c.play_index(k)
+        assert c.state is State.PLAYING and c.playlist.current.title == "03 good"
