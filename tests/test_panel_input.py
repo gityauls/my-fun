@@ -55,7 +55,7 @@ def test_jump_slider_click(qapp):
 def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
-                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A"}
+                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I"}
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 
@@ -151,7 +151,7 @@ def test_enter_and_select_all(rig):
 def test_context_menu(rig):
     p, fake, *_ = rig
     assert [a.text() for a in p.context_menu.actions()] == [
-        "재생\tEnter", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
+        "재생\tEnter", "곡 정보…", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
     assert not p.actions["remove"].isEnabled()
     p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()
@@ -225,3 +225,25 @@ def test_file_drops_are_always_copies(rig):
     drop = QDropEvent(QPointF(10, 10), both, mime, Qt.LeftButton, Qt.ShiftModifier)
     assert drop.proposedAction() == Qt.MoveAction
     p.dropEvent(drop); assert drop.isAccepted() and drop.dropAction() == Qt.CopyAction
+
+
+def test_ctrl_i_opens_current_and_reuses_dialog(rig):
+    p, *_ = rig
+    p.shortcuts["Ctrl+I"].activated.emit(); d = p.info_dialog
+    assert d.isVisible() and d.path_label.text().endswith("01 a.mp3")
+    p.art_label.clicked.emit()
+    assert p.info_dialog is d
+
+def test_context_info_uses_row_and_does_not_follow(rig):
+    p, *_ = rig
+    p.playlist_view.setCurrentRow(2); p.context_menu.aboutToShow.emit()
+    assert p.actions["info_row"].isEnabled()
+    p.actions["info_row"].trigger()
+    assert p.info_dialog.path_label.text().endswith("03 c.mp3")
+    p.next(); assert p.info_dialog.path_label.text().endswith("03 c.mp3")
+
+def test_view_button_and_info_action(rig):
+    p, *_ = rig
+    assert p.view_button.text() == "보기" and [a.text() for a in p.view_menu.actions()] == ["곡 정보…\tCtrl+I"]
+    p.controller.clear(); p.refresh(); p.playlist_view.setCurrentRow(-1); p.view_menu.aboutToShow.emit()
+    assert not p.actions["info"].isEnabled()

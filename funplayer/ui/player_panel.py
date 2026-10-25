@@ -15,6 +15,7 @@ from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.icons import OFF_COLOR, repeat_icon, shuffle_icon
+from funplayer.ui.info_dialog import TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.playlist_view import PlaylistView
 
@@ -26,6 +27,7 @@ REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: �
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 56
 ART_MINI = 40
+BOTTOM_BUTTON_W = 62
 
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
@@ -34,6 +36,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
+    ("Ctrl+I", "show_track_info"),
 ]
 
 
@@ -59,6 +62,7 @@ class PlayerPanel(QWidget):
         self._list_version = -1
         self._layout_version = -1
         self.actions: dict[str, QAction] = {}
+        self.info_dialog: TrackInfoDialog | None = None
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
 
@@ -167,10 +171,14 @@ class PlayerPanel(QWidget):
         self.open_button = QPushButton("열기")
         self.add_button = QPushButton("추가")
         self.list_button = QPushButton("목록")
+        self.view_button = QPushButton("보기")
         self.count_label = QLabel("0곡")
+        for b in (self.open_button, self.add_button, self.list_button, self.view_button):
+            b.setFixedWidth(BOTTOM_BUTTON_W)   # 네 단추가 380 폭에 들어가게
         bottom.addWidget(self.open_button)
         bottom.addWidget(self.add_button)
         bottom.addWidget(self.list_button)
+        bottom.addWidget(self.view_button)
         bottom.addStretch(1)
         bottom.addWidget(self.count_label)
         root.addLayout(bottom)
@@ -205,6 +213,8 @@ class PlayerPanel(QWidget):
             ("파일…", self.add_files), ("폴더…", self.add_folder),
             ("재생목록…", self.add_playlist)])
         self._make_list_menu()
+        self._make_view_menu()
+        self.art_label.clicked.connect(self.show_track_info)
 
         self.shortcuts: dict[str, QShortcut] = {}
         for key, name in SHORTCUTS:
@@ -216,6 +226,7 @@ class PlayerPanel(QWidget):
     def _make_context_menu(self) -> None:
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
+                 ("info_row", "곡 정보…", self.show_row_info),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
                  None,
                  ("select_all", "전체 선택\tCtrl+A", self.select_all)]
@@ -257,9 +268,18 @@ class PlayerPanel(QWidget):
         menu.aboutToShow.connect(self._update_actions)
         self.list_button.setMenu(menu)
 
+    def _make_view_menu(self) -> None:
+        menu = self.view_menu = QMenu(self.view_button)
+        self._add_action(menu, "info", "곡 정보…\tCtrl+I", self.show_track_info)
+        menu.aboutToShow.connect(self._update_actions)
+        self.view_button.setMenu(menu)
+
     def _update_actions(self) -> None:
         self.actions["remove"].setEnabled(bool(self.selected_rows()))
-        self.actions["play_selected"].setEnabled(self.playlist_view.currentRow() >= 0)
+        row = self.playlist_view.currentRow()
+        self.actions["play_selected"].setEnabled(row >= 0)
+        self.actions["info_row"].setEnabled(row >= 0)
+        self.actions["info"].setEnabled(self.controller.playlist.index is not None or row >= 0)
         has_tracks = len(self.controller.playlist) > 0
         for key in ("save", "dedupe", "remove_unplayable", "sort_name", "sort_path", "clear"):
             self.actions[key].setEnabled(has_tracks)
@@ -370,6 +390,27 @@ class PlayerPanel(QWidget):
         if row >= 0:
             self.controller.play_index(row)
             self.refresh()
+
+    def show_track_info(self) -> None:
+        i = self.controller.playlist.index
+        if i is None:
+            i = self.playlist_view.currentRow()
+        if i is not None and i >= 0:
+            self._show_info_for(i)
+
+    def show_row_info(self) -> None:
+        row = self.playlist_view.currentRow()
+        if row >= 0:
+            self._show_info_for(row)
+
+    def _show_info_for(self, i: int) -> None:
+        info = self.controller.info_for(i)
+        if self.info_dialog is None:
+            self.info_dialog = TrackInfoDialog(self)
+        self.info_dialog.show_info(info, load_cover(info))
+        self.info_dialog.show()
+        self.info_dialog.raise_()
+        self.info_dialog.activateWindow()
 
     def select_all(self) -> None:
         self.playlist_view.selectAll()
