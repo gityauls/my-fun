@@ -1,4 +1,5 @@
 import json, logging
+import pytest
 from funplayer.core.settings import DEFAULTS, JsonStore, Settings
 
 def make(store=None):
@@ -10,7 +11,10 @@ def test_defaults():
     s, _, _ = make()
     assert (s.volume, s.muted, s.seek_step) == (70, False, 5)
     assert DEFAULTS == {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
-                        "player_repeat": "off", "player_shuffle": False}
+                        "player_repeat": "off", "player_shuffle": False,
+                        "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
+                        "player_mini_on_top": True, "player_media_keys": True,
+                        "player_geometry": None, "player_mini_geometry": None}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -63,3 +67,36 @@ def test_save_failure_is_logged(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         js.save()
     assert caplog.records
+
+def test_stage2b_defaults():
+    s = Settings({}, lambda: None)
+    assert (s.last_track, s.last_position, s.mini, s.mini_on_top, s.media_keys) == ("", 0.0, False, True, True)
+    assert s.geometry is None and s.mini_geometry is None
+
+@pytest.mark.parametrize("raw", [None, "x", True, -3, float("nan"), float("inf"), [1]])
+def test_bad_last_position_is_zero(raw):
+    assert Settings({"player_last_position": raw}, lambda: None).last_position == 0.0
+
+@pytest.mark.parametrize("raw", [None, "1,2,3,4", [1, 2, 3], [1, 2, 0, 4], [1, 2, 3, -4],
+                                 [1, "2", 3, 4], [1, 2, True, 4], [1.5, 2, 3, 4], {"x": 1}])
+def test_bad_geometry_is_none(raw):
+    s = Settings({"player_geometry": raw, "player_mini_geometry": raw}, lambda: None)
+    assert s.geometry is None and s.mini_geometry is None
+
+def test_bool_and_text_keys_ignore_wrong_types():
+    s = Settings({"player_mini": 1, "player_mini_on_top": "no", "player_media_keys": 0,
+                  "player_last_track": 5}, lambda: None)
+    assert (s.mini, s.mini_on_top, s.media_keys, s.last_track) == (False, True, True, "")
+
+def test_stage2b_round_trip():
+    store, saves = {}, []
+    s = Settings(store, lambda: saves.append(1))
+    s.last_track = "C:/m/a.mp3"; s.last_position = 72.5; s.mini = True
+    s.mini_on_top = False; s.media_keys = False
+    s.geometry = (10, 20, 380, 480); s.mini_geometry = [5, 6, 380, 92]
+    assert store == {"player_last_track": "C:/m/a.mp3", "player_last_position": 72.5,
+                     "player_mini": True, "player_mini_on_top": False, "player_media_keys": False,
+                     "player_geometry": [10, 20, 380, 480], "player_mini_geometry": [5, 6, 380, 92]}
+    assert len(saves) == 7 and s.geometry == [10, 20, 380, 480]
+    s.geometry = None
+    assert store["player_geometry"] is None and s.geometry is None

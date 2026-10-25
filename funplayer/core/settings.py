@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Callable
@@ -11,7 +12,10 @@ logger = logging.getLogger(__name__)
 REPEAT_MODES = ("off", "all", "one")
 
 DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
-            "player_repeat": "off", "player_shuffle": False}
+            "player_repeat": "off", "player_shuffle": False,
+            "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
+            "player_mini_on_top": True, "player_media_keys": True,
+            "player_geometry": None, "player_mini_geometry": None}
 
 
 def _read_int(store: dict, key: str, lo: int, hi: int) -> int:
@@ -22,6 +26,15 @@ def _read_int(store: dict, key: str, lo: int, hi: int) -> int:
         return max(lo, min(hi, int(value)))
     except (ValueError, OverflowError):
         return DEFAULTS[key]
+
+
+def _read_geometry(value) -> list[int] | None:
+    # [x, y, w, h] of ints with a positive size; anything else is treated as unset
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in value):
+        return None
+    return list(value) if value[2] > 0 and value[3] > 0 else None
 
 
 class Settings:
@@ -77,6 +90,73 @@ class Settings:
     @shuffle.setter
     def shuffle(self, value: bool) -> None:
         self._set("player_shuffle", bool(value))
+
+    @property
+    def last_track(self) -> str:
+        value = self._store.get("player_last_track")
+        return value if isinstance(value, str) else DEFAULTS["player_last_track"]
+
+    @last_track.setter
+    def last_track(self, value: str) -> None:
+        self._set("player_last_track", str(value))
+
+    @property
+    def last_position(self) -> float:
+        value = self._store.get("player_last_position")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return DEFAULTS["player_last_position"]
+        try:
+            position = float(value)
+        except OverflowError:
+            return DEFAULTS["player_last_position"]
+        return position if math.isfinite(position) and position >= 0 else DEFAULTS["player_last_position"]
+
+    @last_position.setter
+    def last_position(self, value: float) -> None:
+        self._set("player_last_position", float(value))
+
+    @property
+    def mini(self) -> bool:
+        value = self._store.get("player_mini")
+        return value if isinstance(value, bool) else DEFAULTS["player_mini"]
+
+    @mini.setter
+    def mini(self, value: bool) -> None:
+        self._set("player_mini", bool(value))
+
+    @property
+    def mini_on_top(self) -> bool:
+        value = self._store.get("player_mini_on_top")
+        return value if isinstance(value, bool) else DEFAULTS["player_mini_on_top"]
+
+    @mini_on_top.setter
+    def mini_on_top(self, value: bool) -> None:
+        self._set("player_mini_on_top", bool(value))
+
+    @property
+    def media_keys(self) -> bool:
+        value = self._store.get("player_media_keys")
+        return value if isinstance(value, bool) else DEFAULTS["player_media_keys"]
+
+    @media_keys.setter
+    def media_keys(self, value: bool) -> None:
+        self._set("player_media_keys", bool(value))
+
+    @property
+    def geometry(self) -> list[int] | None:
+        return _read_geometry(self._store.get("player_geometry"))
+
+    @geometry.setter
+    def geometry(self, value) -> None:
+        self._set("player_geometry", None if value is None else [int(v) for v in value])
+
+    @property
+    def mini_geometry(self) -> list[int] | None:
+        return _read_geometry(self._store.get("player_mini_geometry"))
+
+    @mini_geometry.setter
+    def mini_geometry(self, value) -> None:
+        self._set("player_mini_geometry", None if value is None else [int(v) for v in value])
 
 
 class JsonStore:
