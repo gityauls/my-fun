@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize, Qt, QTimer
+from PyQt5.QtCore import QItemSelectionModel, QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
-    QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -15,6 +15,7 @@ from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.icons import OFF_COLOR, repeat_icon, shuffle_icon
 from funplayer.ui.jump_slider import JumpSlider
+from funplayer.ui.playlist_view import PlaylistView
 
 REFRESH_MS = 200
 VOLUME_STEP = 5
@@ -28,6 +29,8 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Left", "seek_back"), ("Right", "seek_forward"), ("Up", "volume_up"),
     ("Down", "volume_down"), ("M", "toggle_mute"), ("L", "open_files"),
     ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
+    ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
+    ("Ctrl+A", "select_all"),
 ]
 
 
@@ -38,6 +41,8 @@ class PlayerPanel(QWidget):
         self.controller = PlayerController(self._player, settings)
         self._dragging = False
         self._list_version = -1
+        self._layout_version = -1
+        self.actions: dict[str, QAction] = {}
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
 
@@ -120,7 +125,7 @@ class PlayerPanel(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         root.addWidget(line)
 
-        self.playlist_view = QListWidget()
+        self.playlist_view = PlaylistView()
         root.addWidget(self.playlist_view, 1)
 
         bottom = QHBoxLayout()
@@ -160,6 +165,9 @@ class PlayerPanel(QWidget):
         self.seek_slider.sliderMoved.connect(self._seek_moved)
         self.seek_slider.sliderReleased.connect(self._seek_released)
         self.playlist_view.itemDoubleClicked.connect(self._item_double_clicked)
+        self.playlist_view.rowsMoved.connect(self._rows_moved)
+        self.playlist_view.filesDropped.connect(self._files_dropped)
+        self._make_context_menu()
 
         self.shortcuts: dict[str, QShortcut] = {}
         for key, name in SHORTCUTS:
@@ -167,6 +175,32 @@ class PlayerPanel(QWidget):
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(getattr(self, name))
             self.shortcuts[key] = sc
+
+    def _make_context_menu(self) -> None:
+        menu = QMenu(self)
+        specs = [("play_selected", "재생\tEnter", self.play_selected),
+                 ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
+                 None,
+                 ("select_all", "전체 선택\tCtrl+A", self.select_all)]
+        for spec in specs:
+            if spec is None:
+                menu.addSeparator()
+                continue
+            key, text, slot = spec
+            act = QAction(text, menu)
+            act.triggered.connect(lambda _=False, f=slot: f())
+            menu.addAction(act)
+            self.actions[key] = act
+        menu.aboutToShow.connect(self._update_actions)
+        self.context_menu = menu
+        view = self.playlist_view
+        view.setContextMenuPolicy(Qt.CustomContextMenu)
+        view.customContextMenuRequested.connect(
+            lambda pos: self.context_menu.exec_(view.viewport().mapToGlobal(pos)))
+
+    def _update_actions(self) -> None:
+        self.actions["remove"].setEnabled(bool(self.selected_rows()))
+        self.actions["play_selected"].setEnabled(self.playlist_view.currentRow() >= 0)
 
     def _make_menu(self, button: QPushButton, files_slot, folder_slot) -> QMenu:
         menu = QMenu(button)
@@ -199,6 +233,48 @@ class PlayerPanel(QWidget):
     def _item_double_clicked(self, item: QListWidgetItem) -> None:
         self.controller.play_index(self.playlist_view.row(item))
         self.refresh()
+
+    def _rows_moved(self, rows: list[int], before: int) -> None:
+        new = self.controller.move(rows, before)
+        self.refresh()
+        self.select_rows(new)
+
+    def _files_dropped(self, paths: list[str]) -> None:
+        self.controller.add(paths)
+        self.refresh()
+
+    def selected_rows(self) -> list[int]:
+        return sorted(self.playlist_view.row(i) for i in self.playlist_view.selectedItems())
+
+    def select_rows(self, rows: list[int]) -> None:
+        view = self.playlist_view
+        view.clearSelection()
+        if not rows:
+            return
+        view.setCurrentRow(rows[0], QItemSelectionModel.NoUpdate)
+        for r in rows:
+            item = view.item(r)
+            if item is not None:
+                item.setSelected(True)
+
+    def remove_selected(self) -> None:
+        rows = self.selected_rows()
+        if not rows:
+            return
+        self.controller.remove(rows)
+        self.refresh()
+        count = self.playlist_view.count()
+        if count:
+            self.select_rows([min(rows[0], count - 1)])
+
+    def play_selected(self) -> None:
+        row = self.playlist_view.currentRow()
+        if row >= 0:
+            self.controller.play_index(row)
+            self.refresh()
+
+    def select_all(self) -> None:
+        self.playlist_view.selectAll()
 
     def toggle(self) -> None:
         self.controller.toggle()
@@ -341,9 +417,14 @@ class PlayerPanel(QWidget):
             self.volume_slider.setValue(c.volume)
             self.volume_slider.blockSignals(False)
 
-        if c.playlist.version != self._list_version:
+        pl = c.playlist
+        if pl.layout_version != self._layout_version or self.playlist_view.count() != len(pl):
             self._rebuild_list()
-            self._list_version = c.playlist.version
+            self._layout_version = pl.layout_version
+            self._list_version = pl.version
+        elif pl.version != self._list_version:
+            self._repaint_rows()
+            self._list_version = pl.version
 
         self._refresh_modes()
         self.count_label.setText(f"{len(c.playlist)}곡")
@@ -382,18 +463,28 @@ class PlayerPanel(QWidget):
         view.setUpdatesEnabled(False)
         view.clear()
         for i, track in enumerate(pl.tracks):
-            mark = "▶" if i == pl.index else "  "
-            item = QListWidgetItem(f"{mark} {i + 1:>2}   {track.title}")
-            if i == pl.index:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            if track.failed:
-                item.setForeground(QColor(Qt.gray))
+            item = QListWidgetItem()
+            self._style_item(item, i, track, i == pl.index)
             view.addItem(item)
         view.doItemsLayout()
         bar.setValue(scroll)
         view.setUpdatesEnabled(True)
+
+    def _repaint_rows(self) -> None:
+        pl = self.controller.playlist
+        for i, track in enumerate(pl.tracks):
+            item = self.playlist_view.item(i)
+            if item is not None:
+                self._style_item(item, i, track, i == pl.index)
+
+    @staticmethod
+    def _style_item(item: QListWidgetItem, i: int, track, current: bool) -> None:
+        mark = "▶" if current else "  "
+        item.setText(f"{mark} {i + 1:>2}   {track.title}")
+        font = item.font()
+        font.setBold(current)
+        item.setFont(font)
+        item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed else None)
 
     # ---- 끝내기 ----
 

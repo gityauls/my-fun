@@ -54,7 +54,8 @@ def test_jump_slider_click(qapp):
 
 def test_shortcut_table(rig):
     p, *_ = rig
-    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L", "R", "S"}
+    assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L", "R", "S",
+                             "Delete", "Return", "Enter", "Ctrl+A"}
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 
@@ -120,3 +121,54 @@ def test_jump_slider_handle_edge_click_keeps_value(qapp):
     handle = s.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, s)
     QTest.mouseClick(s, Qt.LeftButton, Qt.NoModifier, QPoint(handle.left() + 1, handle.center().y()))
     assert s.value() == 90000
+
+
+def test_selection_survives_track_change(rig):
+    p, *_ = rig; v = p.playlist_view
+    v.item(2).setSelected(True); p.controller.next(); p.refresh()
+    assert v.item(2).isSelected() and v.item(1).text().startswith("▶") and v.item(1).font().bold()
+    assert not v.item(0).font().bold() and not v.item(0).text().startswith("▶")
+
+def test_delete_removes_selected_and_selects_same_row(rig):
+    p, fake, *_ = rig; v = p.playlist_view
+    v.item(0).setSelected(True); v.item(1).setSelected(True)
+    p.shortcuts["Delete"].activated.emit()
+    assert [t.title for t in p.controller.playlist.tracks] == ["03 c"] and fake.loaded[-1].endswith("03 c.mp3")
+    assert p.selected_rows() == [0]
+
+def test_real_keys_in_list(rig):
+    p, fake, *_ = rig; v = p.playlist_view; p.activateWindow()
+    assert QTest.qWaitForWindowActive(p)
+    v.setFocus(); v.setCurrentRow(2)
+    QTest.keyClick(v, Qt.Key_Return); assert fake.loaded[-1].endswith("03 c.mp3")
+    QTest.keyClick(v, Qt.Key_Delete); assert len(p.controller.playlist) == 2
+
+def test_enter_and_select_all(rig):
+    p, fake, *_ = rig; p.playlist_view.setCurrentRow(1)
+    p.shortcuts["Return"].activated.emit(); assert fake.loaded[-1].endswith("02 b.mp3")
+    p.shortcuts["Ctrl+A"].activated.emit(); assert p.selected_rows() == [0, 1, 2]
+
+def test_context_menu(rig):
+    p, fake, *_ = rig
+    assert [a.text() for a in p.context_menu.actions()] == [
+        "재생	Enter", "선택한 곡 지우기	Del", "", "전체 선택	Ctrl+A"]
+    p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
+    assert not p.actions["remove"].isEnabled()
+    p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()
+    assert p.actions["remove"].isEnabled() and p.actions["play_selected"].isEnabled()
+    p.actions["play_selected"].trigger(); assert fake.loaded[-1].endswith("02 b.mp3")
+
+def test_drag_rows_reorders_and_keeps_selection(rig):
+    p, fake, *_ = rig; v = p.playlist_view
+    at = v.visualItemRect(v.item(0)).topLeft() + QPoint(5, 2)
+    md = v.mimeData([v.item(2)])  # QDropEvent doesn't own the mime data; keep it alive
+    v.dropEvent(QDropEvent(QPointF(at), Qt.MoveAction, md, Qt.LeftButton, Qt.NoModifier))
+    assert [t.title for t in p.controller.playlist.tracks] == ["03 c", "01 a", "02 b"]
+    assert p.controller.playlist.index == 1 and p.selected_rows() == [0] and len(fake.loaded) == 1
+
+def test_file_drop_on_list_adds(rig):
+    p, _, _, tmp = rig; v = p.playlist_view
+    song = make_songs(tmp / "d", ["05 d.mp3"]) / "05 d.mp3"
+    mime = QMimeData(); mime.setUrls([QUrl.fromLocalFile(str(song))])
+    v.dropEvent(QDropEvent(QPointF(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    assert len(p.controller.playlist) == 4
