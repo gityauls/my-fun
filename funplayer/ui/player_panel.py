@@ -165,8 +165,8 @@ class PlayerPanel(QWidget):
         self.playlist_view.filesDropped.connect(self._files_dropped)
         self._make_context_menu()
         self._open_menu = self._make_menu(self.open_button, [
-            ("파일…	L", self.open_files), ("폴더…", self.open_folder),
-            ("재생목록…	Ctrl+O", self.open_playlist)])
+            ("파일…\tL", self.open_files), ("폴더…", self.open_folder),
+            ("재생목록…\tCtrl+O", self.open_playlist)])
         self._add_menu = self._make_menu(self.add_button, [
             ("파일…", self.add_files), ("폴더…", self.add_folder),
             ("재생목록…", self.add_playlist)])
@@ -210,7 +210,7 @@ class PlayerPanel(QWidget):
 
     def _make_list_menu(self) -> None:
         menu = self.list_menu = QMenu(self.list_button)
-        self._add_action(menu, "save", "저장…	Ctrl+S", self.save_playlist)
+        self._add_action(menu, "save", "저장…\tCtrl+S", self.save_playlist)
         menu.addSeparator()
         menu.addAction(self.actions["remove"])
         self._add_action(menu, "dedupe", "중복 곡 지우기", self.remove_duplicates)

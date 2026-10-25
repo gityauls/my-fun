@@ -96,7 +96,7 @@ def test_real_keypress_reaches_shortcut(rig):
 
 def test_menus(rig, monkeypatch):
     p, fake, _, tmp = rig
-    assert [a.text() for a in p.open_button.menu().actions()][:2] == ["파일…	L", "폴더…"]
+    assert [a.text() for a in p.open_button.menu().actions()][:2] == ["파일…\tL", "폴더…"]
     folder = make_songs(tmp / "f", ["01 x.mp3"])
     monkeypatch.setattr(p, "ask_folder", lambda: [str(folder)])
     p.add_button.menu().actions()[1].trigger(); assert len(p.controller.playlist) == 4
@@ -151,7 +151,7 @@ def test_enter_and_select_all(rig):
 def test_context_menu(rig):
     p, fake, *_ = rig
     assert [a.text() for a in p.context_menu.actions()] == [
-        "재생	Enter", "선택한 곡 지우기	Del", "", "전체 선택	Ctrl+A"]
+        "재생\tEnter", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
     assert not p.actions["remove"].isEnabled()
     p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()
@@ -176,10 +176,10 @@ def test_file_drop_on_list_adds(rig):
 def test_bottom_row_and_menus(rig):
     p, *_ = rig
     assert not hasattr(p, "clear_button") and p.list_button.text() == "목록"
-    assert [a.text() for a in p.open_button.menu().actions()] == ["파일…	L", "폴더…", "재생목록…	Ctrl+O"]
+    assert [a.text() for a in p.open_button.menu().actions()] == ["파일…\tL", "폴더…", "재생목록…\tCtrl+O"]
     assert [a.text() for a in p.add_button.menu().actions()] == ["파일…", "폴더…", "재생목록…"]
     assert [a.text() for a in p.list_menu.actions()] == [
-        "저장…	Ctrl+S", "", "선택한 곡 지우기	Del", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
+        "저장…\tCtrl+S", "", "선택한 곡 지우기\tDel", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
     assert [a.text() for a in p.list_menu.actions()[5].menu().actions()] == ["이름순", "폴더·이름순"]
 
 def test_save_and_open_playlist_with_keys(rig, monkeypatch):
