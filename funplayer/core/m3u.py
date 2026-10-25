@@ -55,7 +55,7 @@ def _entry(track: str, base: str) -> str:
 
 
 def write_playlist(path: str, tracks: list[str]) -> None:
-    """Write an m3u8 file atomically; raises OSError on failure."""
+    """Write an m3u8 file atomically; raises OSError (or ValueError for an unencodable path) on failure."""
     base = os.path.dirname(os.path.abspath(path))
     entries = [_entry(t, base) for t in tracks]
     data = ("\r\n".join(["#EXTM3U", *entries]) + "\r\n").encode("utf-8")
