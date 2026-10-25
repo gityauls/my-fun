@@ -11,6 +11,7 @@ class PlayOrder:
         self._rng = rng if rng is not None else random.Random()
         self._shuffle = False
         self._order: list[int] = []
+        self._pending: list[int] | None = None   # 무작위일 때 미리 정한 다음 한 바퀴
 
     @property
     def shuffle(self) -> bool:
@@ -20,7 +21,19 @@ class PlayOrder:
     def order(self) -> list[int]:
         return list(self._order)
 
+    def _next_lap(self) -> list[int]:
+        """다음 한 바퀴(전체를 새로 섞음). 지우기 전까지 같은 목록을 돌려준다."""
+        if self._pending is None:
+            lap = list(range(len(self._order)))
+            self._rng.shuffle(lap)
+            if len(lap) > 1 and lap[0] == self._order[-1]:   # 같은 곡이 이어서 나오지 않게
+                j = self._rng.randint(1, len(lap) - 1)
+                lap[0], lap[j] = lap[j], lap[0]
+            self._pending = lap
+        return self._pending
+
     def rebuild(self, n: int, current: int | None) -> None:
+        self._pending = None
         if not self._shuffle:
             self._order = list(range(n))
             return
@@ -34,6 +47,7 @@ class PlayOrder:
         self.rebuild(len(self._order), current)
 
     def extend(self, n: int, current: int | None) -> None:
+        self._pending = None
         new = list(range(len(self._order), n))
         if not self._shuffle:
             self._order.extend(new)
@@ -56,7 +70,22 @@ class PlayOrder:
         p = self._order.index(current)
         if p + 1 < len(self._order):
             return self._order[p + 1]
-        return self._order[0] if wrap else None
+        if not wrap:
+            return None
+        return self._next_lap()[0] if self._shuffle else self._order[0]
+
+    def upcoming(self, current: int | None, wrap: bool) -> list[int]:
+        """current 다음부터 재생 순서대로 이어질 곡들 (current는 넣지 않는다)."""
+        if current is None or not self._order:
+            return []
+        p = self._order.index(current)
+        out = self._order[p + 1:]
+        if wrap:
+            if self._shuffle:
+                out += [i for i in self._next_lap() if i not in out and i != current]
+            else:
+                out += self._order[:p]
+        return out
 
     def prev(self, current: int | None, wrap: bool) -> int | None:
         if current is None or not self._order:
@@ -73,17 +102,16 @@ class PlayOrder:
         if not self._shuffle:
             return
         order = self._order
+        pending, self._pending = self._pending, None
+        if old is not None and order[-1] == old and pending is not None and new == pending[0]:
+            self._order = pending   # 한 바퀴를 다 돌고 다음 바퀴로
+            return
         q = order.index(new)
         if old is None:
             order.insert(0, order.pop(q))
             return
         p = order.index(old)
         if q in (p - 1, p, p + 1):
-            return
-        if p == len(order) - 1 and q == 0:  # 한 바퀴를 다 돌고 처음으로: 새로 섞는다
-            rest = order[1:]
-            self._rng.shuffle(rest)
-            self._order = [new] + rest
             return
         order.pop(q)
         if q < p:
@@ -92,6 +120,7 @@ class PlayOrder:
 
     def remap(self, mapping: list[int | None]) -> None:
         """mapping[옛 번호] = 새 번호 (지운 곡은 None)."""
+        self._pending = None
         n = sum(1 for m in mapping if m is not None)
         if not self._shuffle:
             self._order = list(range(n))

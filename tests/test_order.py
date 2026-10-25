@@ -38,10 +38,53 @@ def test_shuffle_prev_goes_back_and_never_wraps():
     o = shuffled5()
     assert o.prev(3, True) == 4 and o.prev(2, True) is None
 
-def test_wrap_reshuffles_with_chosen_first():
+def test_wrap_reshuffles_whole_next_lap():
     o = shuffled5()
-    o.moved_to(0, o.next(0, True))
-    assert o.order == [2, 0, 1, 3, 4]
+    nxt = o.next(0, True)
+    assert nxt == 4 and o.next(0, True) == 4
+    o.moved_to(0, nxt)
+    assert o.order == [4, 3, 2, 1, 0]
+
+def test_two_track_lap_never_repeats_last_track():
+    o = PlayOrder(FakeRng()); o.set_shuffle(True, None); o.rebuild(2, 0)
+    assert o.order == [0, 1] and o.next(1, True) == 0
+
+def test_pick_first_by_hand_on_last_track_just_goes_next():
+    o = shuffled5(); o.moved_to(0, 2)
+    assert o.order == [4, 3, 1, 0, 2]
+
+def test_upcoming():
+    s = PlayOrder(); s.rebuild(5, None)
+    assert s.upcoming(2, False) == [3, 4] and s.upcoming(2, True) == [3, 4, 0, 1]
+    o = shuffled5()
+    assert o.upcoming(3, False) == [1, 0] and o.upcoming(0, True) == [4, 3, 2, 1]
+    assert o.upcoming(None, True) == [] and PlayOrder().upcoming(0, True) == []
+
+def test_empty_and_single_order():
+    o = PlayOrder(random.Random(1)); o.set_shuffle(True, None); o.rebuild(0, None)
+    assert o.next(0, True) is None and o.upcoming(0, True) == []
+    o.rebuild(1, None); assert o.next(0, True) == 0
+
+def test_real_rng_keeps_order_a_permutation():
+    rng = random.Random(3); o = PlayOrder(random.Random(3)); n = 12
+    o.set_shuffle(True, None); o.rebuild(n, None); cur = o.first()
+    for _ in range(200):
+        act = rng.choice(["next", "pick", "extend", "remap", "toggle"])
+        if act == "next":
+            nxt = o.next(cur, True); o.moved_to(cur, nxt); cur = nxt
+        elif act == "pick":
+            nxt = rng.randrange(n); o.moved_to(cur, nxt); cur = nxt
+        elif act == "extend":
+            n += 2; o.extend(n, cur)
+        elif act == "remap" and n > 3:
+            drop = rng.randrange(n); mapping = []
+            for i in range(n):
+                mapping.append(None if i == drop else i - (i > drop))
+            n -= 1; o.remap(mapping); cur = mapping[cur] if mapping[cur] is not None else o.first()
+        elif act == "toggle":
+            o.set_shuffle(not o.shuffle, cur)
+            if not o.shuffle: o.set_shuffle(True, cur)
+        assert sorted(o.order) == list(range(n))
 
 def test_pick_later_track_goes_next():
     o = shuffled5(); o.moved_to(4, 0)

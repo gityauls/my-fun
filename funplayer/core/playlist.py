@@ -103,11 +103,7 @@ class Playlist:
 
     def _survivor(self, cur: int, gone: set[int], wrap: bool) -> tuple[int | None, str]:
         """지운 지금 곡 대신 지금 곡이 될 곡: [다음]으로 갈 곡, 없으면 순서상 앞의 곡(정지)."""
-        nxt = cur
-        for _ in range(len(self.tracks)):
-            nxt = self._order.next(nxt, wrap)
-            if nxt is None or nxt == cur:
-                break
+        for nxt in self._order.upcoming(cur, wrap):
             if nxt not in gone:
                 return nxt, "next"
         prv = cur

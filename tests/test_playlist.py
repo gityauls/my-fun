@@ -116,3 +116,8 @@ def test_move(rows, before, new_rows, left):
     pl = Playlist(); pl.replace(P5); pl.set_current(2)
     assert pl.move(rows, before) == new_rows
     assert ",".join(titles(pl)) == left and pl.current.title == "02 c"
+
+def test_remove_last_in_shuffle_with_wrap_picks_new_lap_head():
+    pl = Playlist(FakeRng()); pl.set_shuffle(True); pl.replace(P5)       # order [4,3,2,1,0]
+    for i in (3, 2, 1, 0): pl.set_current(i)
+    assert pl.remove([0], wrap=True) == "next" and pl.current.title == "04 e"

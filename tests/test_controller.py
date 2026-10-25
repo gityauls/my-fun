@@ -167,6 +167,18 @@ def test_shuffle_with_repeat_all_starts_new_lap(tmp_path):
     got = names(fake)
     assert len(got) == 9 and sorted(got[4:8]) == sorted(got[:4]) and c.state is State.PLAYING
 
+def test_shuffle_repeat_all_reshuffles_every_lap(tmp_path):
+    c, fake, _ = make_ctl({"player_shuffle": True, "player_repeat": "all"}, rng=random.Random(5))
+    songs = [f"{i:02} s.mp3" for i in range(5)]
+    c.open([str(make_songs(tmp_path, songs))])
+    for _ in range(19):
+        fake.finish(); c.on_track_end()
+    got = names(fake)
+    laps = [got[i:i + 5] for i in range(0, 20, 5)]
+    assert len(got) == 20 and all(sorted(lap) == songs for lap in laps)
+    assert len({lap[0] for lap in laps}) > 1
+    assert all(a != b for a, b in zip(got, got[1:]))
+
 def test_shuffle_prev_returns_to_previous(tmp_path):
     c, fake, _ = make_ctl({"player_shuffle": True}, rng=random.Random(3))
     c.open([str(make_songs(tmp_path, [f"{i:02} s.mp3" for i in range(6)]))])
