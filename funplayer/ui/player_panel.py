@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QItemSelectionModel, QSize, Qt, QTimer
+from PyQt5.QtCore import QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
@@ -13,6 +13,7 @@ from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
+from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.icons import OFF_COLOR, repeat_icon, shuffle_icon
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.playlist_view import PlaylistView
@@ -23,6 +24,8 @@ ERROR_COLOR = "#B3261E"
 INFO_COLOR = "#5F6368"
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
+ART_NORMAL = 56
+ART_MINI = 40
 
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
@@ -34,11 +37,24 @@ SHORTCUTS: list[tuple[str, str]] = [
 ]
 
 
+class _ArtLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class PlayerPanel(QWidget):
-    def __init__(self, settings: Settings, player=None, parent=None) -> None:
+    def __init__(self, settings: Settings, player=None, parent=None, *,
+                 session_path: str | None = None, read_info=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
-        self.controller = PlayerController(self._player, settings)
+        self.controller = PlayerController(
+            self._player, settings, session_path=session_path, read_info=read_info)
+        self._cover_key: object = object()
+        self._cover_src = None
         self._dragging = False
         self._list_version = -1
         self._layout_version = -1
@@ -58,6 +74,8 @@ class PlayerPanel(QWidget):
         self._timer.setInterval(REFRESH_MS)
         self._timer.timeout.connect(self.refresh)
         self._timer.start()
+        if session_path:
+            self.controller.restore_session()
         self.refresh()
 
     # ---- 만들기 ----
@@ -84,7 +102,23 @@ class PlayerPanel(QWidget):
         self.title_label.setFont(font)
         self.title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.title_label.setMinimumWidth(0)
-        root.addWidget(self.title_label)
+
+        self.head_row = QHBoxLayout()
+        self.head_row.setSpacing(10)
+        self.art_label = _ArtLabel()
+        self.art_label.setFixedSize(ART_NORMAL, ART_NORMAL)
+        self.art_label.setToolTip("곡 정보")
+        self.head_row.addWidget(self.art_label, 0, Qt.AlignTop)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        self.artist_label = QLabel()
+        self.artist_label.setStyleSheet(f"color: {INFO_COLOR};")
+        self.artist_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.artist_label.setMinimumWidth(0)
+        titles.addWidget(self.title_label)
+        titles.addWidget(self.artist_label)
+        self.head_row.addLayout(titles, 1)
+        root.addLayout(self.head_row)
 
         row = QHBoxLayout()
         self.elapsed_label = QLabel("0:00")
@@ -454,6 +488,12 @@ class PlayerPanel(QWidget):
         position = c.position
 
         self._set_elided(self.title_label, c.title)
+        self._set_elided(self.artist_label, c.subtitle)
+        key = c.info.path if c.info else None
+        if key != self._cover_key:
+            self._cover_key = key
+            self._cover_src = load_cover(c.info) if c.info else None
+            self.art_label.setPixmap(art_pixmap(self._cover_src, self.art_label.width()))
         shown = self.seek_slider.value() / 1000 if self._dragging else position
         self.elapsed_label.setText(format_time(shown))
         self.total_label.setText(format_time(duration))
@@ -462,7 +502,7 @@ class PlayerPanel(QWidget):
         seek.setRange(0, int(duration * 1000))
         if not self._dragging:
             seek.setValue(int(position * 1000))
-        seek.setEnabled(state is not State.STOPPED and duration > 0)
+        seek.setEnabled(c.can_seek and duration > 0)
 
         if state is State.PLAYING:
             self.play_button.setIcon(st.standardIcon(QStyle.SP_MediaPause))
@@ -555,5 +595,6 @@ class PlayerPanel(QWidget):
     # ---- 끝내기 ----
 
     def shutdown(self) -> None:
+        self.controller.save_session()
         self._timer.stop()
         self._player.close()

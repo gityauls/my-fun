@@ -102,3 +102,56 @@ def test_gray_row_returns_to_default_in_place_after_playing(panel, tmp_path):
     assert item.foreground().color() == QColor(Qt.gray)
     broken[0] = False; p.controller.play_index(1); p.refresh()
     assert p.playlist_view.item(1) is item and item.data(Qt.ForegroundRole) is None
+
+
+from PyQt5.QtCore import QBuffer, QByteArray, QIODevice
+from PyQt5.QtGui import QImage
+from funplayer.core.m3u import write_playlist
+from funplayer.core.taginfo import TrackInfo
+
+def red_png():
+    img = QImage(8, 8, QImage.Format_ARGB32); img.fill(QColor("#ff0000"))
+    data = QByteArray(); buf = QBuffer(data); buf.open(QIODevice.WriteOnly); img.save(buf, "PNG")
+    return bytes(data)
+
+def test_header_shows_subtitle_and_tag_art(qapp, tmp_path):
+    reader = lambda path: TrackInfo(path, artist="Lo-Fi Band", album="Sunday Mornings", picture=red_png())
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), read_info=reader)
+    try:
+        p.controller.open([str(make_songs(tmp_path, ["01 a.mp3"]))]); p.refresh()
+        assert p.artist_label.toolTip() == "Lo-Fi Band · Sunday Mornings"
+        assert p.art_label.toolTip() == "곡 정보" and p.art_label.width() == 56
+        assert p.art_label.pixmap().toImage().pixelColor(28, 28) == QColor("#ff0000")
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_default_art_and_empty_subtitle(panel):
+    p, _ = panel
+    pm = p.art_label.pixmap()
+    assert pm is not None and (pm.width(), pm.height()) == (56, 56) and p.artist_label.text() == ""
+
+def test_cover_loaded_once_per_track(qapp, tmp_path, monkeypatch):
+    import funplayer.ui.player_panel as pp
+    calls = []; real = pp.load_cover
+    monkeypatch.setattr(pp, "load_cover", lambda info, *a: calls.append(info.path) or real(info, *a))
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer())
+    try:
+        p.controller.open([str(make_songs(tmp_path, ABC))]); p.refresh(); p.refresh(); p.refresh()
+        assert len(calls) == 1
+        p.controller.next(); p.refresh()
+        assert len(calls) == 2
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_panel_restores_cued_session_and_saves_on_shutdown(qapp, tmp_path):
+    songs = make_songs(tmp_path / "m", ["01 a.mp3", "03 c.mp3"])
+    write_playlist(str(tmp_path / "last.m3u8"), [str(songs / "01 a.mp3"), str(songs / "03 c.mp3")])
+    store = {"player_last_track": str(songs / "03 c.mp3"), "player_last_position": 72.0}
+    fake = FakePlayer()
+    p = PlayerPanel(Settings(store, lambda: None), player=fake, session_path=str(tmp_path / "last.m3u8"))
+    p.refresh()
+    assert p.controller.playlist.index == 1 and p.seek_slider.isEnabled()
+    assert p.elapsed_label.text() == "1:12" and p.play_button.toolTip() == "재생"
+    assert p.status_label.toolTip() == "이어 듣기: 1:12부터"
+    fake.position = 80.0; p.shutdown(); p.deleteLater()
+    assert store["player_last_position"] == 80.0
