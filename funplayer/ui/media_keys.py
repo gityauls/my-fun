@@ -57,6 +57,11 @@ class MediaKeys(QObject):
     def enabled(self) -> bool:
         return bool(self._ids) if self._api is not None else self._on
 
+    @property
+    def complete(self) -> bool:
+        """네 키가 모두 걸려 있는가."""
+        return len(self._ids) == len(KEYS) if self._api is not None else self._on
+
     def enable(self) -> bool:
         if self._api is None:
             self._on = True

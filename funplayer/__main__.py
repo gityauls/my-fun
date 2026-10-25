@@ -53,8 +53,13 @@ def main(argv: list[str] | None = None) -> int:
     panel.setWindowTitle("my-fun")
     keeper = WindowKeeper(panel, settings)
     keeper.start()
+    # Windows 로그오프·종료 때는 exec_() 뒤가 돌지 않을 수 있어 끝나기 직전에도 저장한다 (두 번 해도 된다)
+    app.aboutToQuit.connect(keeper.save)
+    app.aboutToQuit.connect(panel.controller.save_session)
     panel.show()
     code = app.exec_()
+    app.aboutToQuit.disconnect(keeper.save)
+    app.aboutToQuit.disconnect(panel.controller.save_session)
     keeper.save()
     panel.shutdown()
     return code

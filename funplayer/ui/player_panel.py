@@ -94,7 +94,8 @@ class PlayerPanel(QWidget):
         if session_path:
             self.controller.restore_session()
         self.refresh()
-        if self._settings.media_keys and not self.media_keys.enable():
+        # 이어 듣기 안내가 떠 있으면 키 안내로 가리지 않는다 (시작할 때 상태 글은 그것뿐이다)
+        if self._settings.media_keys and not self.media_keys.enable() and not self.controller.status:
             self.controller.notify(MEDIA_KEYS_BUSY_MSG)
             self.refresh()
 
@@ -257,6 +258,7 @@ class PlayerPanel(QWidget):
                           (Qt.Key_MediaStop, self.stop)):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.setAutoRepeat(False)   # 누르고 있어도 한 번만
             sc.activated.connect(slot)
             self.media_shortcuts.append(sc)
 
@@ -341,7 +343,19 @@ class PlayerPanel(QWidget):
                 self.controller.notify(MEDIA_KEYS_BUSY_MSG)
         else:
             self.media_keys.disable()
+            if self.controller.status == MEDIA_KEYS_BUSY_MSG:
+                self.controller.notify("")
         self.refresh()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self._retry_media_keys()
+
+    def _retry_media_keys(self) -> None:
+        # 다른 프로그램(예: 동영상 재생 중인 Chrome)이 놓아 준 키를 창이 활성화될 때 조용히 다시 건다
+        if self._settings.media_keys and not self.media_keys.complete:
+            self.media_keys.enable()
 
     def _mini_on_top_clicked(self) -> None:
         checked = self.actions["mini_on_top"].isChecked()

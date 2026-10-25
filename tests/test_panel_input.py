@@ -359,3 +359,60 @@ def test_focused_media_shortcuts(rig):
     assert len(p.media_shortcuts) == 5
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.media_shortcuts)
     p.media_shortcuts[0].activated.emit(); assert fake.state is State.PAUSED
+
+def test_fallback_media_shortcuts_do_not_auto_repeat(rig):
+    p, *_ = rig
+    assert p.media_shortcuts and all(not sc.autoRepeat() for sc in p.media_shortcuts)
+
+def test_media_keys_silently_retried_when_window_becomes_active(qapp):
+    from PyQt5.QtCore import QEvent
+    api = FakeApi(busy={0xB3})
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), media_keys=MediaKeys(api=api))
+    try:
+        assert len(api.registered) == 3
+        api.busy.clear(); p.controller.notify("안내")
+        p.show(); p.activateWindow()
+        assert QTest.qWaitForWindowActive(p, 1000) and p.isActiveWindow()
+        assert len(api.registered) == 4 and p.controller.status == "안내"   # 알림 없이 다시 건다
+        api.busy.add(0xB3); p.media_keys.disable(); p.media_keys.enable(); assert len(api.registered) == 3
+        api.busy.clear(); QApplication.sendEvent(p, QEvent(QEvent.ActivationChange))
+        assert len(api.registered) == 4
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_media_keys_not_retried_when_option_off(qapp):
+    from PyQt5.QtCore import QEvent
+    api = FakeApi(); store = {"player_media_keys": False}
+    p = PlayerPanel(Settings(store, lambda: None), player=FakePlayer(), media_keys=MediaKeys(api=api))
+    try:
+        p.show(); p.activateWindow(); QTest.qWaitForWindowActive(p, 1000)
+        QApplication.sendEvent(p, QEvent(QEvent.ActivationChange))
+        assert api.registered == {} and api.calls == []
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_busy_notice_does_not_hide_resume_notice(qapp, tmp_path):
+    from funplayer.core.m3u import write_playlist
+    songs = make_songs(tmp_path / "m", ABC)
+    write_playlist(str(tmp_path / "last.m3u8"), [str(songs / n) for n in ABC])
+    store = {"player_last_track": str(songs / "02 b.mp3"), "player_last_position": 72.0}
+    api = FakeApi(busy={0xB3})
+    p = PlayerPanel(Settings(store, lambda: None), player=FakePlayer(), session_path=str(tmp_path / "last.m3u8"),
+                    media_keys=MediaKeys(api=api))
+    try:
+        assert p.controller.status == "이어 듣기: 1:12부터" and len(api.registered) == 3
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_turning_media_keys_off_clears_busy_notice(qapp):
+    api = FakeApi(busy={0xB3})
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), media_keys=MediaKeys(api=api))
+    try:
+        assert p.controller.status == "멀티미디어 키를 다른 프로그램이 쓰고 있습니다"
+        p.set_media_keys(False)
+        assert p.controller.status == "" and api.registered == {}
+        p.set_media_keys(True); assert p.controller.status == "멀티미디어 키를 다른 프로그램이 쓰고 있습니다"
+        p.controller.notify("안내"); p.set_media_keys(False)
+        assert p.controller.status == "안내"   # 다른 알림은 그대로
+    finally:
+        p.shutdown(); p.deleteLater()
