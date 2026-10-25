@@ -9,7 +9,17 @@ def make(store=None):
 def test_defaults():
     s, _, _ = make()
     assert (s.volume, s.muted, s.seek_step) == (70, False, 5)
-    assert DEFAULTS == {"player_volume": 70, "player_muted": False, "player_seek_step": 5}
+    assert DEFAULTS == {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
+                        "player_repeat": "off", "player_shuffle": False}
+
+def test_repeat_and_shuffle():
+    s, store, saves = make()
+    assert (s.repeat, s.shuffle) == ("off", False)
+    s.repeat = "one"; s.shuffle = True
+    assert store["player_repeat"] == "one" and store["player_shuffle"] is True and len(saves) == 2
+    s.repeat = "loop"; assert store["player_repeat"] == "off"
+    s2, _, _ = make({"player_repeat": "ALL", "player_shuffle": 1})
+    assert (s2.repeat, s2.shuffle) == ("off", False)
 
 def test_setters_clamp_and_save():
     s, store, saves = make()

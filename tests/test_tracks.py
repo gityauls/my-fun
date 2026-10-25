@@ -1,4 +1,5 @@
 from funplayer.core.tracks import SUPPORTED_EXTS, expand_paths, natural_key
+from funplayer.core.tracks import is_supported, name_sort_key, path_sort_key
 
 def touch(p):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"")
@@ -29,3 +30,9 @@ def test_duplicates_kept(tmp_path):
 def test_missing_and_unsupported_skipped(tmp_path):
     touch(tmp_path / "readme.txt")
     assert expand_paths([str(tmp_path / "nope.mp3"), str(tmp_path / "readme.txt")]) == []
+
+def test_public_sort_keys():
+    paths = [r"C:\b\2 x.mp3", r"C:\a\10 y.mp3", r"C:\a\9 z.mp3"]
+    assert sorted(paths, key=path_sort_key) == [r"C:\a\9 z.mp3", r"C:\a\10 y.mp3", r"C:\b\2 x.mp3"]
+    assert sorted(paths, key=name_sort_key) == [r"C:\b\2 x.mp3", r"C:\a\9 z.mp3", r"C:\a\10 y.mp3"]
+    assert is_supported("A.MP3") and not is_supported("list.m3u8")

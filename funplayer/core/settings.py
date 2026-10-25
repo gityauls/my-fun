@@ -8,7 +8,10 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5}
+REPEAT_MODES = ("off", "all", "one")
+
+DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
+            "player_repeat": "off", "player_shuffle": False}
 
 
 def _read_int(store: dict, key: str, lo: int, hi: int) -> int:
@@ -56,6 +59,24 @@ class Settings:
     @seek_step.setter
     def seek_step(self, value: int) -> None:
         self._set("player_seek_step", max(1, min(100, int(value))))
+
+    @property
+    def repeat(self) -> str:
+        value = self._store.get("player_repeat")
+        return value if value in REPEAT_MODES else DEFAULTS["player_repeat"]
+
+    @repeat.setter
+    def repeat(self, value: str) -> None:
+        self._set("player_repeat", value if value in REPEAT_MODES else DEFAULTS["player_repeat"])
+
+    @property
+    def shuffle(self) -> bool:
+        value = self._store.get("player_shuffle")
+        return value if isinstance(value, bool) else DEFAULTS["player_shuffle"]
+
+    @shuffle.setter
+    def shuffle(self, value: bool) -> None:
+        self._set("player_shuffle", bool(value))
 
 
 class JsonStore:
