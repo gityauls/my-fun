@@ -212,3 +212,16 @@ def test_list_menu_edit_actions(rig):
     p.actions["sort_path"].trigger(); p.actions["dedupe"].trigger()
     assert p.status_label.text() == "중복 곡이 없습니다"
     p.actions["remove_unplayable"].trigger(); assert p.status_label.text() == "지울 곡이 없습니다"
+
+def test_file_drops_are_always_copies(rig):
+    from PyQt5.QtGui import QDragEnterEvent
+    p, _, _, tmp = rig
+    mime = QMimeData()   # QDropEvent doesn't own the mime data; keep it alive
+    mime.setUrls([QUrl.fromLocalFile(str(make_songs(tmp / "x", ["09 z.mp3"]) / "09 z.mp3"))])
+    both = Qt.CopyAction | Qt.MoveAction
+    enter = QDragEnterEvent(QPoint(10, 10), both, mime, Qt.LeftButton, Qt.ShiftModifier)
+    assert enter.proposedAction() == Qt.MoveAction
+    p.dragEnterEvent(enter); assert enter.isAccepted() and enter.dropAction() == Qt.CopyAction
+    drop = QDropEvent(QPointF(10, 10), both, mime, Qt.LeftButton, Qt.ShiftModifier)
+    assert drop.proposedAction() == Qt.MoveAction
+    p.dropEvent(drop); assert drop.isAccepted() and drop.dropAction() == Qt.CopyAction

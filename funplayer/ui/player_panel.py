@@ -419,7 +419,8 @@ class PlayerPanel(QWidget):
 
     def dragEnterEvent(self, event) -> None:
         if self._local_paths(event.mimeData()):
-            event.acceptProposedAction()
+            event.setDropAction(Qt.CopyAction)   # Shift로 '이동'이 되어 원본이 지워지지 않게
+            event.accept()
         else:
             event.ignore()
 
@@ -430,7 +431,8 @@ class PlayerPanel(QWidget):
             return
         self.controller.add(paths)
         self.refresh()
-        event.acceptProposedAction()
+        event.setDropAction(Qt.CopyAction)
+        event.accept()
 
     # ---- 엔진 알림 ----
 
