@@ -110,7 +110,7 @@
 - **가수 · 앨범 줄:** 태그의 가수와 앨범을 " · "로 잇는다. 하나만 있으면 그것만 보인다.
 - **한글 되살리기:** 태그 글자마다 다음을 차례로 해 본다.
   1. 깨진 바이트(`\udc80`~`\udcff`)가 섞여 있으면: 원래 바이트로 되돌려 CP949로 읽는다.
-  2. 모든 글자가 0~255 범위이고 128 이상이 하나라도 있으면: Latin-1 바이트로 되돌려 CP949로 읽어 본다. 실패하면 원래 글자를 쓴다.
+  2. 모든 글자가 0~255 범위이고 128 이상이 하나라도 있으면: Latin-1 바이트로 되돌려 CP949로 읽어 본다. 읽히고 한글이 한 글자라도 나오면 그것을 쓰고, 아니면 원래 글자를 쓴다. "Beyoncé", "Größe" 같은 서양 이름이 한자로 바뀌지 않게 하려는 것이다(계획 작성 중 보강).
   3. 그 밖에는 그대로 쓴다.
   - 1번에서 CP949로도 읽히지 않는 바이트는 �로 바꾼다.
 - **못 읽은 칸:** "—"로 보인다. 파일을 아예 열 수 없으면 [곡 정보] 창에 경로·크기만 보인다.
@@ -163,7 +163,7 @@ funplayer/
    ├─ info_dialog.py  TrackInfoDialog (새 파일)
    ├─ media_keys.py   MediaKeys: 전역 단축키 등록·해제, 키 신호 (새 파일, Windows 전용)
    ├─ player_panel.py 머리(그림·가수 줄·작게 보기 단추), [보기 ▾], set_mini(on), 오른쪽 클릭 "곡 정보…"
-   └─ (__main__.py)   항상 위, 창 위치 기억, 켤 때 복원·끌 때 저장 연결
+   └─ window_keeper.py WindowKeeper: 항상 위, 창 위치 기억, 켤 때 모양 복원 (새 파일, __main__.py가 붙인다)
 ```
 
 - **`TrackInfo`** (dataclass): `path`, `title`, `artist`, `album`, `year`, `genre`, `track`, `duration`, `codec`, `bitrate`, `sample_rate`, `channels`, `size`, `picture: bytes | None`. 비어 있는 칸은 빈 문자열이나 None이다.
@@ -175,10 +175,11 @@ funplayer/
   - `restore_session`은 목록을 불러오고 지난 곡을 고르고 위치를 맞추되 재생하지 않는다. 그 뒤 [재생]은 그 위치부터다.
   - Qt를 import하지 않는다. 저장 경로는 밖에서 넘겨받는다.
 - **`MediaKeys`:**
-  - `enable()`, `disable()`, 신호 `play_pause`, `next`, `prev`, `stop`.
+  - `enable()`, `disable()`, 신호 `play_pause_pressed`, `next_pressed`, `prev_pressed`, `stop_pressed`.
   - `enable()`은 등록에 실패한 키가 있으면 False를 돌려준다.
   - Windows API는 넘겨받을 수 있게 해서, 테스트에서는 가짜로 바꾼다.
 - **`PlayerPanel`:** 화면에는 규칙을 넣지 않는다(1단계와 같다). `set_mini(on)`은 위젯을 숨기고 보이기만 한다.
+- **`WindowKeeper`:** 독립 실행 창에서만 쓴다. 켤 때 저장된 모양·위치를 적용하고, 모양이 바뀔 때 위치를 저장하고 항상 위를 켜고 끈다.
 - **`Settings`:**
   - `player_last_track` (""), `player_last_position` (0.0, 0 이상)
   - `player_mini` (false), `player_mini_on_top` (true), `player_media_keys` (true)
