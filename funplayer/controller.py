@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from funplayer.core.playlist import Playlist
-from funplayer.core.settings import Settings
+from funplayer.core.settings import REPEAT_MODES, Settings
 from funplayer.core.tracks import expand_paths
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
@@ -14,11 +14,13 @@ FAIL_MSG = "열 수 없음: {name}"
 
 
 class PlayerController:
-    def __init__(self, player, settings: Settings) -> None:
+    def __init__(self, player, settings: Settings, rng=None) -> None:
         self._player = player
         self._settings = settings
-        self.playlist = Playlist()
+        self.playlist = Playlist(rng)
+        self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
+        self.status_error = False
         self._apply_gain()
 
     @property
@@ -42,6 +44,36 @@ class PlayerController:
         return self._settings.muted
 
     @property
+    def repeat(self) -> str:
+        return self._settings.repeat
+
+    @property
+    def shuffle(self) -> bool:
+        return self._settings.shuffle
+
+    @property
+    def _wrap(self) -> bool:
+        return self._settings.repeat != "off"
+
+    def _set_status(self, msg: str, error: bool = False) -> None:
+        self.status = msg
+        self.status_error = error
+
+    def _info(self, msg: str) -> None:
+        self._set_status(msg, False)
+
+    def _error(self, msg: str) -> None:
+        self._set_status(msg, True)
+
+    def cycle_repeat(self) -> None:
+        i = REPEAT_MODES.index(self._settings.repeat)
+        self._settings.repeat = REPEAT_MODES[(i + 1) % len(REPEAT_MODES)]
+
+    def toggle_shuffle(self) -> None:
+        self._settings.shuffle = not self._settings.shuffle
+        self.playlist.set_shuffle(self._settings.shuffle)
+
+    @property
     def title(self) -> str:
         current = self.playlist.current
         return current.title if current is not None else EMPTY_TITLE
@@ -49,16 +81,16 @@ class PlayerController:
     def open(self, paths: list[str]) -> None:
         found = expand_paths(paths)
         if not found:
-            self.status = NO_FILES_MSG
+            self._error(NO_FILES_MSG)
             return
         self._player.stop()
         self.playlist.replace(found)
-        self.play_index(0)
+        self.play_index(self.playlist.index)
 
     def add(self, paths: list[str]) -> None:
         found = expand_paths(paths)
         if not found:
-            self.status = NO_FILES_MSG
+            self._error(NO_FILES_MSG)
             return
         was_stopped = self._player.state is State.STOPPED
         first = self.playlist.add(found)
@@ -66,7 +98,7 @@ class PlayerController:
             self.play_index(first)
 
     def play_index(self, i: int) -> None:
-        self.status = ""
+        self._set_status("")
         for _ in range(len(self.playlist)):
             self.playlist.set_current(i)
             track = self.playlist.tracks[i]
@@ -74,8 +106,8 @@ class PlayerController:
                 self._player.load(track.path)
             except DecodeError:
                 self.playlist.mark_failed(i)
-                self.status = FAIL_MSG.format(name=os.path.basename(track.path))
-                nxt = self.playlist.next_index()
+                self._error(FAIL_MSG.format(name=os.path.basename(track.path)))
+                nxt = self.playlist.next_index(self._wrap)
                 if nxt is None:
                     break
                 i = nxt
@@ -97,7 +129,7 @@ class PlayerController:
         self._player.stop()
 
     def next(self) -> None:
-        nxt = self.playlist.next_index()
+        nxt = self.playlist.next_index(self._wrap)
         if nxt is None:
             self._player.stop()
         else:
@@ -106,13 +138,16 @@ class PlayerController:
     def prev(self) -> None:
         if self.playlist.index is None:
             return
-        _, target = self.playlist.prev_target(self._player.position)
+        _, target = self.playlist.prev_target(self._player.position, self._wrap)
         self.play_index(target)
 
     def on_track_end(self) -> None:
         if self._player.state is not State.STOPPED:
             return
-        self.next()
+        if self._settings.repeat == "one" and self.playlist.index is not None:
+            self.play_index(self.playlist.index)
+        else:
+            self.next()
 
     def seek_by(self, direction: int) -> None:
         if self._player.state is State.STOPPED:
@@ -141,10 +176,10 @@ class PlayerController:
         self._player.stop()
         self._player.unload()
         self.playlist.clear()
-        self.status = ""
+        self._set_status("")
 
     def on_player_error(self, msg: str) -> None:
-        self.status = msg
+        self._error(msg)
 
     def _apply_gain(self) -> None:
         gain = 0.0 if self._settings.muted else (self._settings.volume / 100) ** 2

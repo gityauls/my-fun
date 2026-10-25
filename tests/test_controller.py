@@ -1,4 +1,5 @@
 import os
+import random
 import pytest
 from fakes import FakePlayer, make_songs
 from funplayer.controller import EMPTY_TITLE, NO_FILES_MSG, PlayerController
@@ -115,3 +116,75 @@ def test_clear(ctl, tmp_path):
 def test_player_error_sets_status(ctl):
     c, *_ = ctl; c.on_player_error("소리 장치를 열 수 없습니다")
     assert c.status == "소리 장치를 열 수 없습니다"
+
+
+def make_ctl(store=None, rng=None):
+    fake = FakePlayer(); store = {} if store is None else store
+    return PlayerController(fake, Settings(store, lambda: None), rng=rng), fake, store
+
+def test_cycle_repeat_saves(ctl):
+    c, _, store = ctl; seen = []
+    for _ in range(3):
+        c.cycle_repeat(); seen.append(c.repeat)
+    assert seen == ["all", "one", "off"] and store["player_repeat"] == "off"
+
+def test_repeat_one_replays_on_end_only(ctl, tmp_path):
+    c, fake, store = ctl; c.open([str(make_songs(tmp_path, ABC))]); store["player_repeat"] = "one"
+    fake.finish(); c.on_track_end(); assert names(fake) == ["01 a.mp3", "01 a.mp3"]
+    c.next(); assert names(fake)[-1] == "02 b.mp3"
+    c.play_index(2); c.next(); assert names(fake)[-1] == "01 a.mp3"
+
+def test_stale_end_ignored_with_repeat_one(ctl, tmp_path):
+    c, fake, store = ctl; c.open([str(make_songs(tmp_path, ABC))]); store["player_repeat"] = "one"
+    c.on_track_end(); assert len(fake.loaded) == 1
+
+def test_repeat_all_wraps_both_ways(ctl, tmp_path):
+    c, fake, store = ctl; c.open([str(make_songs(tmp_path, ABC))]); store["player_repeat"] = "all"
+    fake.position = 1.0; c.prev(); assert names(fake)[-1] == "03 c.mp3"
+    fake.finish(); c.on_track_end(); assert names(fake)[-1] == "01 a.mp3"
+    c.play_index(2); c.next(); assert names(fake)[-1] == "01 a.mp3"
+
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_repeat_all_with_all_failed_stops(tmp_path, shuffle):
+    c, fake, _ = make_ctl({"player_repeat": "all", "player_shuffle": shuffle}, rng=random.Random(1))
+    c.open([str(make_songs(tmp_path, ["01 bad.mp3", "02 bad.mp3", "03 bad.mp3"]))])
+    assert c.state is State.STOPPED and len(fake.loaded) == 3
+
+def test_shuffle_plays_every_track_once_then_stops(tmp_path):
+    c, fake, _ = make_ctl({"player_shuffle": True}, rng=random.Random(5))
+    songs = [f"{i:02} s.mp3" for i in range(8)]
+    c.open([str(make_songs(tmp_path, songs))])
+    for _ in range(7):
+        fake.finish(); c.on_track_end()
+    assert sorted(names(fake)) == songs and c.state is State.PLAYING
+    fake.finish(); c.on_track_end(); assert c.state is State.STOPPED
+
+def test_shuffle_with_repeat_all_starts_new_lap(tmp_path):
+    c, fake, _ = make_ctl({"player_shuffle": True, "player_repeat": "all"}, rng=random.Random(5))
+    c.open([str(make_songs(tmp_path, [f"{i:02} s.mp3" for i in range(4)]))])
+    for _ in range(8):
+        fake.finish(); c.on_track_end()
+    got = names(fake)
+    assert len(got) == 9 and sorted(got[4:8]) == sorted(got[:4]) and c.state is State.PLAYING
+
+def test_shuffle_prev_returns_to_previous(tmp_path):
+    c, fake, _ = make_ctl({"player_shuffle": True}, rng=random.Random(3))
+    c.open([str(make_songs(tmp_path, [f"{i:02} s.mp3" for i in range(6)]))])
+    c.next(); c.next(); fake.position = 1.0; c.prev()
+    assert names(fake)[-1] == names(fake)[1]
+
+def test_toggle_shuffle_saves_and_keeps_current(ctl, tmp_path):
+    c, fake, store = ctl; c.open([str(make_songs(tmp_path, ABC))]); c.play_index(1)
+    c.toggle_shuffle()
+    assert store["player_shuffle"] is True and c.shuffle and c.playlist.order[0] == 1
+    assert c.state is State.PLAYING and len(fake.loaded) == 2
+    c.toggle_shuffle(); assert c.playlist.order == [0, 1, 2]
+
+def test_shuffle_setting_applied_at_start():
+    c, *_ = make_ctl({"player_shuffle": True}); assert c.playlist.shuffle
+
+def test_status_kinds(ctl, tmp_path):
+    c, *_ = ctl
+    c.on_player_error("소리 장치를 열 수 없습니다"); assert c.status_error
+    c.open([str(tmp_path / "none")]); assert c.status == NO_FILES_MSG and c.status_error
+    c.open([str(make_songs(tmp_path / "m", ABC))]); assert (c.status, c.status_error) == ("", False)
