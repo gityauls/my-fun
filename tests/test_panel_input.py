@@ -55,7 +55,7 @@ def test_jump_slider_click(qapp):
 def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
-                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I"}
+                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M"}
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 
@@ -244,7 +244,7 @@ def test_context_info_uses_row_and_does_not_follow(rig):
 
 def test_view_button_and_info_action(rig):
     p, *_ = rig
-    assert p.view_button.text() == "보기" and [a.text() for a in p.view_menu.actions()] == ["곡 정보…\tCtrl+I"]
+    assert p.view_button.text() == "보기" and p.view_menu.actions()[0].text() == "곡 정보…\tCtrl+I"
     p.controller.clear(); p.refresh(); p.playlist_view.setCurrentRow(-1); p.view_menu.aboutToShow.emit()
     assert not p.actions["info"].isEnabled()
 
@@ -264,3 +264,55 @@ def test_show_track_info_falls_back_to_selected_row(rig):
     assert p.actions["info"].isEnabled()
     p.show_track_info()
     assert p.info_dialog.path_label.text().endswith("02 b.mp3")
+
+
+HIDDEN_IN_MINI = ("elapsed_label", "total_label", "stop_button", "repeat_button", "shuffle_button",
+                  "mute_button", "volume_slider", "separator", "playlist_view", "open_button",
+                  "add_button", "list_button", "view_button", "count_label", "status_label")
+SHOWN_IN_MINI = ("art_label", "title_label", "artist_label", "prev_button", "play_button",
+                 "next_button", "seek_slider", "mini_button")
+
+def test_set_mini_hides_moves_and_restores(rig):
+    p, _, store, _ = rig; seen = []; p.miniChanged.connect(seen.append)
+    assert p.mini_button.toolTip() == "작게 보기"
+    p.set_mini(True)
+    assert p.is_mini and store["player_mini"] is True and seen == [True]
+    assert not any(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI)
+    assert all(getattr(p, n).isVisible() for n in SHOWN_IN_MINI)
+    assert p.art_label.width() == 40 and p.mini_button.toolTip() == "보통 보기"
+    assert all(p.head_row.indexOf(b) >= 0 for b in (p.prev_button, p.play_button, p.next_button))
+    p.set_mini(True); assert seen == [True]
+    p.set_mini(False)
+    assert not p.is_mini and store["player_mini"] is False and seen == [True, False]
+    assert all(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI)
+    assert p.art_label.width() == 56 and p.mini_button.toolTip() == "작게 보기"
+    assert [p.control_row.indexOf(b) for b in
+            (p.prev_button, p.play_button, p.stop_button, p.next_button)] == [0, 1, 2, 3]
+
+def test_mini_is_short(rig):
+    p, *_ = rig; p.set_mini(True)
+    assert p.sizeHint().height() < 130
+
+def test_mini_toggles_by_key_button_and_title_double_click(rig):
+    p, *_ = rig
+    QTest.mouseDClick(p.title_label, Qt.LeftButton); assert not p.is_mini
+    p.shortcuts["Ctrl+M"].activated.emit(); assert p.is_mini
+    QTest.mouseDClick(p.title_label, Qt.LeftButton); assert not p.is_mini
+    p.mini_button.click(); assert p.is_mini
+    p.mini_button.click(); assert not p.is_mini
+
+def test_view_menu_mini_items(rig):
+    p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)
+    assert [a.text() for a in p.view_menu.actions()] == [
+        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "", "작게 볼 때 항상 위"]
+    p.view_menu.aboutToShow.emit()
+    assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()
+    p.actions["mini"].trigger(); assert p.is_mini
+    p.view_menu.aboutToShow.emit(); assert p.actions["mini"].isChecked()
+    p.actions["mini_on_top"].trigger()
+    assert store["player_mini_on_top"] is False and seen == [False]
+
+def test_shortcuts_still_work_in_mini(rig):
+    p, fake, *_ = rig; p.set_mini(True)
+    p.shortcuts["Space"].activated.emit()
+    assert fake.state is State.PAUSED

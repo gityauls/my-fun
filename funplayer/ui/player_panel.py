@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
@@ -14,7 +14,7 @@ from funplayer.core.timefmt import format_time
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.cover import art_pixmap, load_cover
-from funplayer.ui.icons import OFF_COLOR, repeat_icon, shuffle_icon
+from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, repeat_icon, shuffle_icon
 from funplayer.ui.info_dialog import TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.playlist_view import PlaylistView
@@ -35,8 +35,15 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
-    ("Ctrl+I", "show_track_info"),
+    ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"),
 ]
+
+# 작게 볼 때 숨기는 위젯 (이름)
+HIDDEN_IN_MINI = (
+    "elapsed_label", "total_label", "stop_button", "repeat_button", "shuffle_button",
+    "mute_button", "volume_slider", "separator", "playlist_view", "open_button",
+    "add_button", "list_button", "view_button", "count_label", "status_label",
+)
 
 
 class _ArtLabel(QLabel):
@@ -49,6 +56,9 @@ class _ArtLabel(QLabel):
 
 
 class PlayerPanel(QWidget):
+    miniChanged = pyqtSignal(bool)
+    miniOnTopChanged = pyqtSignal(bool)
+
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None) -> None:
         super().__init__(parent)
@@ -64,6 +74,8 @@ class PlayerPanel(QWidget):
         self.info_dialog: TrackInfoDialog | None = None
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
+        self._settings = settings
+        self.is_mini = False   # settings.mini는 창(Task 10)이 적용한다
 
         self._bridge = PlayerBridge(self._player, self)
         self._bridge.ended.connect(self._on_ended, Qt.QueuedConnection)
@@ -121,6 +133,9 @@ class PlayerPanel(QWidget):
         titles.addWidget(self.title_label)
         titles.addWidget(self.artist_label)
         self.head_row.addLayout(titles, 1)
+        self.mini_button = self._tool(QStyle.SP_MediaPlay, "작게 보기", 26, 18)
+        self.mini_button.setIcon(mini_icon(OFF_COLOR))
+        self.head_row.addWidget(self.mini_button, 0, Qt.AlignTop)
         root.addLayout(self.head_row)
 
         row = QHBoxLayout()
@@ -133,7 +148,7 @@ class PlayerPanel(QWidget):
         row.addWidget(self.total_label)
         root.addLayout(row)
 
-        ctl = QHBoxLayout()
+        ctl = self.control_row = QHBoxLayout()
         ctl.setSpacing(4)
         self.prev_button = self._tool(QStyle.SP_MediaSkipBackward, "이전 곡")
         self.play_button = self._tool(QStyle.SP_MediaPlay, "재생", 34, 22)
@@ -157,7 +172,7 @@ class PlayerPanel(QWidget):
         ctl.addWidget(self.volume_slider)
         root.addLayout(ctl)
 
-        line = QFrame()
+        line = self.separator = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
         root.addWidget(line)
@@ -216,6 +231,8 @@ class PlayerPanel(QWidget):
         for b in (self.open_button, self.add_button, self.list_button, self.view_button):
             self._fit_min_width(b)
         self.art_label.clicked.connect(self.show_track_info)
+        self.mini_button.clicked.connect(self.toggle_mini)
+        self.title_label.installEventFilter(self)
 
         self.shortcuts: dict[str, QShortcut] = {}
         for key, name in SHORTCUTS:
@@ -281,14 +298,67 @@ class PlayerPanel(QWidget):
     def _make_view_menu(self) -> None:
         menu = self.view_menu = QMenu(self.view_button)
         self._add_action(menu, "info", "곡 정보…\tCtrl+I", self.show_track_info)
+        mini = self._add_action(menu, "mini", "작게 보기\tCtrl+M", self.toggle_mini)
+        mini.setCheckable(True)
+        mini.setChecked(self._settings.mini)
+        menu.addSeparator()
+        on_top = self._add_action(menu, "mini_on_top", "작게 볼 때 항상 위", self._mini_on_top_clicked)
+        on_top.setCheckable(True)
+        on_top.setChecked(self._settings.mini_on_top)
         menu.aboutToShow.connect(self._update_actions)
         self.view_button.setMenu(menu)
+
+    def _mini_on_top_clicked(self) -> None:
+        checked = self.actions["mini_on_top"].isChecked()
+        self._settings.mini_on_top = checked
+        self.miniOnTopChanged.emit(checked)
+
+    # ---- 작게 보기 ----
+
+    def toggle_mini(self) -> None:
+        self.set_mini(not self.is_mini)
+
+    def set_mini(self, on: bool) -> None:
+        on = bool(on)
+        if on == self.is_mini:
+            return
+        self.is_mini = on
+        movers = (self.prev_button, self.play_button, self.next_button)
+        for w in movers:
+            (self.control_row if on else self.head_row).removeWidget(w)
+        if on:
+            for w in movers:
+                self.head_row.insertWidget(self.head_row.indexOf(self.mini_button), w, 0, Qt.AlignTop)
+        else:
+            for pos, w in zip((0, 1, 3), movers):
+                self.control_row.insertWidget(pos, w)
+        for name in HIDDEN_IN_MINI:
+            getattr(self, name).setVisible(not on)
+        size = ART_MINI if on else ART_NORMAL
+        self.art_label.setFixedSize(size, size)
+        self.art_label.setPixmap(art_pixmap(self._cover_src, size))
+        font = self.title_label.font()
+        font.setPointSize(10 if on else 12)
+        self.title_label.setFont(font)
+        self.mini_button.setIcon((full_icon if on else mini_icon)(OFF_COLOR))
+        self.mini_button.setToolTip("보통 보기" if on else "작게 보기")
+        self.actions["mini"].setChecked(on)
+        self._settings.mini = on
+        self.miniChanged.emit(on)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.title_label and self.is_mini and event.type() == QEvent.MouseButtonDblClick:
+            self.set_mini(False)
+            return True
+        return super().eventFilter(obj, event)
 
     def _update_actions(self) -> None:
         self.actions["remove"].setEnabled(bool(self.selected_rows()))
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
+        self.actions["mini"].setChecked(self.is_mini)
+        self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
         self.actions["info"].setEnabled(self.controller.playlist.index is not None or row >= 0)
         has_tracks = len(self.controller.playlist) > 0
         for key in ("save", "dedupe", "remove_unplayable", "sort_name", "sort_path", "clear"):
