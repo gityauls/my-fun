@@ -99,7 +99,7 @@ class PlayerController:
                 continue
             try:
                 found.extend(read_playlist(p))
-            except OSError:
+            except (OSError, ValueError):
                 logger.warning("playlist read failed: %s", p, exc_info=True)
                 error = error or LOAD_FAIL_MSG.format(name=os.path.basename(p))
         return found, error
@@ -152,7 +152,7 @@ class PlayerController:
         name = os.path.basename(path)
         try:
             write_playlist(path, [t.path for t in self.playlist.tracks])
-        except OSError:
+        except (OSError, ValueError):
             logger.warning("playlist save failed: %s", path, exc_info=True)
             self._error(SAVE_FAIL_MSG.format(name=name))
             return
@@ -166,6 +166,8 @@ class PlayerController:
             self._player.unload()
         if result == "next" and was_playing:
             self.play_index(self.playlist.index)
+        if not len(self.playlist):
+            self._set_status("")   # 목록 비우기와 같게
 
     def remove_duplicates(self) -> None:
         self._remove_auto(self.playlist.duplicate_indices(), DUP_MSG, NO_DUP_MSG)

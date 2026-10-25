@@ -325,3 +325,18 @@ def test_shuffle_repeat_all_skip_finds_the_only_playable_track(tmp_path, seed):
     for k in (0, 1, 2, 4, 5):
         c.play_index(k)
         assert c.state is State.PLAYING and c.playlist.current.title == "03 good"
+
+def test_remove_all_clears_status(ctl, tmp_path):
+    c, *_ = ctl; c.open([str(make_songs(tmp_path, ABC))])
+    c.on_player_error("소리 장치를 열 수 없습니다"); c.remove([0, 1, 2])
+    assert c.status == "" and not c.status_error
+
+def test_value_errors_are_reported_not_raised(ctl, tmp_path, monkeypatch):
+    import funplayer.controller as mod
+    c, *_ = ctl; c.open([str(make_songs(tmp_path / "m", ABC))])
+    def boom(*a, **k): raise ValueError("bad")
+    monkeypatch.setattr(mod, "read_playlist", boom); monkeypatch.setattr(mod, "write_playlist", boom)
+    c.open([str(tmp_path / "x.m3u8")])
+    assert (c.status, c.status_error) == ("불러올 수 없음: x.m3u8", True) and len(c.playlist) == 3
+    c.save_playlist(str(tmp_path / "y.m3u8"))
+    assert (c.status, c.status_error) == ("저장할 수 없음: y.m3u8", True)
