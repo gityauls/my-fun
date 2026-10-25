@@ -7,6 +7,7 @@ from funplayer.core import taginfo
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
 from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
+from funplayer.core.timefmt import format_time
 from funplayer.core.tracks import expand_paths
 from funplayer.engine import tags
 from funplayer.engine.decoder import DecodeError
@@ -23,6 +24,8 @@ DUP_MSG = "중복 곡 {n}개를 지웠습니다"
 NO_DUP_MSG = "중복 곡이 없습니다"
 REMOVED_MSG = "{n}곡을 지웠습니다"
 NOTHING_REMOVED_MSG = "지울 곡이 없습니다"
+RESUME_MSG = "이어 듣기: {time}부터"
+RESUME_TAIL = 5.0
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ class PlayerController:
         self._read_info = read_info or tags.read_info
         self._session_path = session_path
         self._info_cache: taginfo.TrackInfo | None = None
+        self._cued = False
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
@@ -65,6 +69,14 @@ class PlayerController:
 
     def notify(self, msg: str) -> None:
         self._info(msg)
+
+    @property
+    def cued(self) -> bool:
+        return self._cued
+
+    @property
+    def can_seek(self) -> bool:
+        return self._player.state is not State.STOPPED or (self._cued and self._player.duration > 0)
 
     @property
     def position(self) -> float:
@@ -137,11 +149,13 @@ class PlayerController:
         if not found:
             self._error(error or NO_FILES_MSG)
             return
+        self._cued = False
         self._player.stop()
         self.playlist.replace(found)
         missing = self._mark_missing(0)
         self.play_index(self.playlist.index)
         self._report_load(error, missing)
+        self._remember()
 
     def add(self, paths: list[str]) -> None:
         self._set_status("")
@@ -156,6 +170,7 @@ class PlayerController:
         if was_stopped and first is not None:
             self.play_index(first)
         self._report_load(error, missing)
+        self._remember()
 
     def _mark_missing(self, start: int) -> int:
         count = 0
@@ -189,12 +204,14 @@ class PlayerController:
         was_playing = self._player.state is State.PLAYING
         result = self.playlist.remove(rows, wrap=self._wrap)
         if result != "kept":
+            self._cued = False
             self._player.stop()
             self._player.unload()
         if result == "next" and was_playing:
             self.play_index(self.playlist.index)
         if not len(self.playlist):
             self._set_status("")   # 목록 비우기와 같게
+        self._remember()
 
     def remove_duplicates(self) -> None:
         self._remove_auto(self.playlist.duplicate_indices(), DUP_MSG, NO_DUP_MSG)
@@ -213,11 +230,19 @@ class PlayerController:
 
     def sort(self, by: str) -> None:
         self.playlist.sort(by)
+        self._remember(self._resume_position())
 
     def move(self, rows: list[int], before: int) -> list[int]:
-        return self.playlist.move(rows, before)
+        moved = self.playlist.move(rows, before)
+        self._remember(self._resume_position())
+        return moved
 
     def play_index(self, i: int) -> None:
+        self._play_index(i)
+        self._remember()
+
+    def _play_index(self, i: int) -> None:
+        self._cued = False
         self._set_status("")
         tried: set[int] = set()
         for _ in range(2 * len(self.playlist)):   # 한 바퀴 돌아 다시 만나는 곡도 있어 넉넉히
@@ -251,10 +276,14 @@ class PlayerController:
             self._player.pause()
         elif state is State.PAUSED:
             self._player.play()
+        elif self._cued:
+            self._cued = False
+            self._player.play()
         elif self.playlist.index is not None:
             self.play_index(self.playlist.index)
 
     def stop(self) -> None:
+        self._cued = False
         self._player.stop()
 
     def next(self) -> None:
@@ -279,7 +308,7 @@ class PlayerController:
             self.next()
 
     def seek_by(self, direction: int) -> None:
-        if self._player.state is State.STOPPED:
+        if not self.can_seek:
             return
         target = max(0.0, self._player.position + direction * self._settings.seek_step)
         duration = self._player.duration
@@ -289,7 +318,7 @@ class PlayerController:
             self._player.seek(target)
 
     def seek_to(self, sec: float) -> None:
-        if self._player.state is State.STOPPED:
+        if not self.can_seek:
             return
         self._player.seek(min(max(sec, 0.0), self._player.duration))
 
@@ -302,10 +331,84 @@ class PlayerController:
         self._apply_gain()
 
     def clear(self) -> None:
+        self._cued = False
         self._player.stop()
         self._player.unload()
         self.playlist.clear()
         self._set_status("")
+        self._remember()
+
+    def _resume_position(self) -> float:
+        if self._player.state is State.STOPPED and not self._cued:
+            return 0.0
+        return self._player.position
+
+    def _remember(self, position: float = 0.0) -> None:
+        if not self._session_path:
+            return
+        if not len(self.playlist):
+            try:
+                os.remove(self._session_path)
+            except OSError:
+                pass
+            self._settings.last_track = ""
+            self._settings.last_position = 0.0
+            return
+        try:
+            write_playlist(self._session_path, [t.path for t in self.playlist.tracks])
+        except (OSError, ValueError):
+            logger.warning("session save failed: %s", self._session_path, exc_info=True)
+        current = self.playlist.current
+        self._settings.last_track = current.path if current is not None else ""
+        self._settings.last_position = position
+
+    def save_session(self) -> None:
+        self._remember(self._resume_position())
+
+    def restore_session(self) -> None:
+        if not self._session_path or not os.path.isfile(self._session_path):
+            return
+        try:
+            paths = read_playlist(self._session_path)
+        except (OSError, ValueError):
+            logger.warning("session read failed: %s", self._session_path, exc_info=True)
+            return
+        if not paths:
+            return
+        self.playlist.replace(paths)
+        self._mark_missing(0)
+        position = self._settings.last_position
+        i = self.playlist.index
+        want = self._settings.last_track
+        if want:
+            key = os.path.normcase(os.path.abspath(want))
+            for row, track in enumerate(self.playlist.tracks):
+                if os.path.normcase(os.path.abspath(track.path)) == key:
+                    i = row
+                    break
+            else:
+                position = 0.0
+        else:
+            position = 0.0
+        self.playlist.set_current(i)
+        self.playlist.set_shuffle(self.shuffle)
+        path = self.playlist.tracks[i].path
+        try:
+            self._player.load(path)
+        except DecodeError:
+            if os.path.exists(path):
+                self.playlist.mark_failed(i)
+            else:
+                self.playlist.mark_missing(i)
+            return
+        self.playlist.mark_ok(i)
+        duration = self._player.duration
+        if duration > 0 and duration - position < RESUME_TAIL:
+            position = 0.0
+        if position > 0:
+            self._player.seek(position)
+            self._info(RESUME_MSG.format(time=format_time(position)))
+        self._cued = True
 
     def on_player_error(self, msg: str) -> None:
         self._error(msg)

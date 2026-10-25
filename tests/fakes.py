@@ -8,7 +8,8 @@ from funplayer.engine.player import State
 
 
 class FakePlayer:
-    def __init__(self) -> None:
+    def __init__(self, missing_fails: bool = False) -> None:
+        self.missing_fails = missing_fails
         self.loaded: list[str] = []
         self.seeks: list[float] = []
         self.gain = 1.0
@@ -24,7 +25,8 @@ class FakePlayer:
         self.loaded.append(path)
         self.state = State.STOPPED
         self.position = 0.0
-        if "bad" in os.path.splitext(os.path.basename(path))[0]:
+        bad = "bad" in os.path.splitext(os.path.basename(path))[0]
+        if bad or (self.missing_fails and not os.path.exists(path)):
             self.has_track = False
             self.duration = 0.0
             raise DecodeError(path)

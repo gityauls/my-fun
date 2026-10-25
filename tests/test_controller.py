@@ -377,3 +377,123 @@ def test_default_reader_handles_empty_files(ctl, tmp_path):
 def test_notify_sets_info_status(ctl):
     c, *_ = ctl; c.notify("안내")
     assert (c.status, c.status_error) == ("안내", False)
+
+
+def session_ctl(tmp_path, store=None, **kw):
+    store = {} if store is None else store
+    fake = FakePlayer(**kw)
+    c = PlayerController(fake, Settings(store, lambda: None), session_path=str(tmp_path / "last.m3u8"))
+    return c, fake, store
+
+def saved_session(tmp_path, names, last, position, **store_extra):
+    songs = make_songs(tmp_path / "m", names)
+    paths = [str(songs / n) for n in names]
+    write_playlist(str(tmp_path / "last.m3u8"), paths)
+    store = {"player_last_track": str(songs / last), "player_last_position": position, **store_extra}
+    return store, paths
+
+def test_save_then_restore_cues_without_playing(tmp_path):
+    c, fake, store = session_ctl(tmp_path); c.open([str(make_songs(tmp_path / "m", ABC))]); c.next()
+    fake.position = 72.0; c.save_session()
+    assert store["player_last_track"].endswith("02 b.mp3") and store["player_last_position"] == 72.0
+    c2, fake2, _ = session_ctl(tmp_path, store); c2.restore_session()
+    assert [os.path.basename(t.path) for t in c2.playlist.tracks] == ABC and c2.playlist.index == 1
+    assert fake2.state is State.STOPPED and names(fake2) == ["02 b.mp3"] and fake2.seeks == [72.0]
+    assert c2.cued and c2.can_seek and (c2.status, c2.status_error) == ("이어 듣기: 1:12부터", False)
+    c2.toggle()
+    assert fake2.state is State.PLAYING and len(fake2.loaded) == 1 and fake2.position == 72.0 and not c2.cued
+
+def test_stop_after_restore_goes_back_to_start(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session(); c.stop()
+    assert not c.cued and not c.can_seek and fake.position == 0.0
+    c.toggle()
+    assert len(fake.loaded) == 2 and fake.state is State.PLAYING
+
+def test_seek_allowed_while_cued(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    c.seek_to(30.0); c.seek_by(1)
+    assert fake.seeks == [72.0, 30.0, 35.0] and c.cued
+
+@pytest.mark.parametrize("pos", [0.0, 176.0])
+def test_zero_or_near_end_position_starts_from_beginning(tmp_path, pos):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", pos)   # FakePlayer 길이 180초
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    assert fake.seeks == [] and c.status == "" and c.cued and c.playlist.index == 1
+
+def test_last_track_not_in_list_uses_first_without_position(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    store["player_last_track"] = str(tmp_path / "elsewhere" / "x.mp3")
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    assert c.playlist.index == 0 and fake.seeks == [] and c.status == ""
+
+def test_duplicate_paths_pick_first_row(tmp_path):
+    songs = make_songs(tmp_path / "m", ABC); a = str(songs / "01 a.mp3")
+    write_playlist(str(tmp_path / "last.m3u8"), [a, str(songs / "02 b.mp3"), a])
+    c, _, _ = session_ctl(tmp_path, {"player_last_track": a, "player_last_position": 10.0})
+    c.restore_session()
+    assert c.playlist.index == 0
+
+def test_unplayable_last_track_is_marked_and_not_cued(tmp_path):
+    store, _ = saved_session(tmp_path, ["01 a.mp3", "02 bad.mp3"], "02 bad.mp3", 30.0)
+    c, fake, _ = session_ctl(tmp_path, store); c.restore_session()
+    assert c.playlist.index == 1 and c.playlist.tracks[1].failed and not c.cued
+    assert c.status == "" and len(fake.loaded) == 1
+
+def test_restore_with_all_files_missing_is_quiet(tmp_path):
+    store, paths = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    for p in paths:
+        os.remove(p)
+    c, fake, _ = session_ctl(tmp_path, store, missing_fails=True); c.restore_session()
+    assert len(c.playlist) == 3 and all(t.missing for t in c.playlist.tracks)
+    assert c.playlist.index == 1 and not c.cued and c.status == "" and len(fake.loaded) == 1
+
+def test_shuffle_restore_starts_lap_at_last_track(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "03 c.mp3", 0.0, player_shuffle=True)
+    c, _, _ = session_ctl(tmp_path, store); c.restore_session()
+    assert c.playlist.index == 2 and c.playlist.order[0] == 2
+
+@pytest.mark.parametrize("make", ["none", "dir", "garbage"])
+def test_missing_or_broken_session_file(tmp_path, make):
+    target = tmp_path / "last.m3u8"
+    if make == "dir":
+        target.mkdir()
+    elif make == "garbage":
+        target.write_bytes(b"\x00\xff\xfe junk")
+    c, fake, _ = session_ctl(tmp_path, {"player_last_track": "x", "player_last_position": 5.0})
+    c.restore_session()
+    assert len(c.playlist) == 0 and fake.loaded == [] and c.status == "" and not c.cued
+
+def test_list_and_track_changes_are_saved(tmp_path):
+    c, fake, store = session_ctl(tmp_path); f = str(tmp_path / "last.m3u8")
+    c.open([str(make_songs(tmp_path / "m", ABC))])
+    assert [os.path.basename(p) for p in read_playlist(f)] == ABC
+    assert store["player_last_track"].endswith("01 a.mp3") and store["player_last_position"] == 0.0
+    c.next(); assert store["player_last_track"].endswith("02 b.mp3")
+    c.remove([0]); assert len(read_playlist(f)) == 2
+    c.sort("name"); c.move([1], 0)
+    assert read_playlist(f) == [t.path for t in c.playlist.tracks]
+    c.add([str(make_songs(tmp_path / "n", ["09 z.mp3"]))]); assert len(read_playlist(f)) == 3
+    c.clear()
+    assert not os.path.exists(f) and store["player_last_track"] == "" and store["player_last_position"] == 0.0
+
+@pytest.mark.parametrize("prep,want", [("play", 50.0), ("pause", 50.0), ("stop", 0.0)])
+def test_save_session_position(tmp_path, prep, want):
+    c, fake, store = session_ctl(tmp_path); c.open([str(make_songs(tmp_path / "m", ABC))])
+    fake.position = 50.0
+    if prep == "pause": c.toggle()
+    if prep == "stop": c.stop()
+    c.save_session()
+    assert store["player_last_position"] == want
+
+def test_no_session_path_writes_nothing(ctl, tmp_path):
+    c, _, store = ctl; c.open([str(make_songs(tmp_path / "m", ABC))]); c.save_session(); c.restore_session()
+    assert "player_last_track" not in store and not list(tmp_path.glob("*.m3u8"))
+
+def test_session_write_failure_is_silent(tmp_path, monkeypatch):
+    import funplayer.controller as ctrl
+    def boom(*a): raise OSError("disk full")
+    monkeypatch.setattr(ctrl, "write_playlist", boom)
+    c, fake, _ = session_ctl(tmp_path); c.open([str(make_songs(tmp_path / "m", ABC))])
+    assert fake.state is State.PLAYING and not c.status_error
