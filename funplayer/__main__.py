@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QApplication
 
 from funplayer.core.settings import JsonStore, Settings
 from funplayer.ui.player_panel import PlayerPanel
+from funplayer.ui.window_keeper import WindowKeeper
 
 logger = logging.getLogger("funplayer")
 
@@ -45,11 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyle("Fusion")
     store = JsonStore(app_dir() / "settings.json")
     settings = Settings(store.data, store.save)
-    panel = PlayerPanel(settings)
+    panel = PlayerPanel(settings, session_path=str(app_dir() / "last.m3u8"))
     panel.setWindowTitle("my-fun")
-    panel.resize(380, 480)
+    keeper = WindowKeeper(panel, settings)
+    keeper.start()
     panel.show()
     code = app.exec_()
+    keeper.save()
     panel.shutdown()
     return code
 
