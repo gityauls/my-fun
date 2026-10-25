@@ -188,3 +188,88 @@ def test_status_kinds(ctl, tmp_path):
     c.on_player_error("소리 장치를 열 수 없습니다"); assert c.status_error
     c.open([str(tmp_path / "none")]); assert c.status == NO_FILES_MSG and c.status_error
     c.open([str(make_songs(tmp_path / "m", ABC))]); assert (c.status, c.status_error) == ("", False)
+
+
+from funplayer.core.m3u import read_playlist, write_playlist
+
+def test_open_playlist_keeps_file_order_and_marks_missing(ctl, tmp_path):
+    c, fake, _ = ctl; m = make_songs(tmp_path / "m", ABC); pl = tmp_path / "l.m3u8"
+    write_playlist(str(pl), [str(m / "03 c.mp3"), str(m / "ghost.mp3"), str(m / "01 a.mp3")])
+    c.open([str(pl)])
+    assert [t.title for t in c.playlist.tracks] == ["03 c", "ghost", "01 a"]
+    assert c.playlist.tracks[1].failed and names(fake) == ["03 c.mp3"]
+    assert (c.status, c.status_error) == ("없는 파일 1곡", False)
+
+def test_add_mixed_drop_music_first_then_playlist(ctl, tmp_path):
+    c, *_ = ctl; m = make_songs(tmp_path / "m", ABC); pl = tmp_path / "l.m3u"
+    write_playlist(str(pl), [str(m / "02 b.mp3")])
+    c.add([str(pl), str(m / "03 c.mp3")])
+    assert [t.title for t in c.playlist.tracks] == ["03 c", "02 b"]
+
+def test_folder_scan_ignores_playlist_files(ctl, tmp_path):
+    c, *_ = ctl; m = make_songs(tmp_path / "m", ABC); write_playlist(str(m / "l.m3u8"), [str(m / "01 a.mp3")])
+    c.open([str(m)]); assert len(c.playlist) == 3
+
+def test_unreadable_and_empty_playlist(ctl, tmp_path):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path / "m", ABC))])
+    c.open([str(tmp_path / "none.m3u8")])
+    assert len(c.playlist) == 3 and (c.status, c.status_error) == ("불러올 수 없음: none.m3u8", True)
+    empty = tmp_path / "e.m3u8"; write_playlist(str(empty), [])
+    c.add([str(empty)]); assert c.status == NO_FILES_MSG and len(c.playlist) == 3
+
+def test_save_playlist(ctl, tmp_path):
+    c, *_ = ctl; m = make_songs(tmp_path / "m", ABC); c.open([str(m)])
+    c.save_playlist(str(tmp_path / "내 목록"))
+    assert read_playlist(str(tmp_path / "내 목록.m3u8")) == [str(m / n) for n in ABC]
+    assert (c.status, c.status_error) == ("저장했습니다: 내 목록.m3u8", False)
+    c.save_playlist(str(tmp_path / "no" / "x.m3u8"))
+    assert (c.status, c.status_error) == ("저장할 수 없음: x.m3u8", True)
+
+@pytest.mark.parametrize("prep,playing_after", [("play", True), ("pause", False), ("stop", False)])
+def test_remove_current(ctl, tmp_path, prep, playing_after):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))])
+    if prep == "pause": c.toggle()
+    if prep == "stop": c.stop()
+    c.remove([0])
+    assert c.playlist.current.title == "02 b" and (c.state is State.PLAYING) is playing_after
+    if playing_after:
+        assert names(fake)[-1] == "02 b.mp3"
+    else:
+        assert not fake.has_track and names(fake) == ["01 a.mp3"]
+        c.toggle(); assert names(fake)[-1] == "02 b.mp3" and c.state is State.PLAYING
+
+def test_remove_other_keeps_playing(ctl, tmp_path):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))])
+    c.remove([2]); assert c.state is State.PLAYING and len(fake.loaded) == 1 and len(c.playlist) == 2
+
+def test_remove_last_current_stops_on_previous(ctl, tmp_path):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))]); c.play_index(2)
+    c.remove([2]); assert c.state is State.STOPPED and c.playlist.current.title == "02 b"
+
+def test_remove_all_is_like_clear(ctl, tmp_path):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))]); c.remove([0, 1, 2])
+    assert len(c.playlist) == 0 and not fake.has_track and c.title == EMPTY_TITLE
+
+def test_remove_duplicates(ctl, tmp_path):
+    c, *_ = ctl; m = make_songs(tmp_path, ABC); c.open([str(m)])
+    c.add([str(m / "01 a.mp3"), str(m / "02 b.mp3")])
+    c.remove_duplicates()
+    assert len(c.playlist) == 3 and (c.status, c.status_error) == ("중복 곡 2개를 지웠습니다", False)
+    c.remove_duplicates(); assert c.status == "중복 곡이 없습니다"
+
+def test_remove_unplayable(ctl, tmp_path):
+    c, fake, _ = ctl; m = make_songs(tmp_path, ["01 a.mp3", "02 bad.mp3", "03 c.mp3"]); c.open([str(m)])
+    c.play_index(1)
+    os.remove(m / "01 a.mp3")
+    c.remove_unplayable()
+    assert [t.title for t in c.playlist.tracks] == ["03 c"] and c.state is State.PLAYING
+    assert (c.status, c.status_error) == ("2곡을 지웠습니다", False)
+    c.remove_unplayable(); assert c.status == "지울 곡이 없습니다"
+
+def test_sort_and_move_keep_playing(ctl, tmp_path):
+    c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))])
+    assert c.move([0], 3) == [2]
+    assert [t.title for t in c.playlist.tracks] == ["02 b", "03 c", "01 a"]
+    assert c.playlist.current.title == "01 a"
+    c.sort("name"); assert [t.title for t in c.playlist.tracks] == ["01 a", "02 b", "03 c"]
+    assert c.state is State.PLAYING and len(fake.loaded) == 1
