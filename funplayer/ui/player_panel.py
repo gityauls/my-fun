@@ -27,7 +27,6 @@ REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: �
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 56
 ART_MINI = 40
-BOTTOM_BUTTON_W = 62
 
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
@@ -174,7 +173,7 @@ class PlayerPanel(QWidget):
         self.view_button = QPushButton("보기")
         self.count_label = QLabel("0곡")
         for b in (self.open_button, self.add_button, self.list_button, self.view_button):
-            b.setFixedWidth(BOTTOM_BUTTON_W)   # 네 단추가 380 폭에 들어가게
+            b.setSizePolicy(QSizePolicy.Preferred, b.sizePolicy().verticalPolicy())
         bottom.addWidget(self.open_button)
         bottom.addWidget(self.add_button)
         bottom.addWidget(self.list_button)
@@ -214,6 +213,8 @@ class PlayerPanel(QWidget):
             ("재생목록…", self.add_playlist)])
         self._make_list_menu()
         self._make_view_menu()
+        for b in (self.open_button, self.add_button, self.list_button, self.view_button):
+            self._fit_min_width(b)
         self.art_label.clicked.connect(self.show_track_info)
 
         self.shortcuts: dict[str, QShortcut] = {}
@@ -222,6 +223,15 @@ class PlayerPanel(QWidget):
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(getattr(self, name))
             self.shortcuts[key] = sc
+
+    # 글자 크기에 맞춘 최소 폭 (스타일의 기본 최소폭 75~80px을 덮어쓴다)
+    def _fit_min_width(self, button: QPushButton) -> None:
+        st = self.style()
+        w = button.fontMetrics().horizontalAdvance(button.text())
+        if button.menu() is not None:
+            w += st.pixelMetric(QStyle.PM_MenuButtonIndicator, None, button)
+        w += 2 * st.pixelMetric(QStyle.PM_ButtonMargin, None, button) + 8
+        button.setMinimumWidth(w)
 
     def _make_context_menu(self) -> None:
         menu = QMenu(self)

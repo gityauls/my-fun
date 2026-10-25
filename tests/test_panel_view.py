@@ -155,3 +155,11 @@ def test_panel_restores_cued_session_and_saves_on_shutdown(qapp, tmp_path):
     assert p.status_label.toolTip() == "이어 듣기: 1:12부터"
     fake.position = 80.0; p.shutdown(); p.deleteLater()
     assert store["player_last_position"] == 80.0
+
+
+def test_bottom_buttons_size_from_font(panel):
+    from PyQt5.QtWidgets import QSizePolicy
+    p, _ = panel
+    for b in (p.open_button, p.add_button, p.list_button, p.view_button):
+        assert b.minimumWidth() > b.fontMetrics().horizontalAdvance(b.text())
+        assert b.sizePolicy().horizontalPolicy() == QSizePolicy.Preferred

@@ -247,3 +247,20 @@ def test_view_button_and_info_action(rig):
     assert p.view_button.text() == "보기" and [a.text() for a in p.view_menu.actions()] == ["곡 정보…\tCtrl+I"]
     p.controller.clear(); p.refresh(); p.playlist_view.setCurrentRow(-1); p.view_menu.aboutToShow.emit()
     assert not p.actions["info"].isEnabled()
+
+def test_info_action_enabled_with_current_track(rig):
+    p, *_ = rig
+    p.view_menu.aboutToShow.emit()
+    assert p.actions["info"].isEnabled()
+
+def test_show_track_info_falls_back_to_selected_row(rig):
+    # state with rows but no current track, reached through the Playlist API (clear, then add)
+    p, *_ = rig
+    pl = p.controller.playlist
+    paths = [t.path for t in pl.tracks]
+    pl.clear(); pl.add(paths); p.refresh()
+    assert pl.index is None and p.playlist_view.count() == 3
+    p.playlist_view.setCurrentRow(1); p.view_menu.aboutToShow.emit()
+    assert p.actions["info"].isEnabled()
+    p.show_track_info()
+    assert p.info_dialog.path_label.text().endswith("02 b.mp3")
