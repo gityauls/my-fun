@@ -71,3 +71,13 @@ def make_songs(folder: Path, names: list[str]) -> Path:
     for name in names:
         (folder / name).write_bytes(b"")
     return folder
+
+
+class FakeRng:
+    """random.Random 대신 쓰는 결정적 난수: shuffle은 뒤집고, randint는 가장 작은 값을 고른다."""
+
+    def shuffle(self, xs: list) -> None:
+        xs.reverse()
+
+    def randint(self, a: int, b: int) -> int:
+        return a
