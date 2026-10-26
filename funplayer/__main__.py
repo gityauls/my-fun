@@ -49,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings(store.data, store.save)
     panel = PlayerPanel(
         settings, session_path=str(app_dir() / "last.m3u8"),
+        stations_path=str(app_dir() / "stations.json"),
         media_keys=media_keys_mod.MediaKeys(api=media_keys_mod.default_api()))
     panel.setWindowTitle("my-fun")
     keeper = WindowKeeper(panel, settings)

@@ -20,9 +20,31 @@ class FakePlayer:
         self.has_track = False
         self.on_end = None
         self.on_error = None
+        # 라이브(라디오) 모드: 패널이 진짜 AudioPlayer 대신 쓸 수 있게
+        self.streams: list = []
+        self.continued: list = []
+        self.is_live = False
+        self.stream_title = ""
+        self.stream_lost = False
+        self.on_lost = None
+
+    def play_stream(self, dec) -> None:
+        self.streams.append(dec)
+        self.is_live = True
+        self.stream_lost = False
+        self.has_track = True
+        self.duration = 0.0
+        self.position = 0.0
+        self.state = State.PLAYING
+
+    def continue_stream(self, dec) -> None:
+        self.continued.append(dec)
+        self.stream_lost = False
 
     def load(self, path: str) -> None:
         self.loaded.append(path)
+        self.is_live = False
+        self.stream_lost = False
         self.state = State.STOPPED
         self.position = 0.0
         bad = "bad" in os.path.splitext(os.path.basename(path))[0]
@@ -35,6 +57,8 @@ class FakePlayer:
 
     def unload(self) -> None:
         self.has_track = False
+        self.is_live = False
+        self.stream_lost = False
         self.duration = 0.0
         self.position = 0.0
         self.state = State.STOPPED
@@ -102,6 +126,8 @@ class FakeRunner:
     def __init__(self) -> None:
         self.calls: list = []
         self.pending: list = []
+        self.timers: list = []
+        self.closed = False
 
     def run_async(self, work, done) -> None:
         call = (work, done)
@@ -113,6 +139,19 @@ class FakeRunner:
         if call in self.pending:
             self.pending.remove(call)
         call[1](result, error)
+
+    # 패널의 runner 자리(QtRunner)에도 넣을 수 있게: 타이머는 모아 두기만 한다
+    def call_later(self, sec: float, fn):
+        entry = (sec, fn)
+        self.timers.append(entry)
+
+        def cancel() -> None:
+            if entry in self.timers:
+                self.timers.remove(entry)
+        return cancel
+
+    def shutdown(self) -> None:
+        self.closed = True
 
 
 class FakeClock:
@@ -145,6 +184,16 @@ class FakeClock:
             self.t = max(self.t, entry[0])
             entry[2]()
         self.t = end
+
+
+class FakeStream:
+    """열린 라이브 디코더 자리: 닫혔는지만 센다."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class Closeable:

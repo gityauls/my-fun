@@ -1,25 +1,33 @@
 from __future__ import annotations
 
+import time
+
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
-    QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWidget,
+    QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from funplayer.controller import PlayerController
 from funplayer.core.settings import Settings
+from funplayer.core.stations import StationList, load_stations, save_stations
+from funplayer.core.taginfo import TrackInfo
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.player import AudioPlayer, State
+from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
-from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, repeat_icon, shuffle_icon
-from funplayer.ui.info_dialog import TrackInfoDialog
+from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
+from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
 from funplayer.ui.playlist_view import PlaylistView
+from funplayer.ui.radio_dialogs import AddUrlDialog
+from funplayer.ui.station_view import StationView
+from funplayer.ui.worker import QtRunner
 
 REFRESH_MS = 200
 VOLUME_STEP = 5
@@ -27,6 +35,12 @@ REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: �
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 56
 ART_MINI = 40
+TABS = ("playlist", "radio")
+TAB_TITLES = ("재생목록", "라디오")
+LIVE_TEXT = "● LIVE"
+LIVE_COLOR = "#C5221F"
+LISTENED_PREFIX = "들은 시간 "
+DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
 
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
@@ -35,10 +49,10 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("R", "cycle_repeat"), ("S", "toggle_shuffle"),
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
-    ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"),
+    ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"), ("Ctrl+Tab", "next_tab"),
 ]
 
-# 작게 볼 때 숨기는 위젯 (이름)
+# 작게 볼 때 숨기는 위젯 (이름). 탭·라디오에 따라 바뀌는 위젯은 _apply_visibility가 맡는다
 HIDDEN_IN_MINI = (
     "elapsed_label", "total_label", "stop_button", "repeat_button", "shuffle_button",
     "mute_button", "volume_slider", "separator", "playlist_view", "open_button",
@@ -60,11 +74,24 @@ class PlayerPanel(QWidget):
     miniOnTopChanged = pyqtSignal(bool)
 
     def __init__(self, settings: Settings, player=None, parent=None, *,
-                 session_path: str | None = None, read_info=None, media_keys=None) -> None:
+                 session_path: str | None = None, read_info=None, media_keys=None,
+                 stations_path: str | None = None, runner=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
             self._player, settings, session_path=session_path, read_info=read_info)
+        # 라디오: 경로가 없으면(테스트) 저장하지 않는 메모리 목록이다
+        self._stations_path = stations_path
+        self.stations = load_stations(stations_path) if stations_path else StationList()
+        self.runner = runner if runner is not None else QtRunner(self)
+        self.radio = RadioController(
+            self._player, self.stations, self.runner.run_async, self.runner.call_later,
+            time.monotonic, notify=self.controller.radio_notify)
+        self.controller.attach_radio(self.radio)
+        self._tab = "playlist"
+        self._live_color: str | None = None
+        self._marked_station: object = object()
+        self.settings = settings
         self._cover_key: object = object()
         self._cover_src = None
         self._dragging = False
@@ -80,6 +107,7 @@ class PlayerPanel(QWidget):
         self._bridge = PlayerBridge(self._player, self)
         self._bridge.ended.connect(self._on_ended, Qt.QueuedConnection)
         self._bridge.error.connect(self._on_error, Qt.QueuedConnection)
+        self._bridge.lost.connect(self._on_lost, Qt.QueuedConnection)
 
         self.media_keys = media_keys if media_keys is not None else MediaKeys(self)
         self._build()
@@ -92,6 +120,8 @@ class PlayerPanel(QWidget):
         self._timer.start()
         if session_path:
             self.controller.restore_session()
+        # 라디오로 끈 뒤 켜면 라디오 탭이다 (방송국만 고르고 접속하지 않는다)
+        self.set_tab("radio" if self.controller.source == "radio" else settings.tab)
         self.refresh()
         # 이어 듣기 안내가 떠 있으면 키 안내로 가리지 않는다 (시작할 때 상태 글은 그것뿐이다)
         if self._settings.media_keys and not self.media_keys.enable() and not self.controller.status:
@@ -148,8 +178,15 @@ class PlayerPanel(QWidget):
         self.total_label = QLabel("0:00")
         self.seek_slider = JumpSlider(Qt.Horizontal)
         self.seek_slider.setRange(0, 0)
+        # 라디오일 때는 탐색 막대 대신 라이브 줄: 왼쪽 "● LIVE", 오른쪽 들은 시간
+        self.live_label = QLabel(LIVE_TEXT)
+        self.listened_label = QLabel(LISTENED_PREFIX + format_time(0))
+        self.live_label.hide()
+        self.listened_label.hide()
         row.addWidget(self.elapsed_label)
+        row.addWidget(self.live_label)
         row.addWidget(self.seek_slider, 1)
+        row.addWidget(self.listened_label, 1, Qt.AlignRight)
         row.addWidget(self.total_label)
         root.addLayout(row)
 
@@ -182,21 +219,36 @@ class PlayerPanel(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         root.addWidget(line)
 
+        self.tab_bar = QTabBar()
+        for title in TAB_TITLES:
+            self.tab_bar.addTab(title)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setDrawBase(False)
+        root.addWidget(self.tab_bar)
+
         self.playlist_view = PlaylistView()
         root.addWidget(self.playlist_view, 1)
+        self.station_view = StationView()
+        self.station_view.set_stations(self.stations, self._settings.radio_open)
+        self.station_view.hide()
+        root.addWidget(self.station_view, 1)
 
         bottom = QHBoxLayout()
         bottom.setSpacing(4)
         self.open_button = QPushButton("열기")
         self.add_button = QPushButton("추가")
         self.list_button = QPushButton("목록")
+        self.add_url_button = QPushButton("주소 넣기…")
+        self.add_url_button.hide()
         self.view_button = QPushButton("보기")
         self.count_label = QLabel("0곡")
-        for b in (self.open_button, self.add_button, self.list_button, self.view_button):
+        for b in (self.open_button, self.add_button, self.list_button, self.add_url_button,
+                  self.view_button):
             b.setSizePolicy(QSizePolicy.Preferred, b.sizePolicy().verticalPolicy())
         bottom.addWidget(self.open_button)
         bottom.addWidget(self.add_button)
         bottom.addWidget(self.list_button)
+        bottom.addWidget(self.add_url_button)
         bottom.addWidget(self.view_button)
         bottom.addStretch(1)
         bottom.addWidget(self.count_label)
@@ -233,8 +285,15 @@ class PlayerPanel(QWidget):
             ("재생목록…", self.add_playlist)])
         self._make_list_menu()
         self._make_view_menu()
-        for b in (self.open_button, self.add_button, self.list_button, self.view_button):
+        for b in (self.open_button, self.add_button, self.list_button, self.add_url_button,
+                  self.view_button):
             self._fit_min_width(b)
+        self.tab_bar.currentChanged.connect(self._tab_changed)
+        sv = self.station_view
+        sv.station_activated.connect(self._play_station)
+        sv.changed.connect(self._stations_changed)
+        sv.open_groups_changed.connect(self._open_groups_changed)
+        self.add_url_button.clicked.connect(self.add_url)
         self.art_label.clicked.connect(self.show_track_info)
         self.mini_button.clicked.connect(self.toggle_mini)
         self.title_label.installEventFilter(self)
@@ -382,9 +441,13 @@ class PlayerPanel(QWidget):
                 self.control_row.insertWidget(pos, w)
         for name in HIDDEN_IN_MINI:
             getattr(self, name).setVisible(not on)
+        self._apply_visibility()   # 탭·라디오에 따라 다시 숨길 것을 숨긴다
         size = ART_MINI if on else ART_NORMAL
         self.art_label.setFixedSize(size, size)
-        self.art_label.setPixmap(art_pixmap(self._cover_src, size))
+        if self.controller.source == "radio":
+            self.art_label.setPixmap(radio_art(size))
+        else:
+            self.art_label.setPixmap(art_pixmap(self._cover_src, size))
         font = self.title_label.font()
         font.setPointSize(10 if on else 12)
         self.title_label.setFont(font)
@@ -408,7 +471,9 @@ class PlayerPanel(QWidget):
         self.actions["mini"].setChecked(self.is_mini)
         self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
         self.actions["media_keys"].setChecked(self._settings.media_keys)
-        self.actions["info"].setEnabled(self.controller.playlist.index is not None or row >= 0)
+        on_station = self.controller.source == "radio" and self.radio.current is not None
+        self.actions["info"].setEnabled(
+            on_station or self.controller.playlist.index is not None or row >= 0)
         has_tracks = len(self.controller.playlist) > 0
         for key in ("save", "dedupe", "remove_unplayable", "sort_name", "sort_path", "clear"):
             self.actions[key].setEnabled(has_tracks)
@@ -421,6 +486,85 @@ class PlayerPanel(QWidget):
             menu.addAction(act)
         button.setMenu(menu)
         return menu
+
+    # ---- 탭 ----
+
+    @property
+    def tab(self) -> str:
+        return self._tab
+
+    def set_tab(self, name: str) -> None:
+        i = TABS.index(name) if name in TABS else 0
+        if self.tab_bar.currentIndex() != i:
+            self.tab_bar.setCurrentIndex(i)   # → _tab_changed
+        else:
+            self._tab_changed(i)
+
+    def next_tab(self) -> None:
+        self.set_tab("radio" if self._tab == "playlist" else "playlist")
+
+    def _tab_changed(self, index: int) -> None:
+        # 보이는 것만 바꾼다: 플레이어·라디오·작업 실행기는 부르지 않는다 (접속하지 않는다)
+        self._tab = TABS[index] if 0 <= index < len(TABS) else "playlist"
+        if self._settings.tab != self._tab:
+            self._settings.tab = self._tab
+        self._apply_visibility()
+        self._update_count()
+
+    def _apply_visibility(self) -> None:
+        mini = self.is_mini
+        radio_tab = self._tab == "radio"
+        on_radio = self.controller.source == "radio"
+        self.tab_bar.setVisible(not mini)
+        self.playlist_view.setVisible(not mini and not radio_tab)
+        self.station_view.setVisible(not mini and radio_tab)
+        for b in (self.open_button, self.add_button, self.list_button):
+            b.setVisible(not mini and not radio_tab)
+        self.add_url_button.setVisible(not mini and radio_tab)
+        # 탐색 줄: 라디오면 막대 대신 라이브 줄이고, 작게 볼 때는 줄 전체를 숨긴다
+        self.seek_slider.setVisible(not on_radio)
+        for w in (self.elapsed_label, self.total_label):
+            w.setVisible(not mini and not on_radio)
+        for w in (self.live_label, self.listened_label):
+            w.setVisible(not mini and on_radio)
+
+    def _update_count(self) -> None:
+        if self._tab == "radio":
+            self.count_label.setText(f"방송 {self.station_view.count()}개")
+        else:
+            self.count_label.setText(f"{len(self.controller.playlist)}곡")
+
+    # ---- 라디오 ----
+
+    def _play_station(self, station_id: str) -> None:
+        self.controller.play_station(station_id)
+        self.refresh()
+
+    def _stations_changed(self) -> None:
+        if self._stations_path:
+            save_stations(self._stations_path, self.stations)
+        self._update_count()
+
+    def _open_groups_changed(self, keys: list) -> None:
+        self._settings.radio_open = list(keys)
+
+    def add_url(self) -> None:
+        dialog = AddUrlDialog(self)
+        try:
+            value = dialog.result_value() if dialog.exec_() else None
+        finally:
+            dialog.deleteLater()
+        if value is None:
+            return
+        station, added = self.stations.add_url(*value)
+        self.station_view.rebuild()   # changed → 저장
+        if not added:
+            self.controller.notify(DUP_STATION_MSG)   # 안내 뒤 그 방송을 듣는다
+        self._play_station(station.id)
+
+    def _on_lost(self) -> None:
+        self.radio.on_lost()
+        self.refresh()
 
     # ---- 입력 ----
 
@@ -505,6 +649,8 @@ class PlayerPanel(QWidget):
                 item.setSelected(True)
 
     def remove_selected(self) -> None:
+        if self._tab == "radio":   # 보이지 않는 재생목록 줄을 지우지 않게
+            return
         rows = self.selected_rows()
         if not rows:
             return
@@ -515,12 +661,24 @@ class PlayerPanel(QWidget):
             self.select_rows([min(rows[0], count - 1)])
 
     def play_selected(self) -> None:
+        if self._tab == "radio":
+            # Enter 단축키가 방송국 목록의 키 처리보다 먼저 받으므로 여기서 방송 줄을 듣는다
+            item = self.station_view.currentItem()
+            sid = item.data(0, Qt.UserRole) if item is not None else None
+            if sid:
+                self._play_station(sid)
+            elif item is not None:
+                item.setExpanded(not item.isExpanded())
+            return
         row = self.playlist_view.currentRow()
         if row >= 0:
             self.controller.play_index(row)
             self.refresh()
 
     def show_track_info(self) -> None:
+        if self.controller.source == "radio" and self.radio.current is not None:
+            self._show_info(self._station_info(), radio_art(INFO_ART_SIZE))
+            return
         i = self.controller.playlist.index
         if i is None:
             i = self.playlist_view.currentRow()
@@ -534,18 +692,28 @@ class PlayerPanel(QWidget):
 
     def _show_info_for(self, i: int) -> None:
         info = self.controller.info_for(i)
+        self._show_info(info, load_cover(info))
+
+    def _station_info(self) -> TrackInfo:
+        # 형식 칸(codec·sample_rate·channels)은 디코더가 밖으로 내주지 않아 비워 둔다
+        s = self.radio.current
+        path = DOMESTIC_INFO_PATH if s.kind in ("kbs", "mbc") else s.key
+        return TrackInfo(path=path, title=s.name, artist=s.source)
+
+    def _show_info(self, info: TrackInfo, cover) -> None:
         if self.info_dialog is None:
             self.info_dialog = TrackInfoDialog(self)
-        self.info_dialog.show_info(info, load_cover(info))
+        self.info_dialog.show_info(info, cover)
         self.info_dialog.show()
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
 
     def select_all(self) -> None:
-        self.playlist_view.selectAll()
+        if self._tab == "playlist":
+            self.playlist_view.selectAll()
 
     def toggle(self) -> None:
-        self.controller.toggle()
+        self.controller.toggle_for_tab(self._tab)
         self.refresh()
 
     def stop(self) -> None:
@@ -657,13 +825,25 @@ class PlayerPanel(QWidget):
         duration = c.duration
         position = c.position
 
+        on_radio = c.source == "radio"
+        self._apply_visibility()
         self._set_elided(self.title_label, c.title)
         self._set_elided(self.artist_label, c.subtitle)
-        key = c.info.path if c.info else None
-        if key != self._cover_key:
-            self._cover_key = key
-            self._cover_src = load_cover(c.info) if c.info else None
-            self.art_label.setPixmap(art_pixmap(self._cover_src, self.art_label.width()))
+        if on_radio:
+            # 라디오 그림은 방송이 바뀔 때만 다시 그린다
+            station = self.radio.current
+            key = ("radio", station.id if station is not None else None)
+            if key != self._cover_key:
+                self._cover_key = key
+                self._cover_src = None
+                self.art_label.setPixmap(radio_art(self.art_label.width()))
+        else:
+            key = c.info.path if c.info else None
+            if key != self._cover_key:
+                self._cover_key = key
+                self._cover_src = load_cover(c.info) if c.info else None
+                self.art_label.setPixmap(art_pixmap(self._cover_src, self.art_label.width()))
+        self._refresh_live(on_radio)
         shown = self.seek_slider.value() / 1000 if self._dragging else position
         self.elapsed_label.setText(format_time(shown))
         self.total_label.setText(format_time(duration))
@@ -674,7 +854,8 @@ class PlayerPanel(QWidget):
             seek.setValue(int(position * 1000))
         seek.setEnabled(c.can_seek and duration > 0)
 
-        if state is State.PLAYING:
+        playing = self.radio.state is not RadioState.IDLE if on_radio else state is State.PLAYING
+        if playing:
             self.play_button.setIcon(st.standardIcon(QStyle.SP_MediaPause))
             self.play_button.setToolTip("일시정지")
         else:
@@ -703,12 +884,29 @@ class PlayerPanel(QWidget):
             self._list_version = pl.version
 
         self._refresh_modes()
-        self.count_label.setText(f"{len(c.playlist)}곡")
+        self.repeat_button.setEnabled(not on_radio)
+        self.shuffle_button.setEnabled(not on_radio)
+        self._update_count()
         if c.status_error != self._status_error:
             self._status_error = c.status_error
             color = ERROR_COLOR if c.status_error else INFO_COLOR
             self.status_label.setStyleSheet(f"color: {color};")
         self._set_elided(self.status_label, c.status)
+
+    def _refresh_live(self, on_radio: bool) -> None:
+        r = self.radio
+        marked = r.current.id if on_radio and r.current is not None else None
+        if marked != self._marked_station:
+            self._marked_station = marked
+            self.station_view.set_current(marked)
+        if not on_radio:
+            return
+        # 색은 라디오 상태를 따른다 (B에 연결하는 동안 플레이어는 아직 라이브다)
+        color = LIVE_COLOR if r.state in (RadioState.LIVE, RadioState.RETRYING) else INFO_COLOR
+        if color != self._live_color:
+            self._live_color = color
+            self.live_label.setStyleSheet(f"color: {color};")
+        self.listened_label.setText(LISTENED_PREFIX + format_time(r.elapsed))
 
     def _refresh_modes(self) -> None:
         c = self.controller
@@ -766,6 +964,9 @@ class PlayerPanel(QWidget):
 
     def shutdown(self) -> None:
         self.controller.save_session()
+        # 기다리던 연결·다시 연결이 끈 뒤에 돌지 않게 먼저 멈춘다 (라디오는 플레이어를 닫지 않는다)
+        self.radio.shutdown()
+        self.runner.shutdown()
         self.media_keys.disable()
         self._timer.stop()
         self._player.close()
