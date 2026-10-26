@@ -1,3 +1,4 @@
+import http.client
 import json
 import pytest
 from funplayer.core.stations import Station
@@ -58,3 +59,20 @@ def test_fetch_errors_become_resolve_error():
     f = FakeFetch({"https://sminiplay.imbc.com/aacplay.ashx?agent=webapp&channel=sfm": TimeoutError()})
     with pytest.raises(ResolveError):
         resolve(st("mbc", "sfm"), f)
+
+def test_http_exception_becomes_resolve_error():
+    f = FakeFetch({"https://sminiplay.imbc.com/aacplay.ashx?agent=webapp&channel=sfm": http.client.IncompleteRead(b"")})
+    with pytest.raises(ResolveError):
+        resolve(st("mbc", "sfm"), f)
+
+def test_deeply_nested_json_becomes_resolve_error():
+    f = FakeFetch({"https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/21": b"[" * 100000})
+    with pytest.raises(ResolveError):
+        resolve(st("kbs", "21"), f)
+
+def test_stripped_kbs_url_and_first_mbc_line():
+    kbs = "https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/21"
+    f = FakeFetch({kbs: json.dumps({"channel_item": [{"service_url": " https://k/a "}]}).encode(),
+                   "https://sminiplay.imbc.com/aacplay.ashx?agent=webapp&channel=sfm": b"https://m/a\nhttps://m/b\n"})
+    assert resolve(st("kbs", "21"), f) == "https://k/a"
+    assert resolve(st("mbc", "sfm"), f) == "https://m/a"

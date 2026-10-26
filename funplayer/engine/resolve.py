@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.request
 from collections.abc import Callable
@@ -25,6 +26,8 @@ class ResolveError(Exception):
 
 
 def default_fetch(url: str, headers: dict[str, str]) -> bytes:
+    if not _is_text_url(url):
+        raise ValueError("http(s) 주소만 받을 수 있습니다")
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
         return resp.read(MAX_BYTES)
@@ -45,10 +48,10 @@ def resolve(station: Station, fetch: Fetch = default_fetch) -> str:
 
 
 def _call(fetch: Fetch, url: str, headers: dict[str, str]) -> bytes:
-    # TimeoutError도 OSError의 하위 클래스다.
+    # TimeoutError도 OSError의 하위 클래스다. IncompleteRead 등은 HTTPException이다.
     try:
         return fetch(url, headers)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, http.client.HTTPException) as e:
         raise ResolveError(f"주소를 받지 못했습니다: {e}") from e
 
 
@@ -57,7 +60,7 @@ def _resolve_kbs(key: str, fetch: Fetch) -> str:
     body = _call(fetch, url, {"User-Agent": BROWSER_UA})
     try:
         data = json.loads(body.decode("utf-8"))
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         raise ResolveError("KBS 응답을 읽지 못했습니다") from e
     items = data.get("channel_item") if isinstance(data, dict) else None
     if not isinstance(items, list):
@@ -66,13 +69,14 @@ def _resolve_kbs(key: str, fetch: Fetch) -> str:
     usable.sort(key=lambda i: i.get("media_type") != "radio")  # radio 항목을 먼저 본다
     if not usable:
         raise ResolveError("KBS 응답에 방송 주소가 없습니다")
-    return usable[0]["service_url"]
+    return usable[0]["service_url"].strip()
 
 
 def _resolve_mbc(key: str, fetch: Fetch) -> str:
     url = MBC_URL.format(key=key)
     body = _call(fetch, url, {"User-Agent": BROWSER_UA, "Referer": MBC_REFERER})
-    text = body.decode("utf-8", "replace").strip()
+    lines = body.decode("utf-8", "replace").strip().splitlines()
+    text = lines[0].strip() if lines else ""
     if not _is_text_url(text):
         raise ResolveError("MBC 응답이 주소가 아닙니다")
     return text
@@ -105,5 +109,5 @@ def _extension(url: str) -> str:
     return path[dot:].lower() if dot != -1 and "/" not in path[dot:] else ""
 
 
-def _is_text_url(value) -> bool:
+def _is_text_url(value: object) -> bool:
     return isinstance(value, str) and value.strip().lower().startswith(("http://", "https://"))
