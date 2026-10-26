@@ -565,3 +565,122 @@ def test_failed_restore_hold_dropped(tmp_path, drop):
     if drop == "remove_current": c.remove([1])
     c.save_session()
     assert store["player_last_position"] == 0.0
+
+
+from fakes import FakeClock, FakeLivePlayer, FakeRunner
+from funplayer.controller import RESUME_RADIO_MSG
+from funplayer.core.stations import StationList
+from funplayer.radio import RadioController, RadioState
+
+def make_radio_ctl(store=None, session_path=None):
+    store = {} if store is None else store
+    fake, runner, clock = FakePlayer(), FakeRunner(), FakeClock()
+    c = PlayerController(fake, Settings(store, lambda: None), session_path=session_path)
+    r = RadioController(FakeLivePlayer(), StationList(), runner.run_async, clock.call_later, clock.now,
+                        resolve=lambda st: st.key, open_stream=lambda url: url, notify=c.radio_notify)
+    c.attach_radio(r)
+    return c, fake, r, runner, store
+
+@pytest.fixture
+def radio_ctl():
+    c, fake, r, runner, _ = make_radio_ctl()
+    return c, fake, r, runner
+
+def test_file_to_radio_and_back_resumes_position(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 50.0
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    assert c.source == "radio" and c.title == "KBS 쿨FM" and not c.can_seek
+    assert not fake.has_track and c.radio_live and c.status == "KBS 쿨FM에 연결했습니다"
+    c.play_index(0)
+    assert c.source == "file" and r.state is RadioState.IDLE and not c.radio_live
+
+def test_playlist_tab_play_returns_to_track_at_position(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 50.0
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.toggle()      # 라디오 멈춤
+    c.toggle_for_tab("playlist")
+    assert c.source == "file" and fake.state is State.PLAYING and fake.seeks[-1] == 50.0
+
+def test_radio_tab_toggle_reconnects(radio_ctl):
+    c, fake, r, runner = radio_ctl
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.toggle(); c.toggle_for_tab("radio")
+    assert r.state is RadioState.CONNECTING
+
+def test_next_prev_step_stations_while_radio(radio_ctl):
+    c, fake, r, runner = radio_ctl
+    c.play_station("kbs-21"); c.next(); assert r.current.id == "kbs-22"; c.prev(); assert r.current.id == "kbs-21"
+
+def test_subtitle_shows_now_title(radio_ctl):
+    c, fake, r, runner = radio_ctl
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    r._player.title = "곡"; assert c.subtitle == "지금: 곡"
+    r._player.title = ""; assert c.subtitle == ""
+
+def test_stop_and_seek_while_radio(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))])
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    c.seek_by(1); c.seek_to(30.0); assert fake.seeks == []
+    c.stop()
+    assert r.state is RadioState.IDLE and r.current.id == "kbs-25" and c.source == "radio" and c.status == ""
+
+def test_playlist_tab_play_while_live_stops_radio_first(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 50.0
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    c.toggle_for_tab("playlist")                        # 라디오가 나오는 중이면 라디오를 멈춘다
+    assert c.source == "radio" and r.state is RadioState.IDLE and fake.loaded[-1].endswith("01 a.mp3")
+    c.toggle_for_tab("playlist")
+    assert c.source == "file" and fake.state is State.PLAYING and fake.seeks[-1] == 50.0
+
+def test_add_while_radio_live_does_not_start_track(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    c.add([str(make_songs(tmp_path / "m", ABC))])
+    assert c.source == "radio" and c.radio_live and fake.loaded == [] and len(c.playlist) == 3
+
+def test_track_end_ignored_while_radio(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))])
+    c.play_station("kbs-25"); runner.finish(0, result="A")
+    c.on_track_end()
+    assert c.source == "radio" and len(fake.loaded) == 1
+
+def test_session_radio_round_trip_without_network(tmp_path):
+    session = str(tmp_path / "last.m3u8")
+    c, fake, r, runner, store = make_radio_ctl(session_path=session)
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 50.0
+    c.play_station("mbc-mfm"); runner.finish(0, result="A"); c.save_session()
+    assert store["player_last_source"] == "radio" and store["player_last_station"] == "mbc-mfm"
+    assert store["player_last_position"] == 50.0
+    c2, fake2, r2, runner2, _ = make_radio_ctl(store=dict(store), session_path=session)
+    c2.restore_session()
+    assert c2.source == "radio" and r2.current.id == "mbc-mfm" and r2.state is RadioState.IDLE
+    assert runner2.pending == [] and fake2.loaded == [] and len(c2.playlist) == 3
+    assert (c2.status, c2.status_error) == (RESUME_RADIO_MSG.format(name="MBC FM4U"), False)
+    assert c2.status == "이어 듣기: MBC FM4U"
+    c2.toggle_for_tab("playlist")
+    assert c2.source == "file" and fake2.loaded[-1].endswith("01 a.mp3") and fake2.seeks[-1] == 50.0
+    assert fake2.state is State.PLAYING and runner2.pending == []
+
+def test_save_session_while_radio_without_return_position_keeps_last(tmp_path):
+    store, _ = saved_session(tmp_path, ["01 a.mp3", "02 bad.mp3"], "02 bad.mp3", 72.0)
+    c, fake, r, runner, _ = make_radio_ctl(store, str(tmp_path / "last.m3u8"))
+    c.restore_session(); assert not fake.has_track       # 지난 곡을 못 열어 곡이 열려 있지 않다
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.sort("name"); c.save_session()
+    assert store["player_last_position"] == 72.0 and store["player_last_track"].endswith("02 bad.mp3")
+    assert store["player_last_source"] == "radio" and store["player_last_station"] == "kbs-25"
+
+def test_restore_with_unknown_station_falls_back_to_file(tmp_path):
+    store, _ = saved_session(tmp_path, ABC, "02 b.mp3", 72.0,
+                             player_last_source="radio", player_last_station="gone")
+    c, fake, r, runner, _ = make_radio_ctl(store, str(tmp_path / "last.m3u8"))
+    c.restore_session()
+    assert c.source == "file" and c.cued and names(fake) == ["02 b.mp3"] and fake.seeks == [72.0]
+    assert c.status == "이어 듣기: 1:12부터" and runner.pending == []
+
+def test_without_radio_station_calls_do_nothing(ctl):
+    c, fake, _ = ctl
+    c.play_station("kbs-25"); c.toggle_for_tab("radio")
+    assert c.source == "file" and not c.radio_live and fake.loaded == []

@@ -12,6 +12,7 @@ from funplayer.core.tracks import expand_paths
 from funplayer.engine import tags
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
+from funplayer.radio import RESUME_RADIO_MSG, RadioState
 
 EMPTY_TITLE = "곡을 추가하세요"
 NO_FILES_MSG = "재생할 수 있는 파일이 없습니다"
@@ -40,6 +41,9 @@ class PlayerController:
         self._cued = False
         self._resume_notice = ""
         self._held_position: float | None = None   # 이어 듣기 곡을 못 열었을 때 지켜 둘 위치
+        self._radio = None
+        self._return_position: float | None = None   # 라디오로 가기 전 곡의 위치: 곡 쪽 [재생] 때 돌아간다
+        self.source = "file"                          # 지금 나오는 쪽: "file" 또는 "radio"
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
@@ -67,10 +71,52 @@ class PlayerController:
 
     @property
     def subtitle(self) -> str:
+        if self.source == "radio":
+            now = self._radio.now_title
+            return "지금: " + now if now else ""
         return taginfo.subtitle(self.info)
 
     def notify(self, msg: str) -> None:
         self._info(msg)
+
+    def attach_radio(self, radio) -> None:
+        self._radio = radio
+
+    def radio_notify(self, msg: str, error: bool = False) -> None:
+        """RadioController의 notify: 라디오 안내는 모두 회색이다 (방송을 못 들어도 오류로 칠하지 않는다)."""
+        self._info(msg)
+
+    @property
+    def radio_live(self) -> bool:
+        return self._radio is not None and self._radio.state is not RadioState.IDLE
+
+    def _remember_source(self) -> None:
+        if self._radio is None:
+            return
+        self._settings.last_source = self.source
+        current = self._radio.current
+        self._settings.last_station = current.id if current is not None else ""
+
+    def play_station(self, station_id: str) -> None:
+        if self._radio is None:
+            return
+        if self.source == "file":
+            if self._player.has_track:
+                self._return_position = self._resume_position()
+            self._player.unload()   # 실제 앱은 곡과 라디오가 한 플레이어를 쓴다: 두 소리가 겹치지 않게
+        self._end_cue()
+        self.source = "radio"
+        self._radio.play(station_id)
+        self._remember_source()
+
+    def _leave_radio(self) -> None:
+        """곡 쪽 동작이 시작되면 라디오를 끊고 곡 쪽으로 돌아온다."""
+        if self.source != "radio":
+            return
+        self._radio.stop()
+        self.source = "file"
+        self._return_position = None
+        self._remember_source()
 
     @property
     def cued(self) -> bool:
@@ -78,6 +124,8 @@ class PlayerController:
 
     @property
     def can_seek(self) -> bool:
+        if self.source == "radio":
+            return False
         return self._player.state is not State.STOPPED or (self._cued and self._player.duration > 0)
 
     @property
@@ -128,6 +176,9 @@ class PlayerController:
 
     @property
     def title(self) -> str:
+        if self.source == "radio":
+            station = self._radio.current
+            return station.name if station is not None else ""
         current = self.playlist.current
         return current.title if current is not None else EMPTY_TITLE
 
@@ -165,7 +216,8 @@ class PlayerController:
         if not found:
             self._error(error or NO_FILES_MSG)
             return
-        was_stopped = self._player.state is State.STOPPED and not self._cued   # 대기 중이면 일시정지처럼
+        # 대기 중이면 일시정지처럼, 라디오가 나오는 중이면 재생 중처럼 덧붙이기만 한다
+        was_stopped = self._player.state is State.STOPPED and not self._cued and not self.radio_live
         start = len(self.playlist)
         first = self.playlist.add(found)
         missing = self._mark_missing(start)
@@ -203,13 +255,16 @@ class PlayerController:
         self._info(SAVED_MSG.format(name=name))
 
     def remove(self, rows: list[int]) -> None:
-        was_playing = self._player.state is State.PLAYING
+        on_radio = self.source == "radio"   # 라디오 중엔 플레이어가 방송을 틀고 있으니 건드리지 않는다
+        was_playing = not on_radio and self._player.state is State.PLAYING
         result = self.playlist.remove(rows, wrap=self._wrap)
         if result != "kept":
             self._cued = False
             self._held_position = None
-            self._player.stop()
-            self._player.unload()
+            self._return_position = None
+            if not on_radio:
+                self._player.stop()
+                self._player.unload()
         if result == "next" and was_playing:
             self.play_index(self.playlist.index)
         if not len(self.playlist):
@@ -245,6 +300,7 @@ class PlayerController:
         self._remember()
 
     def _play_index(self, i: int) -> None:
+        self._leave_radio()
         self._cued = False
         self._held_position = None
         self._set_status("")
@@ -275,6 +331,30 @@ class PlayerController:
         self._player.stop()
 
     def toggle(self) -> None:
+        if self.source == "radio":
+            self._radio.toggle()
+        else:
+            self._toggle_file()
+
+    def toggle_for_tab(self, tab: str) -> None:
+        """재생목록 탭에서 [재생]: 라디오를 멈춰 두었으면 곡 쪽 [재생]으로 본다."""
+        if tab == "playlist" and self.source == "radio" and not self.radio_live:
+            self._toggle_file()
+        else:
+            self.toggle()
+
+    def _toggle_file(self) -> None:
+        returning = self._return_position
+        unloaded = not self._player.has_track or getattr(self._player, "is_live", False)
+        if returning is not None and unloaded and self.playlist.index is not None:
+            # 라디오로 가기 전 곡으로 돌아간다: 다시 열고 그 위치에서 이어 간다
+            i = self.playlist.index
+            self._play_index(i)
+            if self.playlist.index == i and self._player.has_track:
+                self._player.seek(returning)
+            self._remember(self._resume_position())
+            return
+        self._leave_radio()
         state = self._player.state
         if state is State.PLAYING:
             self._player.pause()
@@ -287,6 +367,9 @@ class PlayerController:
             self.play_index(self.playlist.index)
 
     def stop(self) -> None:
+        if self.source == "radio":
+            self._radio.stop()   # 연결을 끊고 들은 시간을 0으로; 방송국 선택은 남는다
+            return
         self._end_cue()
         self._player.stop()
 
@@ -302,6 +385,9 @@ class PlayerController:
         self._resume_notice = ""
 
     def next(self) -> None:
+        if self.source == "radio":
+            self._radio.step(1)
+            return
         nxt = self.playlist.next_index(self._wrap)
         if nxt is None:
             self._end_cue()
@@ -310,13 +396,16 @@ class PlayerController:
             self.play_index(nxt)
 
     def prev(self) -> None:
+        if self.source == "radio":
+            self._radio.step(-1)
+            return
         if self.playlist.index is None:
             return
         _, target = self.playlist.prev_target(self._player.position, self._wrap)
         self.play_index(target)
 
     def on_track_end(self) -> None:
-        if self._player.state is not State.STOPPED:
+        if self.source == "radio" or self._player.state is not State.STOPPED:
             return
         if self._settings.repeat == "one" and self.playlist.index is not None:
             self.play_index(self.playlist.index)
@@ -353,15 +442,21 @@ class PlayerController:
     def clear(self) -> None:
         self._cued = False
         self._held_position = None
-        self._player.stop()
-        self._player.unload()
+        self._return_position = None
+        if self.source != "radio":   # 라디오 중엔 방송을 끊지 않는다
+            self._player.stop()
+            self._player.unload()
         self.playlist.clear()
         self._set_status("")
         self._remember()
 
     def _resume_position(self) -> float:
+        if self.source == "radio" and self._return_position is not None:
+            return self._return_position
         if self._held_position is not None:
             return self._held_position
+        if self.source == "radio":   # 플레이어는 방송을 틀고 있다: 그 위치는 곡의 것이 아니다
+            return 0.0
         if self._player.state is State.STOPPED and not self._cued:
             return 0.0
         return self._player.position
@@ -386,35 +481,19 @@ class PlayerController:
         self._settings.last_position = position
 
     def save_session(self) -> None:
-        self._remember(self._resume_position())
+        self._remember_source()
+        if self.source == "radio" and self._return_position is None:
+            self._remember(self._settings.last_position)   # 돌아갈 곡 위치가 없으면 저장된 위치를 그대로 둔다
+        else:
+            self._remember(self._resume_position())
 
     def restore_session(self) -> None:
-        if not self._session_path or not os.path.isfile(self._session_path):
+        if self._restore_radio():
             return
-        try:
-            paths = read_playlist(self._session_path)
-        except (OSError, ValueError):
-            logger.warning("session read failed: %s", self._session_path, exc_info=True)
+        restored = self._restore_list()
+        if restored is None:
             return
-        if not paths:
-            return
-        self.playlist.replace(paths)
-        self._mark_missing(0)
-        position = self._settings.last_position
-        i = self.playlist.index
-        want = self._settings.last_track
-        if want:
-            key = os.path.normcase(os.path.abspath(want))
-            for row, track in enumerate(self.playlist.tracks):
-                if os.path.normcase(os.path.abspath(track.path)) == key:
-                    i = row
-                    break
-            else:
-                position = 0.0
-        else:
-            position = 0.0
-        self.playlist.set_current(i)
-        self.playlist.set_shuffle(self.shuffle)
+        i, position = restored
         path = self.playlist.tracks[i].path
         try:
             self._player.load(path)
@@ -434,6 +513,51 @@ class PlayerController:
             self._resume_notice = RESUME_MSG.format(time=format_time(position))
             self._info(self._resume_notice)
         self._cued = True
+
+    def _restore_radio(self) -> bool:
+        """라디오로 끈 경우: 목록과 지난 곡만 고르고(곡은 열지 않음) 방송국을 고른 채 접속하지 않는다."""
+        if self._radio is None or self._settings.last_source != "radio":
+            return False
+        want = self._settings.last_station
+        self._radio.cue(want)
+        station = self._radio.current
+        if station is None or station.id != want:
+            return False
+        restored = self._restore_list()
+        self._return_position = restored[1] if restored is not None else None
+        self.source = "radio"
+        self._info(RESUME_RADIO_MSG.format(name=station.name))
+        return True
+
+    def _restore_list(self) -> tuple[int, float] | None:
+        """저장된 목록을 불러와 지난 곡을 고른다. (줄, 이어 들을 위치)를 돌려준다."""
+        if not self._session_path or not os.path.isfile(self._session_path):
+            return None
+        try:
+            paths = read_playlist(self._session_path)
+        except (OSError, ValueError):
+            logger.warning("session read failed: %s", self._session_path, exc_info=True)
+            return None
+        if not paths:
+            return None
+        self.playlist.replace(paths)
+        self._mark_missing(0)
+        position = self._settings.last_position
+        i = self.playlist.index
+        want = self._settings.last_track
+        if want:
+            key = os.path.normcase(os.path.abspath(want))
+            for row, track in enumerate(self.playlist.tracks):
+                if os.path.normcase(os.path.abspath(track.path)) == key:
+                    i = row
+                    break
+            else:
+                position = 0.0
+        else:
+            position = 0.0
+        self.playlist.set_current(i)
+        self.playlist.set_shuffle(self.shuffle)
+        return i, position
 
     def on_player_error(self, msg: str) -> None:
         self._error(msg)
