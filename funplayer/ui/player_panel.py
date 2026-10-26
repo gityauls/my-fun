@@ -13,6 +13,7 @@ from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.ui.bridge import PlayerBridge
+from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, repeat_icon, shuffle_icon
 from funplayer.ui.info_dialog import TrackInfoDialog
@@ -22,8 +23,6 @@ from funplayer.ui.playlist_view import PlaylistView
 
 REFRESH_MS = 200
 VOLUME_STEP = 5
-ERROR_COLOR = "#B3261E"
-INFO_COLOR = "#5F6368"
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 56

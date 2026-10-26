@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from PyQt5.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QVBoxLayout)
 
-from funplayer.ui.player_panel import ERROR_COLOR, INFO_COLOR
+from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
 
 BAD_URL_MSG = "주소가 올바르지 않습니다"
 HINT_MSG = "http·https 방송 주소, .m3u·.pls·.m3u8 주소를 넣을 수 있습니다."

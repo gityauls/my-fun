@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QAbstractItemView, QAction, QInputDialog, QMenu,
                              QTreeWidget, QTreeWidgetItem)
 
 from funplayer.core.stations import StationList
-from funplayer.ui.player_panel import INFO_COLOR
+from funplayer.ui.colors import INFO_COLOR
 
 STATION_MIME = "application/x-myfun-station"
 FAVORITES_COLOR = "#E3A008"
