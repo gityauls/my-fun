@@ -68,6 +68,89 @@ class FakePlayer:
             self.on_end()
 
 
+class FakeLivePlayer:
+    def __init__(self) -> None:
+        self.streams: list = []
+        self.continued: list = []
+        self.unloaded = False
+        self.is_live = False
+        self.title = ""
+        self.on_lost = None
+
+    @property
+    def stream_title(self) -> str:
+        return self.title
+
+    def play_stream(self, dec) -> None:
+        self.streams.append(dec)
+        self.is_live = True
+        self.unloaded = False
+
+    def continue_stream(self, dec) -> None:
+        self.continued.append(dec)
+
+    def unload(self) -> None:
+        self.unloaded = True
+        self.is_live = False
+
+
+class FakeRunner:
+    def __init__(self) -> None:
+        self.calls: list = []
+        self.pending: list = []
+
+    def run_async(self, work, done) -> None:
+        call = (work, done)
+        self.calls.append(call)
+        self.pending.append(call)
+
+    def finish(self, i: int, result=None, error=None) -> None:
+        call = self.calls[i]
+        if call in self.pending:
+            self.pending.remove(call)
+        call[1](result, error)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.t = 0.0
+        self.timers: list = []   # [due, seq, fn]
+        self._seq = 0
+
+    def now(self) -> float:
+        return self.t
+
+    def call_later(self, sec: float, fn):
+        self._seq += 1
+        entry = [self.t + sec, self._seq, fn]
+        self.timers.append(entry)
+
+        def cancel() -> None:
+            if entry in self.timers:
+                self.timers.remove(entry)
+        return cancel
+
+    def advance(self, sec: float) -> None:
+        end = self.t + sec
+        while True:
+            due = [e for e in self.timers if e[0] <= end]
+            if not due:
+                break
+            entry = min(due, key=lambda e: (e[0], e[1]))
+            self.timers.remove(entry)
+            self.t = max(self.t, entry[0])
+            entry[2]()
+        self.t = end
+
+
+class Closeable:
+    def __init__(self, sink: list) -> None:
+        self._sink = sink
+
+    def close(self) -> None:
+        self._sink.append(1)
+
+
 def make_songs(folder: Path, names: list[str]) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     for name in names:
