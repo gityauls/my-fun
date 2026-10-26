@@ -33,7 +33,9 @@ class AudioPlayer:
     - `on_end`/`on_error`/`on_lost`는 모든 잠금을 놓은 뒤에 부른다.
     - 라이브 디코더의 read()(네트워크, 최대 15초 막힘)는 `_lock` 밖에서 부른다.
       읽는 동안 그 디코더는 `_reading`에 있고, 그새 빠진 디코더는 읽기가 끝난 뒤
-      pump가 닫는다(다른 스레드가 읽는 중인 컨테이너를 닫지 않는다).
+      읽던 쪽이 닫는다(다른 스레드가 읽는 중인 컨테이너를 닫지 않는다).
+    - threaded일 때 라이브 디코더마다 `_live_loop` 스레드가 따로 읽는다. 막힌 방송이
+      디코드 스레드를 붙잡지 않으므로 다음 방송·파일은 바로 채워진다.
     """
 
     def __init__(
@@ -60,7 +62,8 @@ class AudioPlayer:
         self._closed = False
         self._live = False
         self._lost = False  # 라이브 읽기가 끝났거나 오류를 냈다
-        self._reading = None  # _lock 밖에서 read() 중인 라이브 디코더
+        self._reading: set = set()  # _lock 밖에서 read() 중인 라이브 디코더들
+        self._threaded = threaded
 
         self._buf_lock = threading.Lock()
         self._blocks: deque[np.ndarray] = deque()
@@ -110,6 +113,12 @@ class AudioPlayer:
             return self._live
 
     @property
+    def stream_lost(self) -> bool:
+        """지금 라이브 디코더가 끊김으로 알려졌는가."""
+        with self._lock:
+            return self._live and self._lost and self._decoder is not None
+
+    @property
     def stream_title(self) -> str:
         with self._lock:
             if not self._live or self._decoder is None:
@@ -147,19 +156,26 @@ class AudioPlayer:
             self._decoder = decoder
             self._live = True
             failed = self._start_sink()
+        self._start_live_thread(decoder)
         if failed and self.on_error is not None:
             self.on_error(DEVICE_ERROR_MSG)
 
     def continue_stream(self, decoder) -> None:
-        """다시 연결: 버퍼·출력·센 시간은 두고 디코더만 바꾼다. 라이브가 아니면(정지됨) 버린다."""
+        """다시 연결: 버퍼·출력·센 시간은 두고 디코더만 바꾼다.
+
+        라이브가 아니거나(정지됨) 받은 디코더가 라이브가 아니면 그 디코더를 닫고 버린다.
+        """
         with self._lock:
-            if self._closed or not self._live:
-                self._drop_decoder(decoder)
+            if (self._closed or not self._live or self._decoder is decoder
+                    or not getattr(decoder, "live", False)):
+                if self._decoder is not decoder:
+                    self._drop_decoder(decoder)
                 return
             old, self._decoder = self._decoder, decoder
             self._lost = False
-            if old is not None and old is not decoder:
+            if old is not None:
                 self._drop_decoder(old)
+        self._start_live_thread(decoder)
 
     def play(self) -> None:
         with self._lock:
@@ -213,21 +229,31 @@ class AudioPlayer:
             if decoder is None:
                 return False
             live = self._live
-            if not live:
-                worked, ended_now = self._pump_file()
-            elif (self._lost or self._reading is not None
-                  or self.buffered_frames >= self._live_target_frames):
-                return False  # 끊겼으면 continue_stream/play_stream/stop까지 쉰다
+            if live:
+                if self._threaded:
+                    return False  # 라이브는 디코더마다 따로 도는 _live_loop가 읽는다
             else:
-                self._reading = decoder
+                worked, ended_now = self._pump_file()
         if live:
-            return self._pump_live(decoder)
+            return self._live_step(decoder) == "read"
         if ended_now and self.on_end is not None:
             self.on_end()
         return worked
 
-    def _pump_live(self, decoder) -> bool:
-        """잠금 없이 한 블록 읽고, 그 디코더가 아직 지금 것일 때만 넣는다."""
+    def _live_step(self, decoder) -> str:
+        """라이브 디코더에서 한 블록을 잠금 없이 읽는다.
+
+        "gone"(더는 지금 디코더가 아님), "idle"(끊김·버퍼 가득·이미 읽는 중), "read"를 돌려준다.
+        읽은 뒤 그 디코더가 빠졌으면 블록은 버리고 여기서 닫는다.
+        """
+        with self._lock:
+            if self._closed or self._decoder is not decoder:
+                return "gone"
+            # buffered_frames는 _lock 안에서 _buf_lock을 잡는다(순서 _lock → _buf_lock)
+            if (self._lost or decoder in self._reading
+                    or self.buffered_frames >= self._live_target_frames):
+                return "idle"  # 끊겼으면 continue_stream/play_stream/stop까지 쉰다
+            self._reading.add(decoder)
         try:
             block = decoder.read()
         except Exception:
@@ -235,7 +261,7 @@ class AudioPlayer:
             block = None
         lost_now = stale = False
         with self._lock:
-            self._reading = None
+            self._reading.discard(decoder)
             if self._decoder is not decoder:
                 stale = True  # 읽는 사이 빠졌다: 닫기는 여기 몫이다
             elif block is None:
@@ -248,9 +274,28 @@ class AudioPlayer:
                     self._buffered += len(block)
         if stale:
             _close_quietly(decoder)
+            return "gone"
         if lost_now and self.on_lost is not None:
             self.on_lost()
-        return True
+        return "read"
+
+    def _live_loop(self, decoder) -> None:
+        """threaded일 때 라이브 디코더 하나를 맡는 스레드. 막혀도 이 스레드만 막힌다."""
+        while not self._quit.is_set():
+            try:
+                step = self._live_step(decoder)
+            except Exception:
+                logger.exception("live loop error")
+                step = "idle"
+            if step == "gone":
+                return
+            if step == "idle":
+                self._quit.wait(IDLE_WAIT)
+
+    def _start_live_thread(self, decoder) -> None:
+        if self._threaded:
+            threading.Thread(target=self._live_loop, args=(decoder,),
+                             name="funplayer-live", daemon=True).start()
 
     def _pump_file(self) -> tuple[bool, bool]:
         """파일: 잠금 안에서 읽는다(로컬 읽기는 짧다). (일함, 방금 끝남)을 돌려준다."""
@@ -276,6 +321,8 @@ class AudioPlayer:
         return worked, ended_now
 
     def close(self) -> None:
+        """디코드 스레드는 JOIN_TIMEOUT까지만 기다린다. 라이브 읽기 스레드는 기다리지 않는다:
+        막힌 read가 풀리면(최대 15초) 그 스레드가 자기 디코더를 닫고 콜백 없이 끝난다."""
         self._quit.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
@@ -305,8 +352,8 @@ class AudioPlayer:
         self._state = State.STOPPED
 
     def _drop_decoder(self, decoder) -> None:
-        """빠진 디코더를 닫는다. 다른 스레드가 읽는 중이면 그 pump가 읽기 뒤에 닫는다."""
-        if decoder is not self._reading:
+        """빠진 디코더를 닫는다. 다른 스레드가 읽는 중이면 그 스레드가 읽기 뒤에 닫는다."""
+        if decoder not in self._reading:
             _close_quietly(decoder)
 
     def _start_sink(self) -> bool:

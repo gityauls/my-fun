@@ -114,12 +114,15 @@ class RadioController:
             self.stop()
 
     def stop(self) -> None:
+        was_busy = self.state is not RadioState.IDLE
         self._token += 1
         self._cancel_wait()
         self._player.unload()
         self._since = None
         self._attempt = 0
         self.state = RadioState.IDLE
+        if was_busy:
+            self._say("")  # "연결 중…"·"다시 연결하는 중…" 같은 안내를 지운다
 
     def step(self, direction: int) -> None:
         target = None
@@ -132,7 +135,8 @@ class RadioController:
             self.play(target.id)
 
     def on_lost(self) -> None:
-        if self.state is not RadioState.LIVE:
+        # 큐로 오는 신호라 A의 늦은 lost가 B 연결 뒤나 정지 뒤에 올 수 있다: 지금 디코더로 확인한다
+        if self.state is not RadioState.LIVE or not self._player.stream_lost:
             return
         self._attempt = 0
         self.state = RadioState.RETRYING

@@ -74,6 +74,7 @@ class FakeLivePlayer:
         self.continued: list = []
         self.unloaded = False
         self.is_live = False
+        self.stream_lost = False
         self.title = ""
         self.on_lost = None
 
@@ -84,14 +85,17 @@ class FakeLivePlayer:
     def play_stream(self, dec) -> None:
         self.streams.append(dec)
         self.is_live = True
+        self.stream_lost = False
         self.unloaded = False
 
     def continue_stream(self, dec) -> None:
         self.continued.append(dec)
+        self.stream_lost = False
 
     def unload(self) -> None:
         self.unloaded = True
         self.is_live = False
+        self.stream_lost = False
 
 
 class FakeRunner:

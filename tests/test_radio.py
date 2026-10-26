@@ -45,7 +45,7 @@ def test_late_result_of_previous_station_is_ignored(radio):
 def test_reconnect_delays_and_success(radio):
     r, player, runner, clock, notes = radio
     r.play("kbs-25"); runner.finish(0, result="A"); clock.advance(30)
-    r.on_lost()
+    player.stream_lost = True; r.on_lost()
     assert r.state is RadioState.RETRYING and notes[-1] == "다시 연결하는 중… (1/3)"
     assert len(runner.pending) == 0; clock.advance(2.0); assert len(runner.pending) == 1
     runner.finish(1, error=ResolveError("x")); assert notes[-1] == "다시 연결하는 중… (2/3)"
@@ -55,10 +55,36 @@ def test_reconnect_delays_and_success(radio):
 
 def test_three_failures_give_up(radio):
     r, player, runner, clock, notes = radio
-    r.play("kbs-25"); runner.finish(0, result="A"); r.on_lost()
+    r.play("kbs-25"); runner.finish(0, result="A"); player.stream_lost = True; r.on_lost()
     for i, d in enumerate((2.0, 4.0, 8.0), start=1):
         clock.advance(d); runner.finish(i, error=DecodeError("x"))
     assert r.state is RadioState.IDLE and player.unloaded and notes[-1].startswith("지금은 이 방송을")
+
+
+def test_late_lost_of_previous_station_is_ignored(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A")
+    r.play("mbc-mfm"); runner.finish(1, result="B")
+    assert r.state is RadioState.LIVE and not player.stream_lost
+    r.on_lost()                                   # A의 늦은 lost
+    assert r.state is RadioState.LIVE and runner.pending == [] and clock.timers == []
+
+
+def test_late_lost_after_stop_is_ignored(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A"); r.stop()
+    r.on_lost()
+    assert r.state is RadioState.IDLE and clock.timers == []
+
+
+def test_stop_clears_status_line(radio):
+    r, player, runner, clock, notes = radio
+    r.stop(); assert notes == []                  # IDLE에서는 건드리지 않는다
+    r.play("kbs-25"); r.stop()
+    assert notes == ["연결 중…", ""]
+    r.play("kbs-25"); runner.finish(1, result="A"); player.stream_lost = True; r.on_lost()
+    r.stop()
+    assert r.state is RadioState.IDLE and notes[-1] == ""
 
 
 def test_toggle_stop_resets_elapsed_and_reconnects_fresh(radio):
@@ -93,7 +119,8 @@ def test_elapsed_resets_on_playing_another_station(radio):
 
 def test_shutdown_cancels_pending_work(radio):
     r, player, runner, clock, notes = radio
-    r.play("kbs-25"); runner.finish(0, result="A"); r.on_lost(); r.shutdown()
+    r.play("kbs-25"); runner.finish(0, result="A"); player.stream_lost = True; r.on_lost()
+    r.shutdown()
     clock.advance(20)
     assert runner.pending == [] and player.continued == []
     r.play("kbs-21"); r.shutdown(); runner.finish(1, result="Z") if runner.pending else None

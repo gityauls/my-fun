@@ -224,10 +224,88 @@ def test_lost_in_thread_does_not_spin():
     d.read = lambda: reads.append(1)       # 늘 None
     try:
         p.play_stream(d)
-        time.sleep(0.3)
+        wait_until(lambda: lost)
+        time.sleep(0.1)
         assert lost == [1] and len(reads) == 1
     finally:
         p.close()
+
+
+def wait_until(cond, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return cond()
+
+
+def test_stalled_station_does_not_starve_next_station():
+    p = AudioPlayer(sink_factory=FakeSink, threaded=True)
+    a = StalledDecoder()
+    try:
+        p.play_stream(a)
+        assert a.entered.wait(2)
+        p.play_stream(FakeLiveDecoder([block()] * 3))
+        assert wait_until(lambda: p.buffered_frames > 0, 0.5)
+        assert not a.closed
+        a.release.set()
+        assert wait_until(lambda: a.closed)      # 막혔던 스레드가 자기 디코더를 닫는다
+    finally:
+        a.release.set()
+        p.close()
+
+
+def test_stalled_station_does_not_starve_file(tone_mp3):
+    p = AudioPlayer(sink_factory=FakeSink, threaded=True)
+    a = StalledDecoder()
+    lost = []; p.on_lost = lambda: lost.append(1)
+    try:
+        p.play_stream(a)
+        assert a.entered.wait(2)
+        p.load(tone_mp3); p.play()
+        assert wait_until(lambda: p.buffered_frames > 0, 0.5)
+        a.release.set()
+        assert wait_until(lambda: a.closed)
+        assert lost == []                         # 빠진 디코더는 on_lost를 부르지 않는다
+    finally:
+        a.release.set()
+        p.close()
+
+
+def test_close_with_stalled_read_does_not_hang():
+    p = AudioPlayer(sink_factory=FakeSink, threaded=True)
+    a = StalledDecoder()
+    lost = []; p.on_lost = lambda: lost.append(1)
+    p.play_stream(a)
+    assert a.entered.wait(2)
+    start = time.monotonic()
+    p.close()
+    assert time.monotonic() - start < 1.5 and not a.closed
+    a.release.set()
+    assert wait_until(lambda: a.closed) and lost == []
+
+
+def test_stream_lost_flag(rig):
+    p, sinks, ends, lost = rig
+    assert not p.stream_lost
+    p.play_stream(FakeLiveDecoder([block()]))
+    p.pump(); assert not p.stream_lost
+    p.pump(); assert p.stream_lost and lost == [1]
+    p.continue_stream(FakeLiveDecoder([])); assert not p.stream_lost
+    p.pump(); assert p.stream_lost
+    p.play_stream(FakeLiveDecoder([])); assert not p.stream_lost
+    p.pump(); assert p.stream_lost
+    p.stop(); assert not p.stream_lost
+    p.play_stream(FakeLiveDecoder([])); p.pump(); p.unload()
+    assert not p.stream_lost
+
+
+def test_continue_stream_rejects_file_decoder(rig):
+    p, *_ = rig
+    a = FakeLiveDecoder([block()])
+    p.play_stream(a)
+    f = FakeLiveDecoder([]); f.live = False
+    p.continue_stream(f)
+    assert f.closed and not a.closed
 
 
 def test_file_playback_unchanged(tone_mp3):
