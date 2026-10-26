@@ -171,7 +171,7 @@ def test_continue_stream_after_stop_is_ignored(rig):
 def test_seek_is_noop_when_live(rig):
     p, sinks, *_ = rig
     p.play_stream(FakeLiveDecoder([block(), block()]))
-    p.pump(); p.pump(); sinks[0].pull(441)
+    p.pump(); p.pump(); p.pump(); sinks[0].pull(441)   # 3번째 pump: 끊김 → 출력 켜짐
     pos = p.position
     p.seek(10)
     assert p.position == pos and p.buffered_frames == 441
@@ -311,4 +311,84 @@ def test_continue_stream_rejects_file_decoder(rig):
 def test_file_playback_unchanged(tone_mp3):
     p = AudioPlayer(sink_factory=FakeSink, threaded=False)
     p.load(tone_mp3); assert not p.is_live and p.duration > 0
+    p.close()
+
+
+# ---- 미리 받아 두기 (8초 또는 3초 상한) ----
+
+@pytest.fixture
+def prerig():
+    """1초 버퍼(44100프레임), 손으로 움직이는 시계."""
+    sinks, now = [], [0.0]
+    def factory(cb):
+        sinks.append(FakeSink(cb)); return sinks[-1]
+    p = AudioPlayer(sink_factory=factory, threaded=False, live_buffer_seconds=1.0,
+                    clock=lambda: now[0])
+    yield p, sinks, now
+    p.close()
+
+
+def started(sinks):
+    return bool(sinks) and sinks[-1].started
+
+
+def test_preroll_waits_until_buffer_full(prerig):
+    p, sinks, now = prerig
+    p.play_stream(FakeLiveDecoder([block(11025)] * 5))
+    assert p.state is State.PLAYING and not started(sinks)
+    for _ in range(3):
+        p.pump()
+    assert p.buffered_frames == 33075 and not started(sinks)
+    p.pump()                                      # 44100 = 1초가 찼다
+    assert started(sinks)
+
+
+def test_preroll_starts_at_cap(prerig):
+    p, sinks, now = prerig
+    p.play_stream(FakeLiveDecoder([block(441)] * 5))
+    p.pump(); now[0] = 2.9; p.pump()
+    assert not started(sinks)
+    now[0] = 3.0; p.pump()
+    assert started(sinks) and p.buffered_frames == 1323
+
+
+def test_preroll_starts_when_lost_before_full(prerig):
+    p, sinks, now = prerig
+    p.play_stream(FakeLiveDecoder([block(441)]))
+    p.pump(); assert not started(sinks)
+    p.pump()                                      # 끊김: 모은 만큼이라도 낸다
+    assert started(sinks) and p.stream_lost
+
+
+def test_stop_clears_preroll_wait(prerig):
+    p, sinks, now = prerig
+    p.play_stream(FakeLiveDecoder([block(441)] * 3)); p.stop()
+    now[0] = 10.0
+    p.play_stream(FakeLiveDecoder([block(441)] * 3))
+    p.pump()
+    assert not started(sinks)                     # 새 기다림은 10초부터 센다
+    now[0] = 13.0; p.pump()
+    assert started(sinks)
+
+
+def test_continue_stream_keeps_output_running(prerig):
+    p, sinks, now = prerig
+    p.play_stream(FakeLiveDecoder([block(44100)]))
+    p.pump(); assert started(sinks)
+    sinks[0].pull(2048)                           # 자리가 나야 다음 읽기(끊김)를 본다
+    p.pump(); assert p.stream_lost
+    p.continue_stream(FakeLiveDecoder([block(441)]))
+    assert started(sinks) and len(sinks) == 1
+    p.pump(); assert started(sinks)
+
+
+def test_preroll_sink_failure_reports_error():
+    errors = []
+    p = AudioPlayer(sink_factory=lambda cb: FakeSink(cb, fail_on_start=True), threaded=False,
+                    live_buffer_seconds=0.01, clock=lambda: 0.0)
+    p.on_error = errors.append
+    p.play_stream(FakeLiveDecoder([block(441)] * 2))
+    assert errors == []
+    p.pump()
+    assert errors == ["소리 장치를 열 수 없습니다"] and p.state is State.STOPPED
     p.close()

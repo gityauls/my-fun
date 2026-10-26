@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from collections import deque
 from enum import Enum
 from typing import Callable
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 DEVICE_ERROR_MSG = "소리 장치를 열 수 없습니다"
 IDLE_WAIT = 0.01
 JOIN_TIMEOUT = 1.0
+LIVE_START_CAP = 3.0  # 라이브: 버퍼가 덜 찼어도 이만큼 기다렸으면 소리를 낸다(첫 소리 1~3초)
 
 
 class State(Enum):
@@ -45,6 +47,7 @@ class AudioPlayer:
         threaded: bool = True,
         buffer_seconds: float = 2.0,
         live_buffer_seconds: float = 8.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.on_end: Callable[[], None] | None = None
         self.on_error: Callable[[str], None] | None = None
@@ -53,6 +56,9 @@ class AudioPlayer:
         self._open_decoder = open_decoder
         self._target_frames = int(buffer_seconds * SAMPLE_RATE)
         self._live_target_frames = int(live_buffer_seconds * SAMPLE_RATE)
+        self._clock = clock
+        # 라이브 미리 받기: 출력을 켜기 전 기다리는 마감 시각(None이면 기다리지 않음)
+        self._start_by: float | None = None
 
         self._lock = threading.RLock()
         self._decoder = None
@@ -147,7 +153,11 @@ class AudioPlayer:
             self._reset()
 
     def play_stream(self, decoder) -> None:
-        """열린 라이브 디코더로 바꿔 끼우고 PLAYING으로 시작한다."""
+        """열린 라이브 디코더로 바꿔 끼우고 PLAYING으로 시작한다.
+
+        출력은 바로 켜지 않는다: 버퍼가 live_buffer_seconds만큼 차거나 LIVE_START_CAP초가
+        지나거나 끊기면 `_live_step`이 켠다.
+        """
         with self._lock:
             self._reset()
             if self._closed:
@@ -155,10 +165,9 @@ class AudioPlayer:
                 return
             self._decoder = decoder
             self._live = True
-            failed = self._start_sink()
+            self._state = State.PLAYING
+            self._start_by = self._clock() + LIVE_START_CAP
         self._start_live_thread(decoder)
-        if failed and self.on_error is not None:
-            self.on_error(DEVICE_ERROR_MSG)
 
     def continue_stream(self, decoder) -> None:
         """다시 연결: 버퍼·출력·센 시간은 두고 디코더만 바꾼다.
@@ -259,25 +268,39 @@ class AudioPlayer:
         except Exception:
             logger.warning("live read failed; stream lost", exc_info=True)
             block = None
-        lost_now = stale = False
+        lost_now = stale = failed = False
         with self._lock:
             self._reading.discard(decoder)
             if self._decoder is not decoder:
                 stale = True  # 읽는 사이 빠졌다: 닫기는 여기 몫이다
-            elif block is None:
-                if not self._lost:
-                    self._lost = True
-                    lost_now = True
             else:
-                with self._buf_lock:
-                    self._blocks.append(block)
-                    self._buffered += len(block)
+                if block is None:
+                    if not self._lost:
+                        self._lost = True
+                        lost_now = True
+                else:
+                    with self._buf_lock:
+                        self._blocks.append(block)
+                        self._buffered += len(block)
+                failed = self._maybe_start_live_output(lost_now)
         if stale:
             _close_quietly(decoder)
             return "gone"
+        if failed and self.on_error is not None:
+            self.on_error(DEVICE_ERROR_MSG)
         if lost_now and self.on_lost is not None:
             self.on_lost()
         return "read"
+
+    def _maybe_start_live_output(self, lost_now: bool) -> bool:
+        """_lock 안: 미리 받기가 끝났으면(가득·상한·끊김) 출력을 켠다. 장치 실패면 True."""
+        if self._start_by is None:
+            return False
+        if not (lost_now or self.buffered_frames >= self._live_target_frames
+                or self._clock() >= self._start_by):
+            return False
+        self._start_by = None
+        return self._start_sink()
 
     def _live_loop(self, decoder) -> None:
         """threaded일 때 라이브 디코더 하나를 맡는 스레드. 막혀도 이 스레드만 막힌다."""
@@ -349,6 +372,7 @@ class AudioPlayer:
         self._ended = False
         self._live = False
         self._lost = False
+        self._start_by = None
         self._state = State.STOPPED
 
     def _drop_decoder(self, decoder) -> None:
