@@ -73,6 +73,11 @@ class RadioController:
     def has_station(self, station_id: str) -> bool:
         return self._stations.get(station_id) is not None
 
+    def first_station(self) -> Station | None:
+        """목록 맨 위(보이는 순서)의 방송."""
+        visible = self._stations.visible()
+        return visible[0] if visible else None
+
     def refresh_current(self) -> None:
         """목록이 바뀐 뒤(이름 바꾸기 등) 고른 방송의 표시를 새로 읽는다. 지워졌으면 그대로 둔다."""
         if self.current is not None:

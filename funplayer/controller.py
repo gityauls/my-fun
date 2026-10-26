@@ -342,6 +342,35 @@ class PlayerController:
         else:
             self._toggle_file()
 
+    @property
+    def can_switch_source(self) -> bool:
+        """작게 보기 [MP3로]/[라디오로]: 건너갈 쪽에 들을 것이 있는가."""
+        if self.source == "radio":
+            return len(self.playlist) > 0
+        return self._radio is not None and self._switch_station() is not None
+
+    def _switch_station(self) -> str | None:
+        """[라디오로]가 들을 방송: 지금(마지막) 방송, 저장된 마지막 방송, 없으면 목록 맨 위."""
+        current = self._radio.current
+        if current is not None and self._radio.has_station(current.id):
+            return current.id
+        last = self._settings.last_station
+        if last and self._radio.has_station(last):
+            return last
+        first = self._radio.first_station()
+        return first.id if first is not None else None
+
+    def switch_source(self) -> None:
+        """작게 보기의 전환 단추. 목록이 없으니 누르면 바로 다른 쪽을 튼다."""
+        if not self.can_switch_source:
+            return
+        if self.source == "radio":
+            if self.playlist.index is None:
+                self.playlist.set_current(0)
+            self._toggle_file()   # 라디오를 끊고 듣던 곡 위치에서(없으면 처음부터)
+        else:
+            self.play_station(self._switch_station())
+
     def toggle_for_tab(self, tab: str) -> None:
         """재생목록 탭에서 [재생]: 라디오를 멈춰 두었으면 곡 쪽 [재생]으로 본다."""
         if tab == "playlist" and self.source == "radio" and not self.radio_live:

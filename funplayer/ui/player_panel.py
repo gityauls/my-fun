@@ -170,6 +170,15 @@ class PlayerPanel(QWidget):
         titles.addWidget(self.title_label)
         titles.addWidget(self.artist_label)
         self.head_row.addLayout(titles, 1)
+        # 작게 보기에만 보이는 [라디오로]/[MP3로]: 목록이 없으니 누르면 바로 다른 쪽을 튼다
+        self.switch_button = QPushButton("라디오로")
+        self.switch_button.setFocusPolicy(Qt.NoFocus)
+        self.switch_button.setFixedHeight(26)
+        self.switch_button.setStyleSheet("padding: 0 6px;")
+        self.switch_button.clicked.connect(self._switch_source)
+        self.switch_button.setFixedWidth(self.switch_button.fontMetrics().horizontalAdvance("라디오로") + 16)
+        self.switch_button.setVisible(False)
+        self.head_row.addWidget(self.switch_button, 0, Qt.AlignTop)
         self.mini_button = self._tool(QStyle.SP_MediaPlay, "작게 보기", 26, 18)
         self.mini_button.setIcon(mini_icon(OFF_COLOR))
         self.head_row.addWidget(self.mini_button, 0, Qt.AlignTop)
@@ -439,7 +448,7 @@ class PlayerPanel(QWidget):
             (self.control_row if on else self.head_row).removeWidget(w)
         if on:
             for w in movers:
-                self.head_row.insertWidget(self.head_row.indexOf(self.mini_button), w, 0, Qt.AlignTop)
+                self.head_row.insertWidget(self.head_row.indexOf(self.switch_button), w, 0, Qt.AlignTop)
         else:
             for pos, w in zip((0, 1, 3), movers):
                 self.control_row.insertWidget(pos, w)
@@ -525,6 +534,13 @@ class PlayerPanel(QWidget):
         for b in (self.open_button, self.add_button, self.list_button):
             b.setVisible(not mini and not radio_tab)
         self.add_url_button.setVisible(not mini and radio_tab)
+        self.switch_button.setVisible(mini)
+        text = "MP3로" if on_radio else "라디오로"
+        if self.switch_button.text() != text:
+            self.switch_button.setText(text)
+            self.switch_button.setFixedWidth(self.switch_button.fontMetrics().horizontalAdvance(text) + 16)
+            self.switch_button.setToolTip("곡으로 돌아가 이어 듣기" if on_radio else "마지막 방송 듣기")
+        self.switch_button.setEnabled(self.controller.can_switch_source)
         # 탐색 줄: 라디오면 막대 대신 라이브 줄이고, 작게 볼 때는 줄 전체를 숨긴다
         self.seek_slider.setVisible(not on_radio)
         for w in (self.elapsed_label, self.total_label):
@@ -539,6 +555,12 @@ class PlayerPanel(QWidget):
             self.count_label.setText(f"{len(self.controller.playlist)}곡")
 
     # ---- 라디오 ----
+
+    def _switch_source(self) -> None:
+        self.controller.switch_source()
+        # 보통 보기로 돌아왔을 때 지금 나오는 쪽 목록이 보이게
+        self.set_tab("radio" if self.controller.source == "radio" else "playlist")
+        self.refresh()
 
     def _play_station(self, station_id: str) -> None:
         self.controller.play_station(station_id)

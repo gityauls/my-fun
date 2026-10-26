@@ -355,3 +355,44 @@ def test_ctrl_tab_key_reaches_shortcut_from_station_view(rpanel):
     p.station_view.setFocus()
     QTest.keyClick(p.station_view, Qt.Key_Tab, Qt.ControlModifier)
     assert p.tab_bar.currentIndex() == 0
+
+
+def test_mini_switch_button_only_in_mini_and_follows_source(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    assert not p.switch_button.isVisible()
+    p.set_mini(True); p.refresh()
+    assert p.switch_button.isVisible() and p.switch_button.text() == "라디오로"
+    connect(p, runner); p.refresh()
+    assert p.switch_button.text() == "MP3로" and not p.switch_button.isEnabled()   # 재생목록이 비었다
+    p.set_mini(False); assert not p.switch_button.isVisible()
+
+
+def test_mini_switch_to_radio_plays_last_station_or_first(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.set_mini(True)
+    p.switch_button.click()   # 한 번도 듣지 않았다: 목록 맨 위 방송
+    assert p.controller.source == "radio" and p.radio.current.id == "kbs-21" and len(runner.calls) == 1
+    runner.finish(0, result=FakeStream()); p.refresh()
+    assert p.radio.state is RadioState.LIVE and p.switch_button.text() == "MP3로"
+
+
+def test_mini_switch_round_trip_resumes_track_and_station(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3", "02 b.mp3"]))])
+    fake.position = 50.0
+    connect(p, runner, "sbs-powerfm")
+    p.set_mini(True); p.refresh()
+    p.switch_button.click()   # MP3로: 라디오를 끊고 듣던 곡 위치에서
+    assert p.radio.state is RadioState.IDLE and p.controller.source == "file"
+    assert fake.loaded[-1].endswith("01 a.mp3") and fake.seeks[-1] == 50.0 and fake.state is State.PLAYING
+    assert p.switch_button.text() == "라디오로" and p.tab == "playlist"
+    p.switch_button.click()   # 라디오로: 마지막 방송국
+    assert p.controller.source == "radio" and p.radio.current.id == "sbs-powerfm" and p.tab == "radio"
+
+
+def test_mini_switch_to_mp3_without_track_index_plays_first(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))])
+    connect(p, runner)
+    p.set_mini(True); p.refresh(); p.switch_button.click()
+    assert p.controller.source == "file" and fake.loaded[-1].endswith("01 a.mp3") and fake.state is State.PLAYING
