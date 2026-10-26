@@ -8,8 +8,10 @@ class PlayerBridge(QObject):
 
     ended = pyqtSignal()
     error = pyqtSignal(str)
+    lost = pyqtSignal()
 
     def __init__(self, player, parent=None) -> None:
         super().__init__(parent)
         player.on_end = self.ended.emit
         player.on_error = self.error.emit
+        player.on_lost = self.lost.emit

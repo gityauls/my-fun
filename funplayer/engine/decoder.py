@@ -5,9 +5,12 @@ import logging
 import av
 import numpy as np
 
+from funplayer.engine.resolve import APP_UA
+
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 44100
+STREAM_TIMEOUT = 15  # 연결과 읽기, 초
 
 
 class DecodeError(Exception):
@@ -15,10 +18,14 @@ class DecodeError(Exception):
 
 
 class Decoder:
-    def __init__(self, container, stream) -> None:
+    def __init__(self, container, stream, live: bool = False) -> None:
         self._container = container
         self._stream = stream
-        self.duration = _duration(container, stream)
+        self.live = live
+        # 곡 이름(ICY StreamTitle). PyAV 19는 container.metadata에 icy-* 머리글만 주고
+        # StreamTitle은 주지 않는다(Task 4 조사). 그래서 늘 ""이다.
+        self.title = ""
+        self.duration = 0.0 if live else _duration(container, stream)
         self._prefetched: np.ndarray | None = None
         self._ended = False
         self._blocks = self._iter_blocks(None)
@@ -95,12 +102,24 @@ def _duration(container, stream) -> float:
 
 
 def open_decoder(path: str) -> Decoder:
+    return _open(lambda: av.open(path), live=False)
+
+
+def open_stream(url: str, headers: dict[str, str] | None = None) -> Decoder:
+    """인터넷 방송을 연다(네트워크를 쓰므로 작업 스레드에서 부른다). 실패는 DecodeError."""
+    options = {"user_agent": APP_UA, "icy": "1"}
+    if headers:
+        options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+    return _open(lambda: av.open(url, timeout=STREAM_TIMEOUT, options=options), live=True)
+
+
+def _open(opener, live: bool) -> Decoder:
     container = None
     try:
-        container = av.open(path)
+        container = opener()
         if not container.streams.audio:
             raise DecodeError("오디오 트랙이 없습니다")
-        decoder = Decoder(container, container.streams.audio[0])
+        decoder = Decoder(container, container.streams.audio[0], live=live)
         decoder._prefetch()
         if decoder._prefetched is None:
             raise DecodeError("디코딩할 소리가 없습니다")

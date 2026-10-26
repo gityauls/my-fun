@@ -28,9 +28,12 @@ class State(Enum):
 class AudioPlayer:
     """디코더 → 버퍼 → 출력. 잠금 규칙:
 
-    - `_lock`(RLock): 디코더, 상태, 출력, 끝 표시. 순서는 항상 `_lock` → `_buf_lock`.
+    - `_lock`(RLock): 디코더, 상태, 출력, 끝·끊김 표시. 순서는 항상 `_lock` → `_buf_lock`.
     - `_buf_lock`: 버퍼, 기준점, 센 프레임, gain. 출력 콜백은 이것만 잡는다.
-    - `on_end`/`on_error`는 모든 잠금을 놓은 뒤에 부른다.
+    - `on_end`/`on_error`/`on_lost`는 모든 잠금을 놓은 뒤에 부른다.
+    - 라이브 디코더의 read()(네트워크, 최대 15초 막힘)는 `_lock` 밖에서 부른다.
+      읽는 동안 그 디코더는 `_reading`에 있고, 그새 빠진 디코더는 읽기가 끝난 뒤
+      pump가 닫는다(다른 스레드가 읽는 중인 컨테이너를 닫지 않는다).
     """
 
     def __init__(
@@ -39,12 +42,15 @@ class AudioPlayer:
         open_decoder: Callable = open_decoder,
         threaded: bool = True,
         buffer_seconds: float = 2.0,
+        live_buffer_seconds: float = 8.0,
     ) -> None:
         self.on_end: Callable[[], None] | None = None
         self.on_error: Callable[[str], None] | None = None
+        self.on_lost: Callable[[], None] | None = None
         self._sink_factory = sink_factory
         self._open_decoder = open_decoder
         self._target_frames = int(buffer_seconds * SAMPLE_RATE)
+        self._live_target_frames = int(live_buffer_seconds * SAMPLE_RATE)
 
         self._lock = threading.RLock()
         self._decoder = None
@@ -52,6 +58,9 @@ class AudioPlayer:
         self._sink = None
         self._ended = False
         self._closed = False
+        self._live = False
+        self._lost = False  # 라이브 읽기가 끝났거나 오류를 냈다
+        self._reading = None  # _lock 밖에서 read() 중인 라이브 디코더
 
         self._buf_lock = threading.Lock()
         self._blocks: deque[np.ndarray] = deque()
@@ -95,38 +104,76 @@ class AudioPlayer:
         with self._buf_lock:
             return self._buffered
 
+    @property
+    def is_live(self) -> bool:
+        with self._lock:
+            return self._live
+
+    @property
+    def stream_title(self) -> str:
+        with self._lock:
+            if not self._live or self._decoder is None:
+                return ""
+            return getattr(self._decoder, "title", "") or ""
+
     # ---- 조작 ----
 
     def load(self, path: str) -> None:
+        # 느린 드라이브에서도 화면이 멈추지 않게 잠금 밖에서 연다
+        try:
+            decoder = self._open_decoder(path)
+        except Exception:
+            with self._lock:
+                self._reset()
+            raise
         with self._lock:
             self._reset()
-            self._decoder = self._open_decoder(path)
+            if self._closed:
+                self._drop_decoder(decoder)
+                return
+            self._decoder = decoder
 
     def unload(self) -> None:
         with self._lock:
             self._reset()
 
+    def play_stream(self, decoder) -> None:
+        """열린 라이브 디코더로 바꿔 끼우고 PLAYING으로 시작한다."""
+        with self._lock:
+            self._reset()
+            if self._closed:
+                self._drop_decoder(decoder)
+                return
+            self._decoder = decoder
+            self._live = True
+            failed = self._start_sink()
+        if failed and self.on_error is not None:
+            self.on_error(DEVICE_ERROR_MSG)
+
+    def continue_stream(self, decoder) -> None:
+        """다시 연결: 버퍼·출력·센 시간은 두고 디코더만 바꾼다. 라이브가 아니면(정지됨) 버린다."""
+        with self._lock:
+            if self._closed or not self._live:
+                self._drop_decoder(decoder)
+                return
+            old, self._decoder = self._decoder, decoder
+            self._lost = False
+            if old is not None and old is not decoder:
+                self._drop_decoder(old)
+
     def play(self) -> None:
-        failed = False
         with self._lock:
             if self._closed or self._decoder is None or self._state is State.PLAYING:
                 return
-            try:
-                if self._sink is None:
-                    self._sink = self._sink_factory(self._callback)
-                self._sink.start()
-            except SinkError:
-                logger.warning("audio device failed to start", exc_info=True)
-                self._discard_sink()
-                self._state = State.STOPPED
-                failed = True
-            else:
-                self._state = State.PLAYING
+            failed = self._start_sink()
         if failed and self.on_error is not None:
             self.on_error(DEVICE_ERROR_MSG)
 
     def pause(self) -> None:
         with self._lock:
+            if self._live:
+                self._reset()  # 라디오에는 멈춤이 없다: stop과 같다
+                return
             if self._state is not State.PLAYING:
                 return
             self._halt_sink()
@@ -134,11 +181,14 @@ class AudioPlayer:
 
     def stop(self) -> None:
         with self._lock:
-            self._rewind()
+            if self._live:
+                self._reset()
+            else:
+                self._rewind()
 
     def seek(self, sec: float) -> None:
         with self._lock:
-            if self._decoder is None:
+            if self._decoder is None or self._live:
                 return
             sec = float(sec)
             if not math.isfinite(sec):
@@ -158,31 +208,72 @@ class AudioPlayer:
             self._gain = float(g)
 
     def pump(self) -> bool:
-        ended_now = False
         with self._lock:
-            if self._decoder is None:
+            decoder = self._decoder
+            if decoder is None:
                 return False
-            worked = False
-            if not self._ended and self.buffered_frames < self._target_frames:
-                try:
-                    block = self._decoder.read()
-                except Exception:
-                    logger.warning("decode failed mid-track; treating as end", exc_info=True)
-                    block = None
-                if block is None:
-                    self._ended = True
-                else:
-                    with self._buf_lock:
-                        self._blocks.append(block)
-                        self._buffered += len(block)
-                worked = True
-            if self._state is State.PLAYING and self._ended and self.buffered_frames == 0:
-                self._rewind()
-                ended_now = True
-                worked = True
+            live = self._live
+            if not live:
+                worked, ended_now = self._pump_file()
+            elif (self._lost or self._reading is not None
+                  or self.buffered_frames >= self._live_target_frames):
+                return False  # 끊겼으면 continue_stream/play_stream/stop까지 쉰다
+            else:
+                self._reading = decoder
+        if live:
+            return self._pump_live(decoder)
         if ended_now and self.on_end is not None:
             self.on_end()
         return worked
+
+    def _pump_live(self, decoder) -> bool:
+        """잠금 없이 한 블록 읽고, 그 디코더가 아직 지금 것일 때만 넣는다."""
+        try:
+            block = decoder.read()
+        except Exception:
+            logger.warning("live read failed; stream lost", exc_info=True)
+            block = None
+        lost_now = stale = False
+        with self._lock:
+            self._reading = None
+            if self._decoder is not decoder:
+                stale = True  # 읽는 사이 빠졌다: 닫기는 여기 몫이다
+            elif block is None:
+                if not self._lost:
+                    self._lost = True
+                    lost_now = True
+            else:
+                with self._buf_lock:
+                    self._blocks.append(block)
+                    self._buffered += len(block)
+        if stale:
+            _close_quietly(decoder)
+        if lost_now and self.on_lost is not None:
+            self.on_lost()
+        return True
+
+    def _pump_file(self) -> tuple[bool, bool]:
+        """파일: 잠금 안에서 읽는다(로컬 읽기는 짧다). (일함, 방금 끝남)을 돌려준다."""
+        ended_now = False
+        worked = False
+        if not self._ended and self.buffered_frames < self._target_frames:
+            try:
+                block = self._decoder.read()
+            except Exception:
+                logger.warning("decode failed mid-track; treating as end", exc_info=True)
+                block = None
+            if block is None:
+                self._ended = True
+            else:
+                with self._buf_lock:
+                    self._blocks.append(block)
+                    self._buffered += len(block)
+            worked = True
+        if self._state is State.PLAYING and self._ended and self.buffered_frames == 0:
+            self._rewind()
+            ended_now = True
+            worked = True
+        return worked, ended_now
 
     def close(self) -> None:
         self._quit.set()
@@ -203,16 +294,34 @@ class AudioPlayer:
         self._halt_sink()
         if self._decoder is not None:
             decoder, self._decoder = self._decoder, None
-            try:
-                decoder.close()
-            except Exception:
-                logger.warning("decoder close failed", exc_info=True)
+            self._drop_decoder(decoder)
         self._clear_buffer()
         with self._buf_lock:
             self._base = 0.0
             self._played = 0
         self._ended = False
+        self._live = False
+        self._lost = False
         self._state = State.STOPPED
+
+    def _drop_decoder(self, decoder) -> None:
+        """빠진 디코더를 닫는다. 다른 스레드가 읽는 중이면 그 pump가 읽기 뒤에 닫는다."""
+        if decoder is not self._reading:
+            _close_quietly(decoder)
+
+    def _start_sink(self) -> bool:
+        """출력을 (만들어) 켠다. 실패하면 STOPPED로 두고 True를 돌려준다."""
+        try:
+            if self._sink is None:
+                self._sink = self._sink_factory(self._callback)
+            self._sink.start()
+        except SinkError:
+            logger.warning("audio device failed to start", exc_info=True)
+            self._discard_sink()
+            self._state = State.STOPPED
+            return True
+        self._state = State.PLAYING
+        return False
 
     def _rewind(self) -> None:
         """stop()과 같은 처리: 출력 정지, 버퍼 비움, 디코더를 0으로."""
@@ -292,3 +401,10 @@ class AudioPlayer:
             outdata *= self._gain
             self._buffered -= filled
             self._played += filled
+
+
+def _close_quietly(decoder) -> None:
+    try:
+        decoder.close()
+    except Exception:
+        logger.warning("decoder close failed", exc_info=True)
