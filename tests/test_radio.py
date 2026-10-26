@@ -87,11 +87,54 @@ def test_stop_clears_status_line(radio):
     assert r.state is RadioState.IDLE and notes[-1] == ""
 
 
-def test_toggle_stop_resets_elapsed_and_reconnects_fresh(radio):
+def test_toggle_pauses_keeping_elapsed_and_reconnects_fresh(radio):
     r, player, runner, clock, notes = radio
     r.play("kbs-25"); runner.finish(0, result="A"); clock.advance(10)
-    r.toggle(); assert r.state is RadioState.IDLE and r.elapsed == 0 and player.unloaded
+    r.toggle(); assert r.state is RadioState.IDLE and r.elapsed == 10 and player.unloaded
+    clock.advance(60); assert r.elapsed == 10             # 멈춘 동안은 세지 않는다
     r.toggle(); assert r.state is RadioState.CONNECTING and len(runner.pending) == 1
+    assert r.elapsed == 10
+    clock.advance(1); runner.finish(1, result="B")       # 새로 연결(뒤처진 데서 잇지 않음)
+    assert player.streams == ["A", "B"] and player.continued == []
+    clock.advance(5); assert r.elapsed == 15
+
+
+def test_stop_resets_elapsed(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A"); clock.advance(10)
+    r.stop(); assert r.state is RadioState.IDLE and r.elapsed == 0
+    r.toggle(); runner.finish(1, result="B"); clock.advance(3)
+    assert r.elapsed == 3
+
+
+def test_pause_then_other_station_resets_elapsed(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A"); clock.advance(10)
+    r.pause(); assert r.elapsed == 10
+    r.play("kbs-21"); assert r.elapsed == 0
+
+
+def test_quick_drops_do_not_retry_forever(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A")
+    n = 1
+    for i, d in enumerate((2.0, 4.0, 8.0), start=1):
+        clock.advance(5); player.stream_lost = True; r.on_lost()
+        assert r.state is RadioState.RETRYING and notes[-1] == f"다시 연결하는 중… ({i}/3)"
+        clock.advance(d); runner.finish(n, result=f"R{i}"); n += 1
+        assert r.state is RadioState.LIVE
+    clock.advance(5); player.stream_lost = True; r.on_lost()
+    assert r.state is RadioState.IDLE and player.unloaded and notes[-1].startswith("지금은 이 방송을")
+    assert clock.timers == [] and runner.pending == []
+
+
+def test_stable_live_resets_retry_count(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A")
+    clock.advance(5); player.stream_lost = True; r.on_lost()
+    clock.advance(2.0); runner.finish(1, result="R1")
+    clock.advance(30); player.stream_lost = True; r.on_lost()   # 30초 이어졌으면 처음부터 센다
+    assert notes[-1] == "다시 연결하는 중… (1/3)"
 
 
 def test_cue_never_touches_network(radio):

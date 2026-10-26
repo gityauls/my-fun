@@ -98,10 +98,10 @@ class PlayerController:
         self._settings.last_station = current.id if current is not None else ""
 
     def play_station(self, station_id: str) -> None:
-        if self._radio is None:
-            return
+        if self._radio is None or not self._radio.has_station(station_id):
+            return   # 모르는 방송이면 곡을 끊지 않는다
         if self.source == "file":
-            if self._player.has_track:
+            if self._player.has_track or self._held_position is not None:
                 self._return_position = self._resume_position()
             self._player.unload()   # 실제 앱은 곡과 라디오가 한 플레이어를 쓴다: 두 소리가 겹치지 않게
         self._end_cue()
@@ -299,7 +299,9 @@ class PlayerController:
         self._play_index(i)
         self._remember()
 
-    def _play_index(self, i: int) -> None:
+    def _play_index(self, i: int, start_at: float = 0.0) -> None:
+        """i번 곡부터 열리는 곡을 튼다. start_at은 i번 곡이 열렸을 때만 재생 전에 그 자리로 간다."""
+        first = i
         self._leave_radio()
         self._cued = False
         self._held_position = None
@@ -320,6 +322,10 @@ class PlayerController:
                     self._error(FAIL_MSG.format(name=os.path.basename(track.path)))
                 else:
                     self.playlist.mark_ok(i)
+                    if i == first and start_at > 0:
+                        duration = self._player.duration
+                        if not (duration > 0 and duration - start_at < RESUME_TAIL):
+                            self._player.seek(start_at)   # 재생 전에 옮겨 0:00이 잠깐 들리지 않게
                     self._player.play()
                     return
             if len(tried) == len(self.playlist):
@@ -348,10 +354,7 @@ class PlayerController:
         unloaded = not self._player.has_track or getattr(self._player, "is_live", False)
         if returning is not None and unloaded and self.playlist.index is not None:
             # 라디오로 가기 전 곡으로 돌아간다: 다시 열고 그 위치에서 이어 간다
-            i = self.playlist.index
-            self._play_index(i)
-            if self.playlist.index == i and self._player.has_track:
-                self._player.seek(returning)
+            self._play_index(self.playlist.index, start_at=returning)
             self._remember(self._resume_position())
             return
         self._leave_radio()
@@ -483,7 +486,9 @@ class PlayerController:
     def save_session(self) -> None:
         self._remember_source()
         if self.source == "radio" and self._return_position is None:
-            self._remember(self._settings.last_position)   # 돌아갈 곡 위치가 없으면 저장된 위치를 그대로 둔다
+            # 돌아갈 곡 위치가 없으면(라디오로 갈 때 열린 곡이 없었다) 저장된 위치를 그대로 둔다.
+            # 정렬·옮기기는 이때 0을 쓰지만, 곡이 열려 있지 않았으니 잃는 위치는 없다.
+            self._remember(self._settings.last_position)
         else:
             self._remember(self._resume_position())
 

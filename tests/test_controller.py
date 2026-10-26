@@ -567,7 +567,7 @@ def test_failed_restore_hold_dropped(tmp_path, drop):
     assert store["player_last_position"] == 0.0
 
 
-from fakes import FakeClock, FakeLivePlayer, FakeRunner
+from fakes import Closeable, FakeClock, FakeLivePlayer, FakeRunner
 from funplayer.controller import RESUME_RADIO_MSG
 from funplayer.core.stations import StationList
 from funplayer.radio import RadioController, RadioState
@@ -624,6 +624,58 @@ def test_stop_and_seek_while_radio(radio_ctl, tmp_path):
     c.seek_by(1); c.seek_to(30.0); assert fake.seeks == []
     c.stop()
     assert r.state is RadioState.IDLE and r.current.id == "kbs-25" and c.source == "radio" and c.status == ""
+
+def test_toggle_pauses_radio_keeping_elapsed_and_stop_resets(radio_ctl):
+    c, fake, r, runner = radio_ctl
+    c.play_station("kbs-25"); runner.finish(0, result="A"); r._clock.__self__.advance(10)
+    c.toggle(); assert r.state is RadioState.IDLE and r.elapsed == 10
+    c.toggle(); runner.finish(1, result="B"); assert r.state is RadioState.LIVE and r.elapsed == 10
+    c.stop(); assert r.state is RadioState.IDLE and r.elapsed == 0
+
+def test_play_station_unknown_id_does_nothing(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))])
+    c.play_station("no-such-station")
+    assert c.source == "file" and fake.has_track and fake.state is State.PLAYING
+    assert runner.pending == [] and r.current is None
+
+def test_held_position_survives_trip_to_radio(tmp_path):
+    store, paths = saved_session(tmp_path, ABC, "02 b.mp3", 72.0)
+    c, fake, r, runner, _ = make_radio_ctl(store, str(tmp_path / "last.m3u8"))
+    fake.missing_fails = True
+    os.remove(paths[1])
+    c.restore_session(); assert not fake.has_track          # 지난 곡을 못 열었다: 위치만 지켜 둔다
+    make_songs(tmp_path / "m", ["02 b.mp3"])                  # USB를 다시 꽂았다
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.toggle()
+    c.toggle_for_tab("playlist")
+    assert fake.loaded[-1].endswith("02 b.mp3") and fake.seeks[-1] == 72.0
+
+def test_return_near_track_end_starts_from_zero(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 177.0   # 180초 곡의 끝 3초 전
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.toggle()
+    c.toggle_for_tab("playlist")
+    assert c.source == "file" and fake.state is State.PLAYING and fake.seeks == []
+
+def test_return_seeks_before_playing(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))]); fake.position = 50.0
+    c.play_station("kbs-25"); runner.finish(0, result="A"); c.toggle()
+    states = []
+    seek = fake.seek
+    fake.seek = lambda sec: (states.append(fake.state), seek(sec))
+    c.toggle_for_tab("playlist")
+    assert states == [State.STOPPED] and fake.state is State.PLAYING and fake.position == 50.0
+
+def test_pending_connection_is_dropped_when_track_starts(radio_ctl, tmp_path):
+    c, fake, r, runner = radio_ctl
+    c.open([str(make_songs(tmp_path / "m", ABC))])
+    c.play_station("kbs-25"); assert r.state is RadioState.CONNECTING
+    c.play_index(1)
+    closed = []
+    runner.finish(0, result=Closeable(closed))
+    assert closed == [1] and r.state is RadioState.IDLE and r._player.streams == []
+    assert c.source == "file" and fake.loaded[-1].endswith("02 b.mp3") and fake.state is State.PLAYING
 
 def test_playlist_tab_play_while_live_stops_radio_first(radio_ctl, tmp_path):
     c, fake, r, runner = radio_ctl
