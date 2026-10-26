@@ -1,32 +1,13 @@
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
-from PyQt5.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 
 
 class _Signals(QObject):
     finished = pyqtSignal(object, object)  # (result, error)
-
-
-class _Job(QRunnable):
-    def __init__(self, work: Callable[[], Any], signals: _Signals) -> None:
-        super().__init__()
-        self.setAutoDelete(False)  # 파이썬 쪽이 수명을 쥔다
-        self._work = work
-        self._signals = signals
-
-    def run(self) -> None:
-        result, error = None, None
-        try:
-            result = self._work()
-        except BaseException as e:  # noqa: BLE001 - 어떤 예외든 UI로 넘긴다
-            error = e
-        try:
-            self._signals.finished.emit(result, error)
-        except RuntimeError:
-            # 신호 객체가 이미 사라졌다: 열린 결과가 있으면 닫는다
-            _close(result)
 
 
 def _close(result: Any) -> None:
@@ -39,33 +20,52 @@ def _close(result: Any) -> None:
 
 
 class QtRunner(QObject):
-    """작업 스레드 실행과 단발 타이머. 결과는 UI 스레드에서 done(result, error)로 전달한다."""
+    """작업 스레드 실행과 단발 타이머. 결과는 UI 스레드에서 done(result, error)로 전달한다.
+
+    작업마다 데몬 스레드를 쓴다: 네트워크에 막힌 작업이 앱 종료를 붙잡거나
+    스레드 풀을 굶기지 않게 하기 위해서다.
+    """
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._closed = False
-        self._jobs: set[tuple[_Job, _Signals]] = set()
+        self._jobs: set[tuple[threading.Thread, _Signals]] = set()
         self._timers: set[QTimer] = set()
 
     def run_async(self, work: Callable[[], Any], done: Callable[[Any, Any], None]) -> None:
         if self._closed:
             return
         signals = _Signals()
-        job = _Job(work, signals)
-        entry = (job, signals)
+
+        def run() -> None:
+            result, error = None, None
+            try:
+                result = work()
+            except Exception as e:  # noqa: BLE001 - 예외는 UI로 넘긴다
+                error = e
+            try:
+                signals.finished.emit(result, error)
+            except RuntimeError:
+                _close(result)
+
+        thread = threading.Thread(target=run, name="radio-worker", daemon=True)
+        entry = (thread, signals)
 
         def deliver(result: Any, error: Any) -> None:
             self._jobs.discard(entry)
             if self._closed:
+                # 이벤트 루프가 아직 돌 때만 닫힌다(종료 중이면 도착하지 않는다)
                 _close(result)
                 return
             done(result, error)
 
         signals.finished.connect(deliver, Qt.QueuedConnection)
         self._jobs.add(entry)
-        QThreadPool.globalInstance().start(job)
+        thread.start()
 
     def call_later(self, seconds: float, fn: Callable[[], None]) -> Callable[[], None]:
+        if self._closed:
+            return lambda: None
         timer = QTimer(self)
         timer.setSingleShot(True)
 
@@ -81,8 +81,6 @@ class QtRunner(QObject):
                 timer.stop()
                 timer.deleteLater()
 
-        if self._closed:
-            return lambda: None
         timer.timeout.connect(fire)
         self._timers.add(timer)
         timer.start(max(0, int(seconds * 1000)))

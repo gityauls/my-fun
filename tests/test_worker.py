@@ -50,3 +50,19 @@ def test_shutdown_closes_late_closable_result(qapp):
     r.shutdown(); gate.set()
     _wait_for(lambda: res.closed, 2000)
     assert res.closed and got == []
+
+
+def test_blocked_job_does_not_block_others_and_threads_are_daemon(qapp):
+    r = QtRunner(); got = []; gate = threading.Event(); seen = []
+    def stuck():
+        seen.append(threading.current_thread()); gate.wait(5); return "a"
+    try:
+        r.run_async(stuck, lambda res, err: got.append(res))
+        r.run_async(lambda: (seen.append(threading.current_thread()), "b")[1], lambda res, err: got.append(res))
+        _wait_for(lambda: "b" in got, 2000)
+        assert got == ["b"]
+        assert len(seen) == 2 and all(t.daemon and t.name == "radio-worker" for t in seen)
+    finally:
+        gate.set()
+    _wait_for(lambda: "a" in got, 2000)
+    assert sorted(got) == ["a", "b"]
