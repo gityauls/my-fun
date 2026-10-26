@@ -14,6 +14,7 @@ BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 KBS_URL = "https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/{key}"
 MBC_URL = "https://sminiplay.imbc.com/aacplay.ashx?agent=webapp&channel={key}"
 MBC_REFERER = "https://mini.imbc.com/"
+SBS_URL = "https://apis.sbs.co.kr/play-api/1.0/livestream/{key}?protocol=hls&ssl=Y"
 
 FETCH_TIMEOUT = 10
 MAX_BYTES = 1_000_000
@@ -39,6 +40,8 @@ def resolve(station: Station, fetch: Fetch = default_fetch) -> str:
         return _resolve_kbs(station.key, fetch)
     if station.kind == "mbc":
         return _resolve_mbc(station.key, fetch)
+    if station.kind == "sbs":
+        return _resolve_sbs(station.key, fetch)
     if station.kind == "url":
         ext = _extension(station.key)
         if ext in (".m3u", ".pls"):
@@ -79,6 +82,17 @@ def _resolve_mbc(key: str, fetch: Fetch) -> str:
     text = lines[0].strip() if lines else ""
     if not _is_text_url(text):
         raise ResolveError("MBC 응답이 주소가 아닙니다")
+    return text
+
+
+def _resolve_sbs(key: str, fetch: Fetch) -> str:
+    # 앱 이름(APP_UA)만 보낸다. 브라우저 흉내나 Referer 같은 머리말은 쓰지 않는다.
+    url = SBS_URL.format(key=key)
+    body = _call(fetch, url, {"User-Agent": APP_UA})
+    lines = body.decode("utf-8", "replace").strip().splitlines()
+    text = lines[0].strip() if lines else ""
+    if not _is_text_url(text):
+        raise ResolveError("SBS 응답이 주소가 아닙니다")
     return text
 
 

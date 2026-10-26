@@ -708,7 +708,7 @@ class PlayerPanel(QWidget):
     def _station_info(self) -> TrackInfo:
         # 형식 칸(codec·sample_rate·channels)은 디코더가 밖으로 내주지 않아 비워 둔다
         s = self.radio.current
-        path = DOMESTIC_INFO_PATH if s.kind in ("kbs", "mbc") else s.key
+        path = DOMESTIC_INFO_PATH if s.kind in ("kbs", "mbc", "sbs") else s.key
         return TrackInfo(path=path, title=s.name, artist=s.source)
 
     def _show_info(self, info: TrackInfo, cover) -> None:

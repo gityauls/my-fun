@@ -17,7 +17,7 @@ def test_defaults():
                         "player_geometry": None, "player_mini_geometry": None,
                         "player_last_source": "file", "player_last_station": "",
                         "player_tab": "playlist",
-                        "player_radio_open": ["favorites", "domestic", "user"]}
+                        "player_radio_open": ["favorites", "kr:big3", "user"]}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -107,11 +107,11 @@ def test_stage2b_round_trip():
 def test_radio_keys_defaults_and_sanitising():
     s = Settings({}, lambda: None)
     assert (s.last_source, s.last_station, s.tab) == ("file", "", "playlist")
-    assert s.radio_open == ["favorites", "domestic", "user"]
+    assert s.radio_open == ["favorites", "kr:big3", "user"]
     bad = Settings({"player_last_source": "tv", "player_last_station": 5, "player_tab": 1,
                     "player_radio_open": "x"}, lambda: None)
     assert (bad.last_source, bad.last_station, bad.tab) == ("file", "", "playlist")
-    assert bad.radio_open == ["favorites", "domestic", "user"]
+    assert bad.radio_open == ["favorites", "kr:big3", "user"]
     mixed = Settings({"player_radio_open": ["user", 3, "genre:재즈"]}, lambda: None)
     assert mixed.radio_open == ["user", "genre:재즈"]
 
@@ -127,3 +127,10 @@ def test_radio_open_setter_wraps_a_single_string():
     s = Settings(store, lambda: None)
     s.radio_open = "user"
     assert store["player_radio_open"] == ["user"] and s.radio_open == ["user"]
+
+
+def test_radio_open_migrates_domestic_to_big3():
+    s = Settings({"player_radio_open": ["favorites", "domestic", "user"]}, lambda: None)
+    assert s.radio_open == ["favorites", "kr:big3", "user"]
+    both = Settings({"player_radio_open": ["kr:big3", "domestic", "domestic"]}, lambda: None)
+    assert both.radio_open == ["kr:big3"]

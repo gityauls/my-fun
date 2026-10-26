@@ -76,3 +76,23 @@ def test_stripped_kbs_url_and_first_mbc_line():
                    "https://sminiplay.imbc.com/aacplay.ashx?agent=webapp&channel=sfm": b"https://m/a\nhttps://m/b\n"})
     assert resolve(st("kbs", "21"), f) == "https://k/a"
     assert resolve(st("mbc", "sfm"), f) == "https://m/a"
+
+
+SBS_POWER = "https://apis.sbs.co.kr/play-api/1.0/livestream/powerpc/powerfm?protocol=hls&ssl=Y"
+
+def test_sbs_returns_first_line_with_app_ua_only():
+    f = FakeFetch({SBS_POWER: b"  https://radiolive.sbs.co.kr/powerfm/playlist.m3u8?t=1\r\nignored\n"})
+    assert resolve(st("sbs", "powerpc/powerfm"), f) == "https://radiolive.sbs.co.kr/powerfm/playlist.m3u8?t=1"
+    assert f.calls == [(SBS_POWER, {"User-Agent": APP_UA})]
+    assert "Referer" not in f.calls[0][1]
+
+@pytest.mark.parametrize("body", [b"error", b"", b"<html>"])
+def test_sbs_non_url_body_raises(body):
+    f = FakeFetch({SBS_POWER: body})
+    with pytest.raises(ResolveError, match="SBS 응답이 주소가 아닙니다"):
+        resolve(st("sbs", "powerpc/powerfm"), f)
+
+def test_sbs_fetch_error_raises():
+    f = FakeFetch({SBS_POWER: OSError("boom")})
+    with pytest.raises(ResolveError):
+        resolve(st("sbs", "powerpc/powerfm"), f)

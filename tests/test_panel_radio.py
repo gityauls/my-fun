@@ -49,7 +49,7 @@ def test_tab_switch_never_touches_network(rpanel):
     p, fake, runner = rpanel
     p.tab_bar.setCurrentIndex(1)
     assert p.station_view.isVisible() and not p.playlist_view.isVisible() and runner.pending == []
-    assert p.add_url_button.isVisible() and not p.open_button.isVisible() and p.count_label.text() == "방송 42개"
+    assert p.add_url_button.isVisible() and not p.open_button.isVisible() and p.count_label.text() == "방송 72개"
     assert not p.add_button.isVisible() and not p.list_button.isVisible() and p.view_button.isVisible()
     assert p.settings.tab == "radio"
     p.tab_bar.setCurrentIndex(0); assert p.open_button.isVisible() and p.settings.tab == "playlist"
@@ -252,6 +252,11 @@ def test_station_info(rpanel):
     assert d.value_labels["가수"].text() == "미국"
 
 
+def test_station_info_sbs_uses_web_path_text(rpanel):
+    p, fake, runner = rpanel; connect(p, runner, "sbs-powerfm"); p.show_track_info()
+    assert p.info_dialog.path_label.text() == "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
+
+
 def test_shutdown_closes_radio_runner_and_player(qapp):
     p, fake, runner = make_panel(); connect(p, runner)
     p.station_view.station_activated.emit("kbs-21")   # 연결 중에 끈다
@@ -327,7 +332,7 @@ def test_refresh_on_radio_tab_does_not_recount_stations(rpanel, monkeypatch):
     monkeypatch.setattr(p.station_view, "count", lambda: (calls.append(1), orig())[1])
     for _ in range(3):
         p.refresh()
-    assert calls == [] and p.count_label.text() == "방송 42개"
+    assert calls == [] and p.count_label.text() == "방송 72개"
 
 
 def test_queued_signals_after_shutdown_are_ignored(qapp):

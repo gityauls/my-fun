@@ -11,7 +11,6 @@ log = logging.getLogger(__name__)
 
 USER_SOURCE = "직접 넣음"
 FAVORITES_TITLE = "★ 즐겨찾기"
-DOMESTIC_TITLE = "국내 방송"
 USER_TITLE = "직접 넣은 방송"
 
 
@@ -19,23 +18,74 @@ USER_TITLE = "직접 넣은 방송"
 class Station:
     id: str
     name: str
-    kind: str      # "kbs" | "mbc" | "url"
-    key: str       # kbs 채널 코드, mbc 채널, 또는 url
+    kind: str      # "kbs" | "mbc" | "sbs" | "url"
+    key: str       # kbs 채널 코드, mbc 채널, sbs 채널 경로, 또는 url
     source: str    # "KBS" | "MBC" | 나라 이름 | "직접 넣음"
     group: str     # 원래 묶음 키
     builtin: bool
 
 
+# 국내 방송 (id, 이름, 종류, 키 또는 주소, 출처) -- 묶음 안의 순서가 보이는 순서다
+_KR_BIG3 = [
+    ("kbs-21", "KBS 1라디오", "kbs", "21", "KBS"),
+    ("kbs-22", "KBS 해피FM", "kbs", "22", "KBS"),
+    ("kbs-23", "KBS 3라디오", "kbs", "23", "KBS"),
+    ("kbs-24", "KBS 클래식FM", "kbs", "24", "KBS"),
+    ("kbs-25", "KBS 쿨FM", "kbs", "25", "KBS"),
+    ("kbs-26", "KBS 한민족방송", "kbs", "26", "KBS"),
+    ("mbc-sfm", "MBC 표준FM", "mbc", "sfm", "MBC"),
+    ("mbc-mfm", "MBC FM4U", "mbc", "mfm", "MBC"),
+    ("mbc-chm", "MBC 올댓뮤직", "mbc", "chm", "MBC"),
+    ("sbs-lovefm", "SBS 러브FM", "sbs", "lovepc/lovefm", "SBS"),
+    ("sbs-powerfm", "SBS 파워FM", "sbs", "powerpc/powerfm", "SBS"),
+    ("sbs-dmb", "SBS 고릴라디오M", "sbs", "sbsdmbpc/sbsdmb", "SBS"),
+]
+
+_KR_MORE = [
+    ("kr-ebs-fm", "EBS FM", "url", "https://ebsonair.ebs.co.kr/fmradiofamilypc/familypc1m/playlist.m3u8", "EBS"),
+    ("kr-ebs-bandi", "EBS 반디", "url", "https://ebsonair.ebs.co.kr/cloud1/iradio/playlist.m3u8", "EBS"),
+    ("kr-cbs-sfm", "CBS 표준FM", "url", "https://m-aac.cbs.co.kr/mweb_cbs981/_definst_/cbs981.stream/playlist.m3u8", "CBS"),
+    ("kr-cbs-mfm", "CBS 음악FM", "url", "https://m-aac.cbs.co.kr/mweb_cbs939/_definst_/cbs939.stream/playlist.m3u8", "CBS"),
+    ("kr-cbs-joy4u", "CBS JOY4U", "url", "https://m-aac.cbs.co.kr/mweb_cbscmc/_definst_/cbscmc.stream/playlist.m3u8", "CBS"),
+    ("kr-ytn", "YTN 라디오", "url", "https://radiolive.ytn.co.kr/radio/_definst_/20211118_fmlive/playlist.m3u8", "YTN"),
+    ("kr-tbs-fm", "TBS FM", "url", "https://cdnfm.tbs.seoul.kr/tbs/_definst_/tbs_fm_web_360.smil/playlist.m3u8", "TBS"),
+    ("kr-tbs-efm", "TBS eFM", "url", "https://cdnefm.tbs.seoul.kr/tbs/_definst_/tbs_efm_web_360.smil/playlist.m3u8", "TBS"),
+    ("kr-tbn-gyeongin", "TBN 경인교통방송", "url", "https://www.tbn.it.kr/gyeongin/myStream/playlist.m3u8", "TBN"),
+    ("kr-obs", "OBS 라디오", "url", "https://vod3.obs.co.kr:444/live/obsstream1/radio.stream/playlist.m3u8", "OBS"),
+    ("kr-ifm", "iFM 경인방송", "url", "https://stream.ifm.kr/live/aod1/playlist.m3u8", "iFM"),
+    ("kr-kookbang", "국방FM", "url", "https://mediaworks.dema.mil.kr/live_edge/audio.sdp/playlist.m3u8", "국방"),
+    ("kr-kugak", "국악방송", "url", "https://mgugaklive.nowcdn.co.kr/gugakradio/gugakradio.stream/playlist.m3u8", "국악"),
+]
+
+_KR_FAITH = [
+    ("kr-febc", "FEBC 서울극동방송", "url", "http://mlive2.febc.net:1935/live/seoulfm/playlist.m3u8", "FEBC"),
+    ("kr-bbs", "BBS 서울불교방송", "url", "https://bbslive.clouducs.com/bbsradio-mlive/radio.stream/playlist.m3u8", "BBS"),
+    ("kr-cpbc", "CPBC 가톨릭평화방송", "url", "http://onair1.cpbc.co.kr:1935/live/_definst_/Instreamer.stream_aac/playlist.m3u8", "CPBC"),
+    ("kr-wbs", "WBS 서울원음방송", "url", "https://wbsradio.kr/wbs-seoul", "WBS"),
+]
+
+_KR_COMMUNITY = [
+    ("kr-gwanakfm", "관악FM", "url", "http://icecast.radios.kr:8000/gwanakfm", "공동체"),
+    ("kr-mapofm", "마포FM", "url", "http://onair.mapofm.net/mapofm", "공동체"),
+    ("kr-seongnamfm", "성남FM", "url", "http://onair.mapofm.net/seongnamfm", "공동체"),
+    ("kr-sdmfm", "서대문FM", "url", "http://icecast.radios.kr:8000/sdmfm", "공동체"),
+    ("kr-sonefm", "수원FM", "url", "http://onair.mapofm.net/sonefm", "공동체"),
+    ("kr-gurifm", "구리FM", "url", "http://icecast.radios.kr:8000/gurifm", "공동체"),
+    ("kr-dwfm", "단원FM", "url", "http://radiostream.communityradio.kr/dwfm1", "공동체"),
+]
+
+# (묶음 키, 제목 앞부분, 방송 목록) -- 보이는 순서. 제목 뒤에 " ({n})"을 붙인다.
+_KR_GROUPS = [
+    ("kr:big3", "국내 · KBS·MBC·SBS", _KR_BIG3),
+    ("kr:more", "국내 · EBS·CBS·YTN 등", _KR_MORE),
+    ("kr:faith", "국내 · 종교 방송", _KR_FAITH),
+    ("kr:community", "국내 · 공동체 라디오", _KR_COMMUNITY),
+]
+
+
 def _domestic() -> list[Station]:
-    rows = [
-        ("kbs-21", "KBS 1라디오", "kbs", "21", "KBS"),
-        ("kbs-22", "KBS 해피FM", "kbs", "22", "KBS"),
-        ("kbs-24", "KBS 클래식FM", "kbs", "24", "KBS"),
-        ("kbs-25", "KBS 쿨FM", "kbs", "25", "KBS"),
-        ("mbc-sfm", "MBC 표준FM", "mbc", "sfm", "MBC"),
-        ("mbc-mfm", "MBC FM4U", "mbc", "mfm", "MBC"),
-    ]
-    return [Station(i, n, k, key, src, "domestic", True) for i, n, k, key, src in rows]
+    return [Station(i, n, k, key, src, group, True)
+            for group, _, rows in _KR_GROUPS for i, n, k, key, src in rows]
 
 
 # (장르, id, 이름, 나라, 주소) -- 2026-10-26에 소리를 확인한 목록
@@ -152,10 +202,13 @@ class StationList:
 
     def groups(self) -> list[tuple[str, str, list[Station]]]:
         result: list[tuple[str, str, list[Station]]] = []
-        for key, title in (("favorites", FAVORITES_TITLE), ("domestic", DOMESTIC_TITLE)):
+        members = self._members("favorites")
+        if members:
+            result.append(("favorites", FAVORITES_TITLE, members))
+        for key, title, _ in _KR_GROUPS:
             members = self._members(key)
             if members:
-                result.append((key, title, members))
+                result.append((key, f"{title} ({len(members)})", members))
         for genre in GENRES:
             key = f"genre:{genre}"
             members = self._members(key)
@@ -285,6 +338,11 @@ class StationList:
                            if k in sl._builtin_ids and isinstance(v, str) and v.strip()}
         order = data.get("order")
         if isinstance(order, dict):
+            # 옛 "domestic" 묶음의 순서는 첫 국내 묶음으로 옮긴다 (이미 있으면 그대로 둔다)
+            if "domestic" in order:
+                order = dict(order)
+                legacy = order.pop("domestic")
+                order.setdefault("kr:big3", legacy)
             for key, ids in order.items():
                 kept = _unique_known(_as_list(ids), known)
                 if isinstance(key, str) and kept:

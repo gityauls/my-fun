@@ -17,7 +17,7 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_mini_on_top": True, "player_media_keys": True,
             "player_geometry": None, "player_mini_geometry": None,
             "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
-            "player_radio_open": ["favorites", "domestic", "user"]}
+            "player_radio_open": ["favorites", "kr:big3", "user"]}
 
 LAST_SOURCES = ("file", "radio")
 TABS = ("playlist", "radio")
@@ -195,7 +195,13 @@ class Settings:
         value = self._store.get("player_radio_open")
         if not isinstance(value, list):
             return list(DEFAULTS["player_radio_open"])
-        return [v for v in value if isinstance(v, str)]
+        out: list[str] = []
+        for v in value:
+            if v == "domestic":
+                v = "kr:big3"   # 옛 "국내 방송" 묶음은 첫 국내 묶음으로 옮긴다
+            if isinstance(v, str) and v not in out:
+                out.append(v)
+        return out
 
     @radio_open.setter
     def radio_open(self, value: list[str]) -> None:
