@@ -19,3 +19,10 @@ def test_mini_full_icons_and_note_art(qapp):
     art = note_art(40)
     assert (art.width(), art.height(), art.devicePixelRatio()) == (40, 40, 1.0)
     assert art.toImage().pixelColor(20, 20).alpha() > 0
+
+
+def test_radio_art(qapp):
+    from funplayer.ui.icons import radio_art
+    art = radio_art(40)
+    assert (art.width(), art.height(), art.devicePixelRatio()) == (40, 40, 1.0)
+    assert art.toImage().pixelColor(20, 20).alpha() == 255

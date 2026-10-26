@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt5.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 
 OFF_COLOR = QColor("#5F6368")
 
@@ -89,5 +89,32 @@ def note_art(size: int) -> QPixmap:
     path = QPainterPath()
     path.moveTo(27 * s, 37 * s); path.lineTo(27 * s, 16 * s); path.lineTo(41 * s, 12 * s); path.lineTo(41 * s, 33 * s)
     p.drawPath(path)
+    p.end()
+    return pm
+
+
+def radio_art(size: int) -> QPixmap:
+    # 라디오 기본 그림: 배율 1, 정확히 size×size, 투명 바탕
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    grad = QLinearGradient(0, 0, 0, size)
+    grad.setColorAt(0, QColor("#DCE6F5"))
+    grad.setColorAt(1, QColor("#C3D3EC"))
+    p.setBrush(grad)
+    p.drawRoundedRect(QRectF(0, 0, size, size), size * 0.08, size * 0.08)
+    s = size / 56
+    ink = QColor("#4A6FA5")
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(ink, 2.4 * s, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawRoundedRect(QRectF(12 * s, 22 * s, 32 * s, 22 * s), 3 * s, 3 * s)
+    p.drawLine(QPointF(18 * s, 22 * s), QPointF(36 * s, 12 * s))
+    p.setBrush(ink)
+    p.drawEllipse(QPointF(35 * s, 33 * s), 4.5 * s, 4.5 * s)
+    p.setPen(QPen(ink, 1.6 * s, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    for y in (28, 33, 38):
+        p.drawLine(QPointF(17 * s, y * s), QPointF(26 * s, y * s))
     p.end()
     return pm
