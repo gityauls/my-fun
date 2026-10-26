@@ -199,6 +199,8 @@ class Settings:
 
     @radio_open.setter
     def radio_open(self, value: list[str]) -> None:
+        if isinstance(value, str):
+            value = [value]   # 글자 하나하나로 쪼개지 않게
         self._set("player_radio_open", [v for v in value if isinstance(v, str)])
 
 

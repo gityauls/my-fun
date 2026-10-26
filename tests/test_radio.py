@@ -168,3 +168,38 @@ def test_shutdown_cancels_pending_work(radio):
     assert runner.pending == [] and player.continued == []
     r.play("kbs-21"); r.shutdown(); runner.finish(1, result="Z") if runner.pending else None
     assert player.streams == ["A"]
+
+
+def test_late_retry_timer_after_shutdown_does_nothing(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); runner.finish(0, result="A"); player.stream_lost = True; r.on_lost()
+    retry = clock.timers[0][2]
+    r.shutdown(); retry()                          # 취소가 늦어 타이머가 그래도 돌았다
+    assert len(runner.calls) == 1 and player.continued == []
+
+
+def test_on_lost_outside_live_is_ignored(radio):
+    r, player, runner, clock, notes = radio
+    player.stream_lost = True
+    r.on_lost(); assert r.state is RadioState.IDLE
+    r.play("kbs-25"); r.on_lost()
+    assert r.state is RadioState.CONNECTING and clock.timers == []
+
+
+def test_each_retry_resolves_again(radio):
+    r, player, runner, clock, notes = radio
+    seen = []
+    r._resolve = lambda st: (seen.append(st.id), st.key)[1]
+    r.play("kbs-25"); runner.calls[0][0](); runner.finish(0, result="A")
+    player.stream_lost = True; r.on_lost()
+    clock.advance(2.0); runner.calls[1][0](); runner.finish(1, error=DecodeError("x"))
+    clock.advance(4.0); runner.calls[2][0]()
+    assert seen == ["kbs-25"] * 3
+
+
+def test_refresh_current_picks_up_rename(radio):
+    r, player, runner, clock, notes = radio
+    r.play("kbs-25"); r._stations.rename("kbs-25", "쿨")
+    r.refresh_current(); assert r.current.name == "쿨"
+    r._stations.remove("kbs-25"); r.refresh_current()
+    assert r.current.id == "kbs-25"                 # 지워졌으면 그대로 둔다

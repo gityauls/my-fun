@@ -92,7 +92,7 @@ class PlayerPanel(QWidget):
         self._tab = "playlist"
         self._live_color: str | None = None
         self._marked_station: object = object()
-        self.settings = settings
+        self._closed = False   # shutdown 뒤 큐에 남은 신호를 버린다
         self._cover_key: object = object()
         self._cover_src = None
         self._dragging = False
@@ -103,6 +103,7 @@ class PlayerPanel(QWidget):
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
         self._settings = settings
+        self.settings = settings   # 공개 이름(같은 객체)
         self.is_mini = False   # settings.mini는 창(Task 10)이 적용한다
 
         self._bridge = PlayerBridge(self._player, self)
@@ -546,6 +547,7 @@ class PlayerPanel(QWidget):
     def _stations_changed(self) -> None:
         if self._stations_path:
             save_stations(self._stations_path, self.stations)
+        self.radio.refresh_current()   # 듣는 방송 이름을 바꿨으면 제목도 따라 바뀐다
         self._update_count()
 
     def _open_groups_changed(self, keys: list) -> None:
@@ -570,6 +572,8 @@ class PlayerPanel(QWidget):
         self._play_station(station.id)
 
     def _on_lost(self) -> None:
+        if self._closed:
+            return
         self.radio.on_lost()
         self.refresh()
 
@@ -824,10 +828,14 @@ class PlayerPanel(QWidget):
     # ---- 엔진 알림 ----
 
     def _on_ended(self) -> None:
+        if self._closed:
+            return
         self.controller.on_track_end()
         self.refresh()
 
     def _on_error(self, msg: str) -> None:
+        if self._closed:   # 끈 뒤 큐에 남아 있던 신호
+            return
         self.controller.on_player_error(msg)
         self.refresh()
 
@@ -901,7 +909,8 @@ class PlayerPanel(QWidget):
         self._refresh_modes()
         self.repeat_button.setEnabled(not on_radio)
         self.shuffle_button.setEnabled(not on_radio)
-        self._update_count()
+        if self._tab == "playlist":
+            self._update_count()   # 방송 수는 탭 바꿀 때와 목록이 바뀔 때만 센다
         if c.status_error != self._status_error:
             self._status_error = c.status_error
             color = ERROR_COLOR if c.status_error else INFO_COLOR
@@ -978,6 +987,7 @@ class PlayerPanel(QWidget):
     # ---- 끝내기 ----
 
     def shutdown(self) -> None:
+        self._closed = True
         self.controller.save_session()
         # 기다리던 연결·다시 연결이 끈 뒤에 돌지 않게 먼저 멈춘다 (라디오는 플레이어를 닫지 않는다)
         self.radio.shutdown()

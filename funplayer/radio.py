@@ -73,6 +73,13 @@ class RadioController:
     def has_station(self, station_id: str) -> bool:
         return self._stations.get(station_id) is not None
 
+    def refresh_current(self) -> None:
+        """목록이 바뀐 뒤(이름 바꾸기 등) 고른 방송의 표시를 새로 읽는다. 지워졌으면 그대로 둔다."""
+        if self.current is not None:
+            station = self._stations.get(self.current.id)
+            if station is not None:
+                self.current = station
+
     def cue(self, station_id: str) -> None:
         station = self._stations.get(station_id)
         if station is not None:

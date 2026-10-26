@@ -121,3 +121,9 @@ def test_radio_keys_round_trip():
     s.last_source = "radio"; s.last_station = "kbs-25"; s.tab = "radio"; s.radio_open = ["genre:Lo-fi"]
     assert store["player_last_source"] == "radio" and store["player_last_station"] == "kbs-25"
     assert store["player_tab"] == "radio" and store["player_radio_open"] == ["genre:Lo-fi"] and len(saves) == 4
+
+def test_radio_open_setter_wraps_a_single_string():
+    store = {}
+    s = Settings(store, lambda: None)
+    s.radio_open = "user"
+    assert store["player_radio_open"] == ["user"] and s.radio_open == ["user"]

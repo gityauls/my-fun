@@ -80,3 +80,28 @@ def test_missing_file_gives_builtins(tmp_path):
 
 def test_same_url():
     assert same_url("HTTP://A.b/x/", "http://a.b/x") and not same_url("http://a.b/x", "http://a.b/y")
+
+
+def test_user_ids_do_not_collide_in_same_millisecond(monkeypatch):
+    import funplayer.core.stations as mod
+    monkeypatch.setattr(mod.time, "time", lambda: 1000.0)
+    sl = StationList()
+    a, _ = sl.add_url("a", "https://a.example/1.mp3")
+    b, _ = sl.add_url("b", "https://a.example/2.mp3")
+    assert a.id == "url-1000000" and b.id == "url-1000001"
+
+
+def test_hidden_builtin_cannot_be_favorited():
+    sl = StationList(); sl.remove("kbs-21")
+    sl.set_favorite("kbs-21", True)
+    assert not sl.is_favorite("kbs-21")
+
+
+def test_save_failure_leaves_no_tmp_file(tmp_path, monkeypatch):
+    import funplayer.core.stations as mod
+    def boom(src, dst):
+        raise OSError("locked")
+    monkeypatch.setattr(mod.os, "replace", boom)
+    p = tmp_path / "stations.json"
+    save_stations(str(p), StationList())
+    assert not p.exists() and not (tmp_path / "stations.json.tmp").exists()

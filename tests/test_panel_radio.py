@@ -312,3 +312,41 @@ def test_restore_radio_session_no_network(qapp, tmp_path):
         assert p.play_button.toolTip() == "재생"
     finally:
         p.shutdown(); p.deleteLater()
+
+
+def test_rename_playing_station_updates_title(rpanel):
+    p, fake, runner = rpanel; connect(p, runner)
+    p.stations.rename("kbs-25", "쿨"); p.station_view.rebuild(); p.refresh()
+    assert p.controller.title == "쿨" and p.title_label.toolTip() == "쿨"
+
+
+def test_refresh_on_radio_tab_does_not_recount_stations(rpanel, monkeypatch):
+    p, fake, runner = rpanel; p.set_tab("radio")
+    calls = []
+    orig = p.station_view.count
+    monkeypatch.setattr(p.station_view, "count", lambda: (calls.append(1), orig())[1])
+    for _ in range(3):
+        p.refresh()
+    assert calls == [] and p.count_label.text() == "방송 42개"
+
+
+def test_queued_signals_after_shutdown_are_ignored(qapp):
+    p, fake, runner = make_panel()
+    connect(p, runner)
+    p.shutdown()
+    seen = []
+    p.refresh = lambda: seen.append(1)
+    fake.stream_lost = True
+    p._bridge.lost.emit(); p._bridge.ended.emit(); p._bridge.error.emit("x")
+    QApplication.processEvents()
+    assert seen == [] and p.radio.state is RadioState.IDLE and p.controller.status != "x"
+    p.deleteLater()
+
+
+def test_ctrl_tab_key_reaches_shortcut_from_station_view(rpanel):
+    from PyQt5.QtTest import QTest
+    p, fake, runner = rpanel; p.set_tab("radio")
+    p.activateWindow(); assert QTest.qWaitForWindowActive(p)
+    p.station_view.setFocus()
+    QTest.keyClick(p.station_view, Qt.Key_Tab, Qt.ControlModifier)
+    assert p.tab_bar.currentIndex() == 0

@@ -182,7 +182,8 @@ class StationList:
 
     def set_favorite(self, id: str, on: bool) -> None:
         if on:
-            if id not in self._favorites and any(s.id == id for s in self._all()):
+            if (id not in self._favorites and id not in self._hidden
+                    and any(s.id == id for s in self._all())):
                 self._favorites.append(id)
         elif id in self._favorites:
             self._favorites.remove(id)
@@ -337,3 +338,7 @@ def save_stations(path: str, stations: StationList) -> None:
         os.replace(tmp, path)
     except OSError as e:
         log.warning("방송국 파일을 저장하지 못했습니다: %s", e)
+        try:
+            os.remove(tmp)   # 반쯤 쓴 임시 파일을 남기지 않는다
+        except OSError:
+            pass
