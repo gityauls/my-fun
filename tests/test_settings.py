@@ -14,7 +14,10 @@ def test_defaults():
                         "player_repeat": "off", "player_shuffle": False,
                         "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
                         "player_mini_on_top": True, "player_media_keys": True,
-                        "player_geometry": None, "player_mini_geometry": None}
+                        "player_geometry": None, "player_mini_geometry": None,
+                        "player_last_source": "file", "player_last_station": "",
+                        "player_tab": "playlist",
+                        "player_radio_open": ["favorites", "domestic", "user"]}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -100,3 +103,21 @@ def test_stage2b_round_trip():
     assert len(saves) == 7 and s.geometry == [10, 20, 380, 480]
     s.geometry = None
     assert store["player_geometry"] is None and s.geometry is None
+
+def test_radio_keys_defaults_and_sanitising():
+    s = Settings({}, lambda: None)
+    assert (s.last_source, s.last_station, s.tab) == ("file", "", "playlist")
+    assert s.radio_open == ["favorites", "domestic", "user"]
+    bad = Settings({"player_last_source": "tv", "player_last_station": 5, "player_tab": 1,
+                    "player_radio_open": "x"}, lambda: None)
+    assert (bad.last_source, bad.last_station, bad.tab) == ("file", "", "playlist")
+    assert bad.radio_open == ["favorites", "domestic", "user"]
+    mixed = Settings({"player_radio_open": ["user", 3, "genre:재즈"]}, lambda: None)
+    assert mixed.radio_open == ["user", "genre:재즈"]
+
+def test_radio_keys_round_trip():
+    store, saves = {}, []
+    s = Settings(store, lambda: saves.append(1))
+    s.last_source = "radio"; s.last_station = "kbs-25"; s.tab = "radio"; s.radio_open = ["genre:Lo-fi"]
+    assert store["player_last_source"] == "radio" and store["player_last_station"] == "kbs-25"
+    assert store["player_tab"] == "radio" and store["player_radio_open"] == ["genre:Lo-fi"] and len(saves) == 4

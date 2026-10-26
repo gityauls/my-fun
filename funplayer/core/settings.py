@@ -15,7 +15,12 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_repeat": "off", "player_shuffle": False,
             "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
             "player_mini_on_top": True, "player_media_keys": True,
-            "player_geometry": None, "player_mini_geometry": None}
+            "player_geometry": None, "player_mini_geometry": None,
+            "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
+            "player_radio_open": ["favorites", "domestic", "user"]}
+
+LAST_SOURCES = ("file", "radio")
+TABS = ("playlist", "radio")
 
 
 def _read_int(store: dict, key: str, lo: int, hi: int) -> int:
@@ -157,6 +162,44 @@ class Settings:
     @mini_geometry.setter
     def mini_geometry(self, value) -> None:
         self._set("player_mini_geometry", None if value is None else [int(v) for v in value])
+
+    @property
+    def last_source(self) -> str:
+        value = self._store.get("player_last_source")
+        return value if value in LAST_SOURCES else DEFAULTS["player_last_source"]
+
+    @last_source.setter
+    def last_source(self, value: str) -> None:
+        self._set("player_last_source", value if value in LAST_SOURCES else DEFAULTS["player_last_source"])
+
+    @property
+    def last_station(self) -> str:
+        value = self._store.get("player_last_station")
+        return value if isinstance(value, str) else DEFAULTS["player_last_station"]
+
+    @last_station.setter
+    def last_station(self, value: str) -> None:
+        self._set("player_last_station", str(value))
+
+    @property
+    def tab(self) -> str:
+        value = self._store.get("player_tab")
+        return value if value in TABS else DEFAULTS["player_tab"]
+
+    @tab.setter
+    def tab(self, value: str) -> None:
+        self._set("player_tab", value if value in TABS else DEFAULTS["player_tab"])
+
+    @property
+    def radio_open(self) -> list[str]:
+        value = self._store.get("player_radio_open")
+        if not isinstance(value, list):
+            return list(DEFAULTS["player_radio_open"])
+        return [v for v in value if isinstance(v, str)]
+
+    @radio_open.setter
+    def radio_open(self, value: list[str]) -> None:
+        self._set("player_radio_open", [v for v in value if isinstance(v, str)])
 
 
 class JsonStore:
