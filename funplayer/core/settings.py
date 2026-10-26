@@ -17,7 +17,8 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_mini_on_top": True, "player_media_keys": True,
             "player_geometry": None, "player_mini_geometry": None,
             "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
-            "player_radio_open": ["favorites", "kr:big3", "user"]}
+            "player_radio_open": ["favorites", "kr:big3", "user"],
+            "player_fx": {}, "player_fx_visible": False, "player_fx_open": True}
 
 LAST_SOURCES = ("file", "radio")
 TABS = ("playlist", "radio")
@@ -208,6 +209,33 @@ class Settings:
         if isinstance(value, str):
             value = [value]   # 글자 하나하나로 쪼개지 않게
         self._set("player_radio_open", [v for v in value if isinstance(v, str)])
+
+    @property
+    def fx(self) -> dict:
+        value = self._store.get("player_fx")
+        return value if isinstance(value, dict) else {}
+
+    @fx.setter
+    def fx(self, value: dict) -> None:
+        self._set("player_fx", dict(value))
+
+    @property
+    def fx_visible(self) -> bool:
+        value = self._store.get("player_fx_visible")
+        return value if isinstance(value, bool) else DEFAULTS["player_fx_visible"]
+
+    @fx_visible.setter
+    def fx_visible(self, value: bool) -> None:
+        self._set("player_fx_visible", bool(value))
+
+    @property
+    def fx_open(self) -> bool:
+        value = self._store.get("player_fx_open")
+        return value if isinstance(value, bool) else DEFAULTS["player_fx_open"]
+
+    @fx_open.setter
+    def fx_open(self, value: bool) -> None:
+        self._set("player_fx_open", bool(value))
 
 
 class JsonStore:

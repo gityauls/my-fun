@@ -17,7 +17,8 @@ def test_defaults():
                         "player_geometry": None, "player_mini_geometry": None,
                         "player_last_source": "file", "player_last_station": "",
                         "player_tab": "playlist",
-                        "player_radio_open": ["favorites", "kr:big3", "user"]}
+                        "player_radio_open": ["favorites", "kr:big3", "user"],
+                        "player_fx": {}, "player_fx_visible": False, "player_fx_open": True}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -134,3 +135,18 @@ def test_radio_open_migrates_domestic_to_big3():
     assert s.radio_open == ["favorites", "kr:big3", "user"]
     both = Settings({"player_radio_open": ["kr:big3", "domestic", "domestic"]}, lambda: None)
     assert both.radio_open == ["kr:big3"]
+
+def test_fx_keys_defaults_and_sanitising():
+    s, store, _ = make()
+    assert s.fx == {} and s.fx_visible is False and s.fx_open is True
+    store.update({"player_fx": "junk", "player_fx_visible": 1, "player_fx_open": "no"})
+    assert s.fx == {} and s.fx_visible is False and s.fx_open is True
+
+def test_fx_keys_round_trip():
+    s, store, saves = make()
+    s.fx = {"enabled": True}
+    s.fx_visible = True
+    s.fx_open = False
+    assert store["player_fx"] == {"enabled": True} and store["player_fx_visible"] is True
+    assert store["player_fx_open"] is False and len(saves) == 3
+    assert s.fx == {"enabled": True} and s.fx_visible is True and s.fx_open is False
