@@ -50,6 +50,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
     ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"), ("Ctrl+Tab", "next_tab"),
+    ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"),
 ]
 
 # 작게 볼 때 숨기는 위젯 (이름). 탭·라디오에 따라 바뀌는 위젯은 _apply_visibility가 맡는다
@@ -306,12 +307,14 @@ class PlayerPanel(QWidget):
             self.shortcuts[key] = sc
 
         k = self.media_keys
-        k.play_pause_pressed.connect(self.toggle)
+        # 미디어 ⏯는 창 밖에서도 눌리므로 보고 있는 탭이 아니라 지금 나오는 쪽을 따른다
+        k.play_pause_pressed.connect(self.media_toggle)
         k.next_pressed.connect(self.next)
         k.prev_pressed.connect(self.prev)
         k.stop_pressed.connect(self.stop)
         self.media_shortcuts: list[QShortcut] = []
-        for key, slot in ((Qt.Key_MediaTogglePlayPause, self.toggle), (Qt.Key_MediaPlay, self.toggle),
+        for key, slot in ((Qt.Key_MediaTogglePlayPause, self.media_toggle),
+                          (Qt.Key_MediaPlay, self.media_toggle),
                           (Qt.Key_MediaNext, self.next), (Qt.Key_MediaPrevious, self.prev),
                           (Qt.Key_MediaStop, self.stop)):
             sc = QShortcut(QKeySequence(key), self)
@@ -559,7 +562,11 @@ class PlayerPanel(QWidget):
         station, added = self.stations.add_url(*value)
         self.station_view.rebuild()   # changed → 저장
         if not added:
-            self.controller.notify(DUP_STATION_MSG)   # 안내 뒤 그 방송을 듣는다
+            # 이미 있는 주소: 그 줄을 골라 보여 주고 안내만 한다 (접속하지 않는다)
+            self.station_view.select(station.id)
+            self.controller.notify(DUP_STATION_MSG)
+            self.refresh()
+            return
         self._play_station(station.id)
 
     def _on_lost(self) -> None:
@@ -713,7 +720,15 @@ class PlayerPanel(QWidget):
             self.playlist_view.selectAll()
 
     def toggle(self) -> None:
-        self.controller.toggle_for_tab(self._tab)
+        """[재생] 단추·Space: 보이는 탭을 따른다. 작게 볼 때는 탭이 안 보이니 나오는 쪽을 따른다."""
+        if self.is_mini:
+            self.controller.toggle()
+        else:
+            self.controller.toggle_for_tab(self._tab)
+        self.refresh()
+
+    def media_toggle(self) -> None:
+        self.controller.toggle()
         self.refresh()
 
     def stop(self) -> None:

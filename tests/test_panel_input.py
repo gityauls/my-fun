@@ -55,7 +55,9 @@ def test_jump_slider_click(qapp):
 def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
-                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M", "Ctrl+Tab"}
+                                "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M", "Ctrl+Tab",
+                                "Ctrl+Left", "Ctrl+Right"}
+    assert dict(SHORTCUTS)["Ctrl+Left"] == "prev" and dict(SHORTCUTS)["Ctrl+Right"] == "next"
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
 

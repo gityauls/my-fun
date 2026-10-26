@@ -117,13 +117,23 @@ def test_add_url_flow(rpanel, monkeypatch):
     assert p.radio.current.name == "우리 동네"
 
     p.radio.stop()
-    seen = []
-    orig = p.controller._set_status
-    monkeypatch.setattr(p.controller, "_set_status", lambda m, e=False: (seen.append(m), orig(m, e)))
+    calls = len(runner.calls)
+    p.station_view.setCurrentItem(station_item(view, "kbs-21"))
+    p.add_url_button.click()                       # 같은 주소: 그 줄을 고르고 안내만, 접속하지 않는다
+    assert len(p.stations.groups()[-1][2]) == 1 and len(runner.calls) == calls
+    assert p.radio.state is RadioState.IDLE
+    assert (p.controller.status, p.controller.status_error) == ("이미 목록에 있습니다", False)
+    assert view.currentItem().data(0, Qt.UserRole) == p.radio.current.id
+
+
+def test_add_url_duplicate_of_builtin_opens_its_group(rpanel, monkeypatch):
+    p, fake, runner = rpanel; p.set_tab("radio")
+    monkeypatch.setattr(AddUrlDialog, "exec_",
+                        lambda d: (setattr(d, "_value", ("x", "http://stream2.friskyradio.com/frisky_mp3_hi/")), 1)[1])
     p.add_url_button.click()
-    assert seen == ["이미 목록에 있습니다", "연결 중…"]
-    assert len(p.stations.groups()[-1][2]) == 1 and p.radio.current.name == "우리 동네"
-    assert p.controller.status == "연결 중…"
+    item = station_item(p.station_view, "net-frisky")
+    assert p.station_view.currentItem() is item and item.parent().isExpanded()
+    assert runner.calls == [] and p.controller.status == "이미 목록에 있습니다"
 
 
 def test_add_url_cancel_does_nothing(rpanel, monkeypatch):
@@ -168,6 +178,50 @@ def test_next_steps_station_while_radio(rpanel):
     p, fake, runner = rpanel; connect(p, runner, "kbs-21")
     p.next(); assert p.radio.current.id == "kbs-22"
     p.prev(); assert p.radio.current.id == "kbs-21"
+
+
+def test_ctrl_arrows_step_stations_while_radio(rpanel):
+    p, fake, runner = rpanel; connect(p, runner, "kbs-21")
+    p.shortcuts["Ctrl+Right"].activated.emit(); assert p.radio.current.id == "kbs-22"
+    p.shortcuts["Ctrl+Left"].activated.emit(); assert p.radio.current.id == "kbs-21"
+
+
+def test_ctrl_arrows_reach_shortcut_from_station_view(rpanel):
+    from PyQt5.QtTest import QTest
+    p, fake, runner = rpanel; connect(p, runner, "kbs-21")
+    p.activateWindow(); assert QTest.qWaitForWindowActive(p)
+    p.station_view.setFocus()
+    QTest.keyClick(p.station_view, Qt.Key_Right, Qt.ControlModifier)
+    assert p.radio.current.id == "kbs-22"
+
+
+def test_media_play_pause_follows_radio_not_tab(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))]); n = len(fake.loaded)
+    connect(p, runner); p.set_tab("playlist")
+    p.media_keys.play_pause_pressed.emit()
+    assert p.radio.state is RadioState.IDLE and p.controller.source == "radio"
+    p.media_keys.play_pause_pressed.emit()
+    assert p.radio.state is RadioState.CONNECTING and len(fake.loaded) == n
+    p.media_shortcuts[0].activated.emit()           # 창 안의 ⏯ 키도 같다
+    assert p.radio.state is RadioState.IDLE and len(fake.loaded) == n
+
+
+def test_mini_space_follows_radio_not_tab(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))]); n = len(fake.loaded)
+    connect(p, runner); p.set_tab("playlist"); p.set_mini(True)
+    p.shortcuts["Space"].activated.emit(); assert p.radio.state is RadioState.IDLE
+    p.shortcuts["X"].activated.emit()
+    assert p.radio.state is RadioState.CONNECTING and len(fake.loaded) == n
+
+
+def test_play_button_on_playlist_tab_still_returns_to_track(rpanel, tmp_path):
+    p, fake, runner = rpanel
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))]); n = len(fake.loaded)
+    connect(p, runner); p.play_button.click(); p.set_tab("playlist")
+    p.shortcuts["Space"].activated.emit()            # 보통 크기에서 Space는 탭을 따른다
+    assert p.controller.source == "file" and len(fake.loaded) == n + 1
 
 
 def test_lost_signal_reaches_radio(rpanel):

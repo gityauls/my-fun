@@ -119,6 +119,17 @@ class StationView(QTreeWidget):
         font.setBold(on)
         row.setFont(0, font)
 
+    def select(self, station_id: str) -> None:
+        """그 방송 줄을 고르고(묶음이 접혀 있으면 펼쳐) 보이게 굴린다. 듣지는 않는다."""
+        item = self._find(station_id)
+        if item is None:
+            return
+        parent = item.parent()
+        if parent is not None and not parent.isExpanded():
+            parent.setExpanded(True)
+        self.setCurrentItem(item)
+        self.scrollToItem(item)
+
     def set_current(self, station_id: str | None) -> None:
         """재생 중인 방송 줄에 ▶와 굵은 글씨를 붙인다. None이면 모두 뗀다."""
         self._playing = station_id
