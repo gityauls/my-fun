@@ -62,15 +62,16 @@ def test_player_effects_toggle(rig, tone_wav):
 
 def test_callback_uses_injected_processor_only_when_active(tone_wav):
     class Fake:
-        def __init__(self): self.active = False; self.updates = []; self.calls = 0
+        def __init__(self): self.active = False; self.updates = []; self.calls = 0; self.seen = 0
         def update(self, fx): self.updates.append(fx)
+        def remember(self, block): self.seen += 1
         def process(self, block): self.calls += 1; return block * 0.0
     fake, sinks = Fake(), []
     def factory(cb):
         sinks.append(FakeSink(cb)); return sinks[-1]
     p = AudioPlayer(sink_factory=factory, threaded=False, fx_processor=fake)
     p.load(tone_wav); p.play(); fill(p)
-    assert sinks[0].pull(256).any() and fake.calls == 0
+    assert sinks[0].pull(256).any() and fake.calls == 0 and fake.seen == 1
     fx = FxSettings().with_enabled(True)
     p.set_effects(fx); fake.active = True
     assert fake.updates == [fx]

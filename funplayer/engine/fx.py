@@ -93,6 +93,10 @@ class FxProcessor:
         self._lock = threading.Lock()
         self._current = None
         self._pending = None
+        # 바로 앞 입력 블록 (출력 스레드만 쓴다). 새 그래프를 미리 길들이는 데 쓴다
+        self._last = np.zeros((4096, 2), dtype=np.float32)
+        self._last_n = 0
+        self._ramp: np.ndarray | None = None   # 섞는 곡선 (블록 길이가 바뀔 때만 새로)
 
     @property
     def active(self) -> bool:
@@ -111,23 +115,45 @@ class FxProcessor:
         with self._lock:
             self._pending = graph
 
+    def remember(self, block: np.ndarray) -> None:
+        """효과가 꺼져 있을 때도 출력 블록을 기억해 둔다 (출력 스레드). 소리는 안 바꾼다."""
+        n = len(block)
+        if n > len(self._last):
+            self._last = np.zeros((n, 2), dtype=np.float32)  # 더 큰 블록이 올 때만 한 번
+        self._last[:n] = block
+        self._last_n = n
+
     def process(self, block: np.ndarray) -> np.ndarray:
         with self._lock:
             pending, self._pending = self._pending, None
         if pending is None:
             if self._current is None:
-                return block
-            out, self._current = self._run(self._current, block)
+                out = block
+            else:
+                out, self._current = self._run(self._current, block)
+            self.remember(block)
             return out
         new = None if pending is _BYPASS else pending
+        if new is not None and self._last_n:
+            # 새 그래프에 바로 앞 블록을 먼저 흘려 버린다: 필터 상태와 리미터의
+            # 내다보기 몫이 옛 그래프와 같은 자리에 맞춰져, 섞을 때 툭 튀지 않는다
+            _, new = self._run(new, self._last[:self._last_n])
         old_out, _ = self._run(self._current, block)
         new_out, self._current = self._run(new, block)
+        self.remember(block)
         if old_out is new_out:
             return block  # 둘 다 원래 소리
-        # 한 블록 동안 옛 소리에서 새 소리로 서서히 넘어간다
-        n = len(block)
-        ramp = (np.arange(1, n + 1, dtype=np.float32) / (n + 1))[:, None]
-        return (old_out * (1 - ramp) + new_out * ramp).astype(np.float32, copy=False)
+        # 한 블록 동안 옛 소리에서 새 소리로 서서히 넘어간다.
+        # 코사인 곡선이라 양 끝에서 기울기가 0: 블록 경계에서 꺾이지 않는다
+        ramp = self._ramp_for(len(block))
+        return (old_out + (new_out - old_out) * ramp).astype(np.float32, copy=False)
+
+    def _ramp_for(self, n: int) -> np.ndarray:
+        if self._ramp is None or len(self._ramp) != n:
+            k = np.arange(n, dtype=np.float64)
+            r = 0.5 - 0.5 * np.cos(np.pi * k / max(n - 1, 1)) if n > 1 else np.ones(1)
+            self._ramp = r.astype(np.float32)[:, None]
+        return self._ramp
 
     def _run(self, graph, block: np.ndarray):
         # (출력, 계속 쓸 그래프). 실패한 그래프는 버리고 원래 소리를 준다

@@ -481,6 +481,8 @@ class AudioPlayer:
             self._played += filled
         if self._fx.active:
             outdata[:] = self._fx.process(outdata)
+        else:
+            self._fx.remember(outdata)  # 효과를 켤 때 새 그래프를 길들일 앞 블록
 
 
 def _close_quietly(decoder) -> None:

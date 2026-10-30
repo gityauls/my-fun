@@ -74,13 +74,59 @@ def test_bass_preset_boosts_low_not_high():
     assert gain(62) > 1.8 * gain(8000)   # 미리 낮춤(-3.5 dB) 때문에 절대값이 아니라 비율로 본다
 
 
-def test_swap_has_no_jump():
+class Stream:
+    """위상이 이어지는 100 Hz 사인을 2048 프레임씩 흘리고, 블록마다 최대 |2차 차분|을 잰다."""
+    N = 2048
+
+    def __init__(self, p: FxProcessor) -> None:
+        self.p = p
+        self.pos = 0
+        self.prev = np.zeros((2, 2), dtype=np.float32)
+
+    def step(self) -> float:
+        t = (self.pos + np.arange(self.N)) / SAMPLE_RATE
+        self.pos += self.N
+        wave = (0.3 * np.sin(2 * np.pi * 100 * t)).astype(np.float32)
+        out = self.p.process(np.ascontiguousarray(np.column_stack([wave, wave])))
+        joined = np.concatenate([self.prev, out])[:, 0].astype(np.float64)
+        self.prev = out[-2:].copy()
+        return float(np.abs(np.diff(joined, 2)).max())
+
+
+def _swap_ratio(before: FxSettings, after: FxSettings) -> float:
     p = FxProcessor()
-    p.update(FxSettings().with_enabled(True))
-    prev = p.process(tone(200, 2048, 0.3))
-    p.update(FxSettings().with_enabled(True).with_preset("베이스 강하게"))
-    cur = p.process(tone(200, 2048, 0.3))
-    assert abs(float(cur[0, 0]) - float(prev[-1, 0])) < 0.1
+    p.update(before)
+    s = Stream(p)
+    steady = [s.step() for _ in range(6)][-1]
+    p.update(after)
+    swap = s.step()
+    later = [s.step() for _ in range(3)][-1]
+    return swap / max(steady, later)
+
+
+ROCK = FxSettings().with_enabled(True).with_preset("록")
+
+
+def test_swap_has_no_jump():
+    # 새 그래프의 리미터가 앞을 0으로 채우면 섞는 블록에 계단이 생긴다 (예전 약 150배)
+    assert _swap_ratio(ROCK, ROCK.with_band(0, ROCK.bands[0] + 1)) <= 3
+
+
+def test_swap_from_bypass_has_no_jump():
+    assert _swap_ratio(FxSettings(), ROCK) <= 3
+
+
+def test_swap_to_bypass_has_no_jump():
+    assert _swap_ratio(ROCK, FxSettings()) <= 3
+
+
+def test_remember_keeps_sound_and_handles_big_blocks():
+    p = FxProcessor()
+    big = tone(440, 9000, 0.3)
+    p.remember(big)
+    assert p._last_n == 9000 and np.array_equal(p._last[:9000], big)
+    small = tone(440, 64, 0.3)
+    assert np.array_equal(p.process(small), small) and p._last_n == 64
 
 
 def test_off_returns_raw_after_crossfade():
