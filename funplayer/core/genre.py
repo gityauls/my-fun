@@ -38,7 +38,7 @@ def preset_for_genre(text: str) -> str | None:
     if not s:
         return None
     digits = s[1:-1].strip() if s.startswith("(") and s.endswith(")") else s
-    if digits.isascii() and digits.isdigit():
+    if digits.isascii() and digits.isdigit() and len(digits) <= 3:
         name = _ID3V1.get(int(digits))
         if name is None:
             return None

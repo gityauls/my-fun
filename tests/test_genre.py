@@ -12,3 +12,10 @@ from funplayer.core.genre import preset_for_genre
 ])
 def test_genre_table_cases(text, expected):
     assert preset_for_genre(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("( 17 )", "록"), ("(0)", "블루스"), ("(99)", None), ("9" * 5000, None), (None, None),
+])
+def test_genre_odd_inputs(text, expected):
+    assert preset_for_genre(text) == expected
