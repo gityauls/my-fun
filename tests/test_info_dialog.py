@@ -233,3 +233,52 @@ def test_drop_picture_file(qapp, tmp_path):
     drop(img, img); assert d._picture is KEEP   # 한 개만
     txt = tmp_path / "a.txt"; txt.write_bytes(b"1"); drop(txt); assert d._picture is KEEP
     drop(img); assert d._picture == PNG
+
+
+def test_same_path_reshow_keeps_edits(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "New"); d.set_picture_bytes(PNG)
+    assert d.show_info(info, None, editable=True, note="n") is True
+    assert d.edits["title"].text() == "New" and d._picture == PNG and d.is_dirty()
+    assert d.save_button.isEnabled()
+
+def test_same_path_reshow_when_clean_reloads(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    import dataclasses
+    d.show_info(dataclasses.replace(info, title="Fresh"), None, editable=True)
+    assert d.edits["title"].text() == "Fresh" and not d.is_dirty()
+
+def test_esc_reject_dirty_asks(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path); answers = [False, True]; asked = []
+    monkeypatch.setattr(d, "confirm_discard", lambda: asked.append(1) or answers.pop(0))
+    set_text(d.edits["title"], "New")
+    d.reject(); assert d.isVisible() and d.edits["title"].text() == "New"
+    d.reject(); assert not d.isVisible() and len(asked) == 2 and not d.is_dirty()
+
+def test_picture_add_then_remove(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)   # 곡에 그림 없음: 넣었다 빼면 처음으로
+    d.set_picture_bytes(PNG); assert d.remove_pic_button.isEnabled()
+    d.remove_pic_button.click()
+    assert d._picture is KEEP and not d.is_dirty() and d.art_label.styleSheet() == ""
+    d2, _ = editor(qapp, tmp_path, picture=JPG)   # 그림 있음: 넣은 뒤 빼기 = 그림 없음
+    d2.set_picture_bytes(PNG); d2.remove_pic_button.click()
+    assert d2._picture is REMOVE and d2.is_dirty()
+
+def test_drops_reach_dialog_not_fields(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    kids = [(e.lineEdit() if isinstance(e, QComboBox) else e) for e in d.edits.values()]
+    assert d.acceptDrops() and not any(w.acceptDrops() for w in [*kids, d.path_label, d.path_label.viewport()])
+
+def test_cursor_at_start_and_default_button(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    long = TrackInfo(info.path, title="T" * 200)
+    d.show_info(long, None, editable=True)
+    assert d.edits["title"].cursorPosition() == 0 and d.save_button.isDefault() and not d.close_button.isDefault()
+    d.show_info(long, None, editable=False)
+    assert d.close_button.isDefault() and not d.save_button.isDefault()
+
+def test_edit_clears_failed_text(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "N"); d.failed("저장하지 못했습니다")
+    set_text(d.edits["title"], "NN"); assert d.message_label.text().startswith("노란 칸")
+    set_text(d.edits["genre"], "재즈"); assert d.is_dirty()

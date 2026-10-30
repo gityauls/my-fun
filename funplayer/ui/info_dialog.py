@@ -125,6 +125,7 @@ class TrackInfoDialog(QDialog):
         self._editable = False
         self._orig: dict[str, str] = {}
         self._picture: object = KEEP
+        self._picture_pm: QPixmap | None = None   # 넣을 그림을 한 번만 풀어 둔 것
         self._transient: tuple[str, str] | None = None   # (글, 색): 저장했습니다 / 오류
         self._note = ""
         self._discarding = False
@@ -227,6 +228,10 @@ class TrackInfoDialog(QDialog):
         root.addWidget(self.confirm_bar)
         root.addLayout(buttons)
 
+        # 칸 위에 떨군 그림 파일이 칸에 글자로 먹히지 않고 창까지 올라가게 한다
+        for w in (*(e.lineEdit() if isinstance(e, QComboBox) else e for e in self.edits.values()),
+                  self.path_label, self.path_label.viewport()):
+            w.setAcceptDrops(False)
         for edit in self.edits.values():
             if isinstance(edit, QComboBox):
                 edit.editTextChanged.connect(self._on_edited)
@@ -247,6 +252,10 @@ class TrackInfoDialog(QDialog):
         """채운다. 저장 안 한 칸이 있는 채 다른 곡으로 바꾸려는데 사용자가 아니라고 하면 False."""
         if self.is_dirty() and info.path != self._path and not self.confirm_discard():
             return False
+        if self.is_dirty() and info.path == self._path:   # 같은 곡을 다시 보여 달라는 것: 고치던 값은 그대로
+            self._info, self._cover, self._note = info, cover, note
+            self._refresh_state()
+            return True
         self._info, self._cover = info, cover
         self._path = info.path
         self._editable = editable
@@ -270,6 +279,7 @@ class TrackInfoDialog(QDialog):
         info = self._info
         assert info is not None
         self._picture = KEEP
+        self._picture_pm = None
         self._transient = None
         self.confirm_bar.hide()
         self._orig = {
@@ -290,12 +300,14 @@ class TrackInfoDialog(QDialog):
                 edit.blockSignals(True)
                 edit.setEditText(value)
                 edit.blockSignals(False)
+                edit.lineEdit().setCursorPosition(0)
                 edit.lineEdit().setReadOnly(not self._editable)
                 edit.setEnabled(self._editable)
             else:
                 edit.blockSignals(True)
                 edit.setText(value)
                 edit.blockSignals(False)
+                edit.setCursorPosition(0)
                 edit.setReadOnly(not self._editable)
         for key, label in self.value_labels.items():   # 고칠 수 없을 때는 지금처럼 글자로 보인다
             field = FIELD_KEYS.get(key)
@@ -337,9 +349,7 @@ class TrackInfoDialog(QDialog):
         pic_changed = editable and self._picture is not KEEP
         self.art_label.setStyleSheet(f"border: 2px solid {CHANGED_BORDER};" if pic_changed else "")
         if isinstance(self._picture, bytes):
-            pm = QPixmap()
-            pm.loadFromData(self._picture)
-            self.art_label.setPixmap(art_pixmap(pm if not pm.isNull() else None, ART_SIZE))
+            self.art_label.setPixmap(art_pixmap(self._picture_pm, ART_SIZE))
         elif self._picture is REMOVE:
             self.art_label.setPixmap(art_pixmap(None, ART_SIZE))
         else:
@@ -350,6 +360,8 @@ class TrackInfoDialog(QDialog):
         self.remove_pic_button.setEnabled(
             isinstance(self._picture, bytes) or (has_embedded and self._picture is not REMOVE))
         self.save_button.setEnabled(editable and self.is_dirty())
+        self.save_button.setDefault(editable)   # 보기만 할 때는 Enter가 닫기
+        self.close_button.setDefault(not editable)
         if not editable:
             self.confirm_bar.hide()
         if self._transient:
@@ -372,7 +384,9 @@ class TrackInfoDialog(QDialog):
             return self._picture_error("jpg·png 그림만 넣을 수 있습니다")
         if len(data) > MAX_PICTURE:
             return self._picture_error("그림이 너무 큽니다 (10 MB까지)")
-        self._picture = data
+        pm = QPixmap()
+        pm.loadFromData(data)
+        self._picture, self._picture_pm = data, (pm if not pm.isNull() else None)
         self._transient = None
         self._refresh_state()
         return True
@@ -402,6 +416,7 @@ class TrackInfoDialog(QDialog):
     def _remove_picture(self) -> None:
         has_embedded = bool(self._info and self._info.picture)
         self._picture = REMOVE if has_embedded else KEEP
+        self._picture_pm = None
         self._transient = None
         self._refresh_state()
 
