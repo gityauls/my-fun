@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
+
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
@@ -11,10 +13,12 @@ from PyQt5.QtWidgets import (
 
 from funplayer.controller import PlayerController
 from funplayer.core.settings import Settings
+from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
 from funplayer.core.taginfo import TrackInfo
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
+from funplayer.engine.decoder import SAMPLE_RATE
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
@@ -31,6 +35,10 @@ from funplayer.ui.station_view import StationView
 from funplayer.ui.worker import QtRunner
 
 REFRESH_MS = 200
+SPECTRUM_MS = 40
+SPECTRUM_MAX_DT = 0.2
+BIG_BARS = 24
+SMALL_BARS = 12
 VOLUME_STEP = 5
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
@@ -113,6 +121,13 @@ class PlayerPanel(QWidget):
         self._bridge.lost.connect(self._on_lost, Qt.QueuedConnection)
 
         self.media_keys = media_keys if media_keys is not None else MediaKeys(self)
+        # 스펙트럼: 효과 칸이 보일 때만 도는 별도 타이머 (_apply_visibility가 켜고 끈다)
+        self._spectrum_timer = QTimer(self)
+        self._spectrum_timer.setInterval(SPECTRUM_MS)
+        self._spectrum_timer.timeout.connect(self._spectrum_tick)
+        self._big_decay = Decay(BIG_BARS)
+        self._small_decay = Decay(SMALL_BARS)
+        self._spectrum_last: float | None = None
         self._build()
         self._wire()
         self.setAcceptDrops(True)
@@ -125,6 +140,7 @@ class PlayerPanel(QWidget):
             self.controller.restore_session()
         # 라디오로 끈 뒤 켜면 라디오 탭이다 (방송국만 고르고 접속하지 않는다)
         self.set_tab("radio" if self.controller.source == "radio" else settings.tab)
+        self.fx_strip.set_genre_preset(self.controller.genre_preset)
         self.refresh()
         # 이어 듣기 안내가 떠 있으면 키 안내로 가리지 않는다 (시작할 때 상태 글은 그것뿐이다)
         if self._settings.media_keys and not self.media_keys.enable() and not self.controller.status:
@@ -426,6 +442,38 @@ class PlayerPanel(QWidget):
 
     def _fx_changed(self, fx, final: bool) -> None:
         self.controller.set_effects(fx, save=bool(final))
+        self.fx_strip.set_genre_preset(self.controller.genre_preset)
+
+    def _spectrum_playing(self) -> bool:
+        c = self.controller
+        if c.source == "radio":
+            return self.radio.state is RadioState.LIVE
+        return c.state is State.PLAYING
+
+    def _spectrum_tick(self) -> None:
+        now = time.monotonic()
+        last, self._spectrum_last = self._spectrum_last, now
+        dt = 0.0 if last is None else min(max(now - last, 0.0), SPECTRUM_MAX_DT)
+        block = self._player.latest_block() if self._spectrum_playing() else None
+        strip = self.fx_strip
+        # 보이는 쪽만 계산한다 (열림: 큰 것, 접힘: 작은 것)
+        if strip.is_open:
+            view, decay, bars = strip.big_spectrum, self._big_decay, BIG_BARS
+        else:
+            view, decay, bars = strip.small_spectrum, self._small_decay, SMALL_BARS
+        if block is None or len(block) == 0:
+            levels = np.zeros(bars)
+        else:
+            levels = band_levels(block, SAMPLE_RATE, bars)
+        view.set_levels(*decay.update(levels, dt))
+
+    def _set_spectrum_running(self, on: bool) -> None:
+        t = self._spectrum_timer
+        if on and not t.isActive():
+            self._spectrum_last = None
+            t.start()
+        elif not on and t.isActive():
+            t.stop()
 
     def _fx_open_changed(self, on: bool) -> None:
         self._settings.fx_open = bool(on)
@@ -560,6 +608,7 @@ class PlayerPanel(QWidget):
         fx_on = self._settings.fx_visible and not mini
         self.fx_strip.setVisible(fx_on)
         self.fx_separator.setVisible(fx_on)
+        self._set_spectrum_running(fx_on)
         self.playlist_view.setVisible(not mini and not radio_tab)
         self.station_view.setVisible(not mini and radio_tab)
         for b in (self.open_button, self.add_button, self.list_button):
@@ -930,6 +979,10 @@ class PlayerPanel(QWidget):
             seek.setValue(int(position * 1000))
         seek.setEnabled(c.can_seek and duration > 0)
 
+        # 컨트롤러가 곡을 바꾸며 이미 효과를 맞췄을 수도 있어(sync가 False) 장르 표시는 매번 맞춘다 (같으면 아무 일 없음)
+        c.sync_effects()
+        self.fx_strip.set_genre_preset(c.genre_preset)
+
         playing = self.radio.state is not RadioState.IDLE if on_radio else state is State.PLAYING
         if playing:
             self.play_button.setIcon(st.standardIcon(QStyle.SP_MediaPause))
@@ -1047,4 +1100,5 @@ class PlayerPanel(QWidget):
         self.runner.shutdown()
         self.media_keys.disable()
         self._timer.stop()
+        self._spectrum_timer.stop()
         self._player.close()

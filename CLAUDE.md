@@ -12,6 +12,9 @@
 - `funplayer/core/effects.py`: 음향 효과 값(프리셋·밴드·모드) — 화면·소리 없음
 - `funplayer/engine/fx.py`: 효과 필터 체인 처리
 - `funplayer/ui/fx_strip.py`: 음향 효과 칸 (PlayerPanel 조작 줄 아래)
+- `funplayer/core/genre.py`: 장르 말 → 프리셋 이름 (장르 자동 프리셋, 4-B) — 화면·소리 없음
+- `funplayer/core/spectrum.py`: 소리 조각 → 막대 높이·떨어지는 움직임 (스펙트럼, 4-B) — 화면 없음
+- `funplayer/ui/spectrum_view.py`: 스펙트럼 막대 그리기 (효과 칸 안, 펼침 24개 / 접힘 12개)
 
 ## 원칙
 - 알송의 코드, 아이콘, 이미지, 문구, 이름을 쓰지 않는다. 기능 아이디어만 참고한다.

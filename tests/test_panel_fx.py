@@ -1,3 +1,4 @@
+import os
 import pytest
 from fakes import FakePlayer, FakeRunner, FakeStream, make_songs
 from funplayer.core.effects import FxSettings
@@ -164,3 +165,63 @@ def test_fx_state_survives_restart(qapp):
         assert p.actions["fx_visible"].isChecked()
     finally:
         p.shutdown(); p.deleteLater()
+
+
+def test_spectrum_timer_only_when_visible(fpanel):
+    p, *_ = fpanel
+    assert not p._spectrum_timer.isActive()
+    p.shortcuts["Ctrl+E"].activated.emit()
+    assert p._spectrum_timer.isActive() and p._spectrum_timer.interval() == 40
+    p.set_mini(True)
+    assert not p._spectrum_timer.isActive()
+    p.set_mini(False)
+    assert p._spectrum_timer.isActive()
+    p.shortcuts["Ctrl+E"].activated.emit()
+    assert not p._spectrum_timer.isActive()
+
+
+def test_track_change_updates_strip_genre(qapp, tmp_path):
+    from funplayer.core.taginfo import TrackInfo
+    genres = {"01 a.mp3": "Rock", "02 b.mp3": "Jazz"}
+    reader = lambda path: TrackInfo(path, genre=genres.get(os.path.basename(path), ""))
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), runner=FakeRunner(),
+                    read_info=reader)
+    p.resize(380, 560); p.show()
+    try:
+        fx = FxSettings().with_preset("발라드").with_auto(True)
+        p.controller.set_effects(fx); p.fx_strip.set_value(fx)
+        p.controller.open([str(make_songs(tmp_path, ["01 a.mp3", "02 b.mp3"]))])
+        p.refresh()
+        assert "록" in p.fx_strip.preset_link.text()
+        p.next(); p.refresh()
+        assert "재즈" in p.fx_strip.preset_link.text()
+    finally:
+        p.shutdown(); p.deleteLater()
+
+
+def test_spectrum_falls_when_paused(fpanel, monkeypatch):
+    import numpy as np
+    import funplayer.ui.player_panel as pp
+    p, fake, _ = fpanel
+    p.toggle_fx_visible()
+    p.fx_strip.set_open(True)
+    clock = [100.0]
+    monkeypatch.setattr(pp.time, "monotonic", lambda: clock[0])
+    fake.has_track = True
+    fake.state = pp.State.PLAYING
+    t = np.arange(4096) / 44100
+    fake.block = (0.5 * np.sin(2 * np.pi * 1000 * t)).astype(np.float32).reshape(-1, 1).repeat(2, 1)
+    p._spectrum_tick()
+    clock[0] += 0.04
+    p._spectrum_tick()
+    top = p.fx_strip.big_spectrum.levels[:]
+    assert max(top) > 0.3
+    fake.state = pp.State.PAUSED
+    fake.block = None
+    prev = max(top)
+    for _ in range(5):
+        clock[0] += 0.04
+        p._spectrum_tick()
+        cur = max(p.fx_strip.big_spectrum.levels)
+        assert cur < prev
+        prev = cur
