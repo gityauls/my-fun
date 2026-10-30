@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import subprocess
 
 from PyQt5.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
@@ -136,6 +137,7 @@ class TrackInfoDialog(QDialog):
         self._prefilled = False
         self._candidates: list = []
         self._counter = 0   # 요청 번호: 늦게 온 응답을 가려내는 표
+        self._busy = False   # 찾기·그림 요청이 가는 중
 
         self.art_label = QLabel()
         self.art_label.setFixedSize(ART_SIZE, ART_SIZE)
@@ -335,6 +337,7 @@ class TrackInfoDialog(QDialog):
     def _reset_search(self) -> None:
         """곡이 바뀌면 찾기 칸·결과를 비운다 (펼침 상태는 그대로)."""
         self._counter += 1   # 이전 곡 요청의 응답은 버려진다
+        self._busy = False
         self._candidates = []
         self.result_list.clear()
         self.search_status.hide()
@@ -364,8 +367,9 @@ class TrackInfoDialog(QDialog):
         self.search_artist.setText(artist)
 
     def _update_search_buttons(self) -> None:
-        self.search_button.setEnabled(bool(self.search_title.text().strip()))
-        self.fill_button.setEnabled(0 <= self.result_list.currentRow() < len(self._candidates))
+        self.search_button.setEnabled(bool(self.search_title.text().strip()) and not self._busy)
+        self.fill_button.setEnabled(
+            0 <= self.result_list.currentRow() < len(self._candidates) and not self._busy)
 
     def _set_status(self, text: str, error: bool = False) -> None:
         self.search_status.setText(text)
@@ -384,24 +388,46 @@ class TrackInfoDialog(QDialog):
         text = str(error) if error.__class__.__name__ == "MusicBrainzError" else ""
         return text or "인터넷에 연결하지 못했습니다"
 
+    def _cancel_requests(self) -> None:
+        """기다리는 요청의 응답은 버리고, 찾기 단추를 다시 쓸 수 있게 한다."""
+        self._counter += 1
+        if self._busy:
+            self._busy = False
+            self.search_status.hide()
+        self._update_search_buttons()
+
+    def _make_client(self):
+        """클라이언트를 만든다. 실패하면 빨간 글자를 보이고 None."""
+        try:
+            return self._client_factory()
+        except Exception:   # noqa: BLE001
+            self._set_status(self._error_text(None), error=True)
+            return None
+
     def _search(self) -> None:
         title, artist = self.search_title.text().strip(), self.search_artist.text().strip()
-        if not title or self._run_async is None or self._client_factory is None:
+        if not title or self._busy or self._run_async is None or self._client_factory is None:
             return
-        token = self._token()
         self._candidates = []
         self.result_list.clear()
         self._set_status("찾는 중…")
+        client = self._make_client()
+        if client is None:
+            self._update_search_buttons()
+            return
+        token = self._token()
+        self._busy = True
         self._update_search_buttons()
-        client = self._client_factory()
         self._run_async(lambda: client.search(title, artist),
                         lambda result, error: self._on_search(token, result, error))
 
     def _on_search(self, token, result, error) -> None:
         if not self._current_token(token):
             return
+        self._busy = False
         if error is not None:
             self._set_status(self._error_text(error), error=True)
+            self._update_search_buttons()
             return
         self._candidates = list(result or [])
         for cand in self._candidates:
@@ -431,15 +457,21 @@ class TrackInfoDialog(QDialog):
         has_picture = bool(self._info and self._info.picture)
         need_cover = (not has_picture and self._picture is KEEP) or not only_empty
         if need_cover and cand.release_id and self._run_async and self._client_factory:
-            token = self._token()
             self._set_status("앨범 그림 받는 중…")
-            client = self._client_factory()
+            client = self._make_client()
+            if client is None:
+                return
+            token = self._token()
+            self._busy = True
+            self._update_search_buttons()
             self._run_async(lambda: client.cover(cand.release_id),
                             lambda result, error: self._on_cover(token, result, error))
 
     def _on_cover(self, token, result, error) -> None:
         if not self._current_token(token):
             return
+        self._busy = False
+        self._update_search_buttons()
         if error is not None:
             self._set_status(self._error_text(error), error=True)
         elif not result:
@@ -468,6 +500,7 @@ class TrackInfoDialog(QDialog):
         return True
 
     def saved(self, info: TrackInfo, cover: QPixmap | None) -> None:
+        self._cancel_requests()   # 아직 오는 중인 그림은 저장한 창을 다시 바꾸지 않게
         self._info, self._cover = info, cover
         self._path = info.path
         self._populate()
@@ -475,6 +508,7 @@ class TrackInfoDialog(QDialog):
         self._refresh_state()
 
     def failed(self, message: str) -> None:
+        self._cancel_requests()
         self._transient = (message, ERROR_COLOR)
         self._refresh_state()
 
@@ -651,8 +685,16 @@ class TrackInfoDialog(QDialog):
 
     # ---- 저장·지우기 ----
     def _save(self) -> None:
-        if self.is_dirty():
-            self.save_requested.emit(self._path, self._changed_fields(), self._picture)
+        if not self.is_dirty():
+            return
+        fields = self._changed_fields()
+        if "year" in fields and fields["year"] and not re.fullmatch(r"\d{4}", fields["year"]):
+            self._picture_error("년도는 숫자 네 자리로 적어 주세요 (예: 1999)")
+            return
+        if "track" in fields and fields["track"] and not re.fullmatch(r"\d+(/\d+)?", fields["track"]):
+            self._picture_error("트랙은 숫자로 적어 주세요 (예: 3 또는 3/12)")
+            return
+        self.save_requested.emit(self._path, fields, self._picture)
 
     def _confirm_clear(self) -> None:
         self.confirm_bar.hide()

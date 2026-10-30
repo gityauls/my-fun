@@ -4,7 +4,7 @@ import os
 
 import pytest
 from PyQt5.QtCore import QBuffer, QByteArray, QIODevice
-from PyQt5.QtGui import QColor, QImage
+from PyQt5.QtGui import QColor, QImage, QPixmap
 from fakes import FakePlayer, FakeRunner, make_songs
 from funplayer.core.settings import Settings
 from funplayer.core.taginfo import TrackInfo
@@ -12,8 +12,8 @@ from funplayer.engine.tagwrite import KEEP, TagWriteError
 from funplayer.ui.player_panel import PlayerPanel
 
 
-def real_png() -> bytes:
-    img = QImage(8, 8, QImage.Format_RGB32); img.fill(QColor("#336699"))
+def real_png(color: str = "#336699") -> bytes:
+    img = QImage(8, 8, QImage.Format_RGB32); img.fill(QColor(color))
     ba = QByteArray(); buf = QBuffer(ba); buf.open(QIODevice.WriteOnly); img.save(buf, "PNG")
     return bytes(ba)
 
@@ -81,16 +81,19 @@ def test_missing_and_non_mp3_are_readonly_with_note(rig):
 def test_save_updates_subtitle_and_cover(rig):
     p, disk, runner, tmp = rig
     path = p.controller.playlist.tracks[0].path
+    old = QPixmap(8, 8); old.fill(QColor("#ff0000"))
+    p._cover_src, p._cover_key = old, path   # 이 곡의 큰 그림을 이미 읽어 둔 상태
     p.show_track_info(); d = p.info_dialog
     assert d._editable
     d.edits["artist"].setText("Singer"); d.edits["album"].setText("Rec")
-    d.set_picture_bytes(real_png())
+    d.set_picture_bytes(real_png("#0000ff"))
     d.save_button.click()
     assert disk.tags[path]["artist"] == "Singer"
     assert d.message_label.text() == "저장했습니다" and not d.is_dirty()
     assert d.edits["artist"].text() == "Singer"
     assert "Singer" in p.controller.subtitle and "Singer" in p.artist_label.toolTip() + p.artist_label.text()
-    assert p._cover_src is not None   # 큰 그림도 새로 읽혔다
+    # 큰 그림도 새로 읽혔다 (표시 열쇠를 되돌리지 않으면 옛 빨강이 남는다)
+    assert QColor(p._cover_src.toImage().pixel(2, 2)) == QColor("#0000ff")
 
 
 def test_save_failure_shows_reason_and_keeps_values(rig):
@@ -118,3 +121,28 @@ def test_radio_info_readonly(rig):
     p.show_track_info(); d = p.info_dialog
     assert not d._editable and d.search_section.isHidden() and d.save_button.isHidden()
     assert d.message_label.isHidden()
+
+
+def test_close_with_unsaved_edits_asks(rig, monkeypatch):
+    from PyQt5.QtWidgets import QMessageBox
+    import funplayer.ui.info_dialog as dlg
+    p, disk, runner, tmp = rig
+    p.show_track_info(); d = p.info_dialog
+    d.edits["title"].setText("Changed")
+    asked, answers = [], [QMessageBox.No, QMessageBox.Yes]
+    def fake(parent, title, text, *a, **k):
+        asked.append(text); return answers.pop(0)
+    monkeypatch.setattr(dlg.QMessageBox, "question", fake)
+    assert not p.close() and p.isVisible()   # 아니오 = 닫기 취소
+    assert asked == ["저장 안 한 내용이 있습니다. 버릴까요?"]
+    assert p.close() and not p.isVisible()   # 예 = 닫힌다
+    assert len(asked) == 2
+
+
+def test_close_without_edits_does_not_ask(rig, monkeypatch):
+    import funplayer.ui.info_dialog as dlg
+    p, disk, runner, tmp = rig
+    monkeypatch.setattr(dlg.QMessageBox, "question",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("물으면 안 됨")))
+    p.show_track_info()
+    assert p.close()

@@ -8,7 +8,7 @@ import numpy as np
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
-    QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
+    QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -872,11 +872,14 @@ class PlayerPanel(QWidget):
 
     def _edit_tags(self, write) -> None:
         dialog = self.info_dialog
+        QApplication.setOverrideCursor(Qt.WaitCursor)   # 큰 파일·느린 드라이브에서 멈춘 게 아님을 보인다
         try:
             info = write()
         except TagWriteError as e:
             dialog.failed(str(e))
             return
+        finally:
+            QApplication.restoreOverrideCursor()
         dialog.saved(info, load_cover(info))
         self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
         self.refresh()
@@ -1151,6 +1154,14 @@ class PlayerPanel(QWidget):
         item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed or track.missing else None)
 
     # ---- 끝내기 ----
+
+    def closeEvent(self, event) -> None:
+        # 곡 정보 창에 저장 안 한 내용이 있으면 끝내기 전에 묻는다 (아니라고 하면 창을 닫지 않는다)
+        dialog = self.info_dialog
+        if dialog is not None and dialog.is_dirty() and not dialog.confirm_discard():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def shutdown(self) -> None:
         self._closed = True

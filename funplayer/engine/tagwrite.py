@@ -5,7 +5,7 @@ import os
 import shutil
 from collections.abc import Callable
 
-from mutagen.id3 import APIC, ID3, delete, ID3NoHeaderError, TALB, TCON, TIT2, TPE1, TRCK, TYER
+from mutagen.id3 import APIC, ID3, delete, ID3NoHeaderError, TALB, TCON, TDRC, TIT2, TPE1, TRCK, TYER
 
 from funplayer.engine.tags import read_info
 
@@ -83,6 +83,12 @@ def _safe_write(path: str, edit: Callable[[str], None], verify: Callable[[str], 
         raise TagWriteError(MSG_OTHER) from exc
 
 
+def _drop_front_covers(tags: ID3) -> None:
+    """앞표지(type 3, 그리고 흔히 표지로 쓰는 type 0)만 지운다. 뒷표지·가수 사진 등은 둔다."""
+    for key in [k for k, f in tags.items() if k.startswith("APIC") and f.type in (0, 3)]:
+        del tags[key]
+
+
 def write_tags(path: str, fields: dict[str, str], picture: bytes | object = KEEP,
                verify: Callable[[str], bool] | None = None) -> None:
     """fields에 없는 키는 그대로, 빈 글자는 그 프레임 삭제. picture = 바이트 / REMOVE / KEEP."""
@@ -95,26 +101,34 @@ def write_tags(path: str, fields: dict[str, str], picture: bytes | object = KEEP
     def edit(tmp: str) -> None:
         try:
             tags = ID3(tmp)
+            v24 = tags.version >= (2, 4, 0)
         except ID3NoHeaderError:
-            tags = ID3()
-        tags.update_to_v23()
+            tags, v24 = ID3(), False
+        # 이미 v2.4인 파일은 v2.4로 둔다 (TSOP·TMOO 등이 안 사라지게)
+        if not v24:
+            tags.update_to_v23()
         for key, (fid, cls) in _FRAMES.items():
             if key not in fields:
                 continue
-            tags.delall(fid)
             if key == "year":
-                for old in ("TDRC", "TDAT", "TIME"):   # 옛 날짜 조각이 새 년도와 섞이지 않게
+                for old in ("TYER", "TDRC", "TDAT", "TIME"):   # 옛 날짜 조각이 새 년도와 섞이지 않게
                     tags.delall(old)
+                fid, cls = ("TDRC", TDRC) if v24 else ("TYER", TYER)
+            else:
+                tags.delall(fid)
             value = fields[key]
             if value:
                 tags.add(cls(encoding=1, text=[value]))
         if picture is REMOVE:
-            tags.delall("APIC")
+            _drop_front_covers(tags)
         elif isinstance(picture, (bytes, bytearray)):
             data = bytes(picture)
-            tags.delall("APIC")
-            tags.add(APIC(encoding=1, mime=picture_mime(data), type=3, desc="", data=data))
-        tags.save(tmp, v1=0, v2_version=3)
+            _drop_front_covers(tags)
+            desc = ""
+            while f"APIC:{desc}" in tags:   # 남은 그림과 이름이 겹치면 덮어쓰니 피한다
+                desc += " "
+            tags.add(APIC(encoding=1, mime=picture_mime(data), type=3, desc=desc, data=data))
+        tags.save(tmp, v1=0, v2_version=4 if v24 else 3)
 
     _safe_write(path, edit, check)
 

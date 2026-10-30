@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 _KEYS = ("title", "artist", "album", "date", "genre", "track")
 
 
+def _pick_cover(arts):
+    """그림이 여럿이면 앞표지(Cover (front)) → Other → 첫 그림 차례로 고른다."""
+    for want in ("Cover (front)", "Other"):
+        for s in arts:
+            if s.metadata.get("comment") == want:
+                return s
+    return arts[0] if arts else None
+
+
 def read_info(path: str) -> TrackInfo:
     """곡 정보를 읽는다. 예외를 밖으로 내지 않고, 실패하면 경로와 크기만 채워 돌려준다."""
     try:
@@ -43,8 +52,8 @@ def read_info(path: str) -> TrackInfo:
         # 컨테이너 비트레이트는 파일 크기로 셈해 큰 표지 그림까지 들어가므로 스트림 값을 먼저 본다
         info.bitrate = stream.bit_rate or ctx.bit_rate or container.bit_rate or 0
         info.duration = _duration(container, stream)
-        art = next((s for s in container.streams.video
-                    if s.disposition & av.stream.Disposition.attached_pic), None)
+        arts = [s for s in container.streams.video if s.disposition & av.stream.Disposition.attached_pic]
+        art = _pick_cover(arts)
         if art is not None:
             packet = next(container.demux(art), None)
             info.picture = bytes(packet) if packet is not None else None

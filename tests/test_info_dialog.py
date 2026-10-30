@@ -126,6 +126,19 @@ def test_save_emits_changed_only(qapp, tmp_path):
     d.save_button.click()
     assert got == [(info.path, {"title": "New Title", "genre": "록"}, KEEP)]
 
+def test_bad_year_and_track_not_saved(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path); got = []
+    d.save_requested.connect(lambda *a: got.append(a))
+    set_text(d.edits["year"], "이천"); d.save_button.click()
+    assert got == [] and "년도" in d.message_label.text() and d.is_dirty()
+    set_text(d.edits["year"], "1999"); set_text(d.edits["track"], "A1"); d.save_button.click()
+    assert got == [] and "트랙" in d.message_label.text()
+    set_text(d.edits["track"], "3/12"); d.save_button.click()
+    assert len(got) == 1 and got[0][1] == {"year": "1999", "track": "3/12"}
+    set_text(d.edits["year"], ""); set_text(d.edits["track"], ""); d.save_button.click()
+    assert len(got) == 2   # 비우는 것은 된다
+
+
 def test_picture_bytes_checked(qapp, tmp_path):
     d, _ = editor(qapp, tmp_path)
     assert not d.set_picture_bytes(b"GIF89a" + b"0" * 20)
@@ -405,9 +418,9 @@ def test_late_reply_ignored(qapp, tmp_path):
     pending = []
     c = FakeClient([CAND], cover=PNG)
     d, info = searcher(qapp, tmp_path, c, run=lambda work, done: pending.append((work, done)))
-    d.search_button.click(); d.search_button.click()   # 요청 둘
-    (w1, d1), (w2, d2) = pending
-    d2(w2(), None); d1([Candidate("Stale", "", "", "", "", "", "")], None)   # 먼저 보낸 것의 응답은 버림
+    d.search_button.click()
+    (w1, d1), = pending
+    d1(w1(), None)
     assert d.result_list.count() == 1 and d.result_list.item(0).text().startswith("Song")
     d.fill_button.click()   # 그림 요청 대기
     other = tmp_path / "y.mp3"; other.write_bytes(b"1")
@@ -426,6 +439,61 @@ def test_late_search_reply_after_track_change_ignored(qapp, tmp_path):
     d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)
     work, done = pending[0]; done(work(), None)
     assert d.result_list.count() == 0
+
+
+def test_buttons_disabled_while_request_runs(qapp, tmp_path):
+    pending = []
+    c = FakeClient([CAND], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c, run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    assert not d.search_button.isEnabled() and d.search_status.text() == "찾는 중…"
+    d.search_button.click(); QTest.keyClick(d.search_title, Qt.Key_Return)   # 두 번째 요청은 가지 않는다
+    assert len(pending) == 1
+    w, dn = pending[0]; dn(w(), None)
+    assert d.search_button.isEnabled() and d.fill_button.isEnabled()
+    d.fill_button.click()   # 그림 요청이 가는 동안은 둘 다 잠긴다
+    assert len(pending) == 2 and not d.fill_button.isEnabled() and not d.search_button.isEnabled()
+    w, dn = pending[1]; dn(w(), None)
+    assert d.search_button.isEnabled() and d.fill_button.isEnabled() and d._picture == PNG
+
+
+def test_buttons_reenabled_after_error(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient(error=OSError("x")))
+    d.search_button.click()
+    assert d.search_button.isEnabled()
+
+
+def test_saved_drops_late_cover(qapp, tmp_path):
+    pending = []
+    d, info = searcher(qapp, tmp_path, FakeClient([CAND], cover=PNG),
+                       run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click(); w, dn = pending[0]; dn(w(), None)
+    d.fill_button.click()   # 그림 요청 대기
+    d.saved(TrackInfo(info.path, title="Song"), None)
+    assert d.search_button.isEnabled() and not d.search_status.isVisible()
+    w, dn = pending[1]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_failed_drops_late_search(qapp, tmp_path):
+    pending = []
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]), run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    d.failed("저장하지 못했습니다")
+    assert d.search_button.isEnabled()
+    w, dn = pending[0]; dn(w(), None)
+    assert d.result_list.count() == 0
+
+
+def test_client_factory_error_shows_red_text(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]))
+    d.set_services(inline, lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    d.search_button.click()
+    assert d.search_status.text() == "인터넷에 연결하지 못했습니다"
+    assert "#b3261e" in d.search_status.styleSheet().lower() and d.search_button.isEnabled()
+    d._candidates = [CAND]; d.result_list.addItem("x"); d.result_list.setCurrentRow(0)
+    d.fill_button.click()
+    assert d.search_status.text() == "인터넷에 연결하지 못했습니다" and d.fill_button.isEnabled()
 
 
 def test_search_error_text(qapp, tmp_path):

@@ -5,7 +5,7 @@ import shutil
 import stat
 
 import pytest
-from mutagen.id3 import ID3, ID3NoHeaderError
+from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TSOP
 
 from funplayer.engine.tags import read_info
 from funplayer.engine.tagwrite import (KEEP, REMOVE, TagWriteError, clear_tags, picture_mime, write_tags)
@@ -37,7 +37,7 @@ def test_korean_roundtrip(mp3):
     with open(mp3, "rb") as f:
         f.seek(-128, 2)
         assert f.read(3) != b"TAG"
-    assert _id3(mp3).version == (2, 3, 0)
+    assert _id3(mp3).version == (2, 4, 0)   # 시험 파일의 태그가 원래 v2.4: 그대로 둔다
     assert _tmpfiles(mp3) == []
 
 
@@ -169,3 +169,64 @@ def test_bad_or_big_picture(mp3):
     with pytest.raises(TagWriteError):
         write_tags(mp3, {}, picture=b"\xff\xd8\xff" + b"\x00" * (10 * 1024 * 1024))
     assert noise_png(8)  # helper sanity
+
+
+def _with_pictures(tone_mp3, tmp_path, version=3, others=((4, "back"),), extra=()):
+    """앞표지(type 3) + others(type, desc) 그림 + extra 프레임을 가진 파일."""
+    path = str(tmp_path / "p.mp3")
+    shutil.copyfile(tone_mp3, path)
+    tags = ID3()
+    tags.add(APIC(encoding=1, mime="image/png", type=3, desc="front", data=png_1x1()))
+    for typ, desc in others:
+        tags.add(APIC(encoding=1, mime="image/png", type=typ, desc=desc, data=noise_png(4)))
+    for frame in extra:
+        tags.add(frame)
+    tags.save(path, v2_version=version)
+    return path
+
+
+def test_picture_replace_keeps_other_pictures(tone_mp3, tmp_path):
+    path = _with_pictures(tone_mp3, tmp_path)
+    new = noise_png(8)
+    write_tags(path, {"title": "t"}, picture=new)
+    pics = _id3(path).getall("APIC")
+    assert sorted(p.type for p in pics) == [3, 4]
+    assert [p.data for p in pics if p.type == 3] == [new]
+    assert read_info(path).picture == new   # 읽는 쪽이 뒷표지가 아니라 앞표지를 본다
+
+
+def test_picture_remove_keeps_other_pictures(tone_mp3, tmp_path):
+    path = _with_pictures(tone_mp3, tmp_path, others=((4, "back"), (0, "other")))
+    write_tags(path, {}, picture=REMOVE)
+    assert sorted(p.type for p in _id3(path).getall("APIC")) == [4]
+
+
+def test_picture_replace_with_same_empty_desc(tone_mp3, tmp_path):
+    path = _with_pictures(tone_mp3, tmp_path, others=((4, ""),))
+    write_tags(path, {}, picture=noise_png(8))
+    assert sorted(p.type for p in _id3(path).getall("APIC")) == [3, 4]
+
+
+def test_v24_file_stays_v24_and_keeps_sort_frames(tone_mp3, tmp_path):
+    path = _with_pictures(tone_mp3, tmp_path, version=4, extra=[TSOP(encoding=1, text=["Sort, Artist"])])
+    write_tags(path, {"title": "새 제목", "year": "1999"})
+    tags = _id3(path)
+    assert tags.version == (2, 4, 0)
+    assert str(tags["TSOP"]) == "Sort, Artist"
+    assert str(tags["TIT2"]) == "새 제목" and tags["TIT2"].encoding == 1
+    assert str(tags["TDRC"]) == "1999" and "TYER" not in tags
+    assert read_info(path).year == "1999" and read_info(path).title == "새 제목"
+
+
+def test_v23_file_stays_v23(tone_mp3, tmp_path):
+    path = str(write_tagged(tmp_path / "c.mp3", tone_mp3, v2={"TIT2": b"old"}))
+    write_tags(path, {"title": "t", "year": "2001"})
+    tags = ID3(path, translate=False)   # 파일에 적힌 그대로
+    assert tags.version == (2, 3, 0) and str(tags["TYER"]) == "2001" and "TDRC" not in tags
+    assert read_info(path).year == "2001"
+
+
+def test_no_tag_file_gets_v23(tone_mp3, tmp_path):
+    path = str(write_tagged(tmp_path / "d.mp3", tone_mp3))
+    write_tags(path, {"title": "t"})
+    assert _id3(path).version == (2, 3, 0)
