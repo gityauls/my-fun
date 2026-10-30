@@ -5,6 +5,7 @@ import os
 
 from funplayer.core import taginfo
 from funplayer.core.effects import FxSettings
+from funplayer.core.genre import preset_for_genre
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
 from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 
 class PlayerController:
+    _UNSET = object()
+
     def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None) -> None:
         self._player = player
         self._settings = settings
@@ -44,22 +47,62 @@ class PlayerController:
         self._held_position: float | None = None   # 이어 듣기 곡을 못 열었을 때 지켜 둘 위치
         self._radio = None
         self._return_position: float | None = None   # 라디오로 가기 전 곡의 위치: 곡 쪽 [재생] 때 돌아간다
+        self._sent_fx: FxSettings | None = None
+        self._synced_key = self._UNSET                # 마지막으로 효과를 보낸 곡/방송의 키
         self.source = "file"                          # 지금 나오는 쪽: "file" 또는 "radio"
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
         self.status_error = False
         self._apply_gain()
-        self._player.set_effects(self.effects)
+        self._send_effects(self.effects)
 
     @property
     def effects(self) -> FxSettings:
         return FxSettings.from_dict(self._settings.fx)
 
     def set_effects(self, fx: FxSettings, save: bool = True) -> None:
-        self._player.set_effects(fx)
+        self._synced_key = self._sync_key()
+        self._send_effects(fx.applied(self.genre_preset))
         if save:
             self._settings.fx = fx.to_dict()
+
+    def _sync_key(self):
+        if self.source == "radio":
+            current = self._radio.current if self._radio is not None else None
+            return ("radio", current.id) if current is not None else None
+        track = self.playlist.current
+        return ("file", track.path) if track is not None else None
+
+    @property
+    def genre_preset(self) -> str | None:
+        """지금 곡/방송의 장르에 맞는 프리셋 이름 (모르면 None)."""
+        if self.source == "radio":
+            current = self._radio.current if self._radio is not None else None
+            group = current.group if current is not None else ""
+            if group.startswith("genre:"):
+                return preset_for_genre(group[len("genre:"):])
+            return None
+        info = self.info
+        return preset_for_genre(info.genre) if info is not None else None
+
+    @property
+    def applied_preset(self) -> str:
+        return self.effects.applied_name(self.genre_preset)
+
+    def sync_effects(self) -> bool:
+        """곡/방송이 바뀌었으면 그 장르에 맞춘 효과를 플레이어에 보낸다. 보냈으면 True."""
+        key = self._sync_key()
+        if key == self._synced_key:
+            return False
+        self._synced_key = key
+        self._send_effects(self.effects.applied(self.genre_preset))
+        return True
+
+    def _send_effects(self, applied: FxSettings) -> None:
+        if applied != self._sent_fx:   # 같은 값이면 다시 걸지 않는다
+            self._sent_fx = applied
+            self._player.set_effects(applied)
 
     @property
     def state(self) -> State:
@@ -119,6 +162,7 @@ class PlayerController:
         self.source = "radio"
         self._radio.play(station_id)
         self._remember_source()
+        self.sync_effects()
 
     def _leave_radio(self) -> None:
         """곡 쪽 동작이 시작되면 라디오를 끊고 곡 쪽으로 돌아온다."""
@@ -311,6 +355,12 @@ class PlayerController:
         self._remember()
 
     def _play_index(self, i: int, start_at: float = 0.0) -> None:
+        try:
+            self._play_index_inner(i, start_at)
+        finally:
+            self.sync_effects()
+
+    def _play_index_inner(self, i: int, start_at: float = 0.0) -> None:
         """i번 곡부터 열리는 곡을 튼다. start_at은 i번 곡이 열렸을 때만 재생 전에 그 자리로 간다."""
         first = i
         self._leave_radio()

@@ -754,3 +754,64 @@ def test_without_radio_station_calls_do_nothing(ctl):
     c, fake, _ = ctl
     c.play_station("kbs-25"); c.toggle_for_tab("radio")
     assert c.source == "file" and not c.radio_live and fake.loaded == []
+
+
+# --- 장르 자동 프리셋 ---
+from funplayer.core.effects import PRESETS
+
+def genre_ctl(genres, fx=None):
+    """genres: {파일 이름: 장르}. 자동 켠 효과(기본 발라드)로 만든 컨트롤러."""
+    def read(path):
+        return TrackInfo(path, genre=genres.get(os.path.basename(path), ""))
+    store = {}
+    fake = FakePlayer()
+    c = PlayerController(fake, Settings(store, lambda: None), read_info=read)
+    c.set_effects(fx or FxSettings().with_preset("발라드").with_auto(True))
+    return c, fake, store
+
+def test_auto_uses_track_genre(tmp_path):
+    c, fake, _ = genre_ctl({"01 a.mp3": "Rock"})
+    c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
+    assert fake.effects.bands == PRESETS["록"]
+
+def test_auto_without_genre_uses_setting(tmp_path):
+    c, fake, _ = genre_ctl({})
+    c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
+    assert fake.effects.bands == PRESETS["발라드"] and c.genre_preset is None
+
+def test_next_track_switches_preset(tmp_path):
+    c, fake, _ = genre_ctl({"01 a.mp3": "Rock", "02 b.mp3": "Ballad"})
+    c.open([str(make_songs(tmp_path, ["01 a.mp3", "02 b.mp3"]))])
+    assert fake.effects.bands == PRESETS["록"]
+    c.next()
+    assert fake.effects.bands == PRESETS["발라드"] and c.applied_preset == "발라드"
+
+def test_radio_overseas_genre_and_domestic(radio_ctl):
+    c, fake, r, runner = radio_ctl
+    c.set_effects(FxSettings().with_preset("발라드").with_auto(True))
+    c.play_station("net-somafm-groove-salad")
+    assert fake.effects.bands == PRESETS["라운지"] and c.applied_preset == "라운지"
+    c.play_station("kbs-25")
+    assert fake.effects.bands == PRESETS["발라드"] and c.genre_preset is None
+
+def test_sync_only_on_key_change(tmp_path):
+    c, fake, _ = genre_ctl({"01 a.mp3": "Rock"})
+    c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
+    n = len(fake.sent_effects)
+    assert c.sync_effects() is False and len(fake.sent_effects) == n
+
+def test_sync_first_time_with_nothing_loaded():
+    c, fake, _ = genre_ctl({})
+    c._synced_key = c._UNSET
+    assert c.sync_effects() is True and c.sync_effects() is False
+
+def test_not_auto_ignores_genre(tmp_path):
+    c, fake, _ = genre_ctl({"01 a.mp3": "Rock"}, FxSettings().with_preset("발라드"))
+    c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
+    assert fake.effects.bands == PRESETS["발라드"] and c.applied_preset == "발라드"
+
+def test_set_effects_saves_user_settings_not_applied(tmp_path):
+    c, fake, store = genre_ctl({"01 a.mp3": "Rock"})
+    c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
+    assert c.effects.bands == PRESETS["발라드"] and c.effects.auto
+    assert fake.effects.bands == PRESETS["록"]

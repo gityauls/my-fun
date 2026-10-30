@@ -14,6 +14,7 @@ class FakePlayer:
         self.seeks: list[float] = []
         self.gain = 1.0
         self.effects = None
+        self.sent_effects: list = []
         self.closed = False
         self.state = State.STOPPED
         self.position = 0.0
@@ -85,6 +86,7 @@ class FakePlayer:
 
     def set_effects(self, fx) -> None:
         self.effects = fx
+        self.sent_effects.append(fx)
 
     def close(self) -> None:
         self.closed = True
