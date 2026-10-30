@@ -852,8 +852,18 @@ def test_save_paused_stays_paused(tmp_path):
     fake.position = 10.0; fake.pause()
     fake.calls.clear()
     c.save_tags(a, {"title": "x"})
-    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 10.0)]
-    assert fake.state is State.STOPPED or ("play",) not in fake.calls
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 10.0), ("play",), ("pause",)]
+    assert fake.state is State.PAUSED and fake.position == 10.0 and c.can_seek
+    fake.calls.clear()
+    c.toggle()
+    assert fake.state is State.PLAYING and fake.position == 10.0
+    assert fake.calls == [("play",)]
+
+def test_save_reload_failure_marks_failed(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path, names=("bad.mp3", "bad2.mp3"))
+    fake.has_track = True; fake.state = State.PLAYING; fake.position = 3.0
+    c.save_tags(a, {"title": "x"})
+    assert c.playlist.tracks[0].failed and c.status_error and not c._cued
 
 def test_save_other_file_no_reload(tmp_path):
     c, fake, a, b = tag_ctl(tmp_path)

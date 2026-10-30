@@ -154,12 +154,19 @@ class PlayerController:
         try:
             self._player.load(path)
         except DecodeError:
+            i = self.playlist.index
+            if i is not None:
+                self.playlist.mark_failed(i)
+            self._cued = False
             self._error(FAIL_MSG.format(name=os.path.basename(path)))
             return
         if position > 0 and (state is not State.STOPPED or cued):
             self._player.seek(position)
         if state is State.PLAYING:
             self._player.play()
+        elif state is State.PAUSED:
+            self._player.play()   # load()는 멈춤 상태로 올리니, 재생했다가 바로 일시정지로 되돌린다
+            self._player.pause()
 
     def info_for(self, index: int) -> taginfo.TrackInfo:
         path = self.playlist.tracks[index].path
