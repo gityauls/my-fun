@@ -47,6 +47,25 @@ def test_gain_scales_output(rig, tone_wav):
     p, sinks, *_ = rig; p.load(tone_wav); p.set_gain(0.25); p.play(); fill(p)
     assert np.allclose(sinks[0].pull(2048), ref * 0.25, atol=1e-6)
 
+def test_latest_block_after_output(rig, tone_wav):
+    p, sinks, *_ = rig
+    assert p.latest_block() is None
+    p.load(tone_wav); p.set_gain(0.5); p.play(); fill(p)
+    assert p.latest_block() is None
+    for n in (2048, 512, 4096, 1024):
+        out = sinks[0].pull(n)
+        got = p.latest_block()
+        assert got.shape == out.shape and np.array_equal(got, out)
+    got = p.latest_block()
+    got[:] = 0  # 복사본이라 안쪽을 건드리지 않는다
+    assert np.array_equal(p.latest_block(), out)
+
+def test_latest_block_includes_effects(rig, tone_wav):
+    p, sinks, *_ = rig; p.load(tone_wav); p.play(); fill(p)
+    p.set_effects(FxSettings().with_enabled(True).with_preset("록"))
+    out = sinks[0].pull(2048)
+    assert np.array_equal(p.latest_block(), out)
+
 def test_player_effects_toggle(rig, tone_wav):
     n = 2048
     ref = read_frames(open_decoder(tone_wav), 5 * n) * 0.25

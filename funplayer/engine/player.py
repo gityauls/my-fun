@@ -34,6 +34,7 @@ class AudioPlayer:
 
     - `_lock`(RLock): 디코더, 상태, 출력, 끝·끊김 표시. 순서는 항상 `_lock` → `_buf_lock`.
     - `_buf_lock`: 버퍼, 기준점, 센 프레임, gain. 출력 콜백은 이것만 잡는다.
+    - `_tap_lock`: 마지막 출력 블록(스펙트럼용). 콜백이 끝에 잠깐 잡고, 다른 잠금과 함께 쥐지 않는다.
     - `on_end`/`on_error`/`on_lost`는 모든 잠금을 놓은 뒤에 부른다.
     - 라이브 디코더의 read()(네트워크, 최대 15초 막힘)는 `_lock` 밖에서 부른다.
       읽는 동안 그 디코더는 `_reading`에 있고, 그새 빠진 디코더는 읽기가 끝난 뒤
@@ -82,6 +83,10 @@ class AudioPlayer:
         self._base = 0.0
         self._played = 0
         self._gain = 1.0
+
+        self._tap_lock = threading.Lock()  # 마지막 출력 블록. 다른 잠금을 쥔 채 잡지 않는다
+        self._tap: np.ndarray | None = None
+        self._tap_n = 0
 
         self._quit = threading.Event()
         self._thread: threading.Thread | None = None
@@ -134,6 +139,13 @@ class AudioPlayer:
             if not self._live or self._decoder is None:
                 return ""
             return getattr(self._decoder, "title", "") or ""
+
+    def latest_block(self) -> np.ndarray | None:
+        """마지막으로 장치에 내보낸 블록(음량·효과 적용 뒤)의 복사본. 아직 없으면 None."""
+        with self._tap_lock:
+            if self._tap is None or self._tap_n == 0:
+                return None
+            return self._tap[:self._tap_n].copy()
 
     # ---- 조작 ----
 
@@ -483,6 +495,11 @@ class AudioPlayer:
             outdata[:] = self._fx.process(outdata)
         else:
             self._fx.remember(outdata)  # 효과를 켤 때 새 그래프를 길들일 앞 블록
+        with self._tap_lock:  # 스펙트럼용: 마지막으로 내보낸 블록 (다른 잠금과 함께 쥐지 않는다)
+            if self._tap is None or len(self._tap) < wanted or self._tap.shape[1:] != outdata.shape[1:]:
+                self._tap = np.empty_like(outdata)
+            self._tap[:wanted] = outdata
+            self._tap_n = wanted
 
 
 def _close_quietly(decoder) -> None:
