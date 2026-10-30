@@ -1,6 +1,7 @@
 """MusicBrainz / Cover Art Archive client (Qt-free, stdlib only)."""
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import time
@@ -96,7 +97,7 @@ class Client:
             return self._fetch(url, headers)
         except urllib.error.HTTPError as e:
             raise MusicBrainzError(MSG_BUSY if e.code == 503 else MSG_NETWORK) from e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
             raise MusicBrainzError(MSG_NETWORK) from e
 
     def search(self, title: str, artist: str, limit: int = 10) -> list[Candidate]:
@@ -112,6 +113,8 @@ class Client:
             data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as e:
             raise MusicBrainzError(MSG_NETWORK) from e
+        if not isinstance(data, dict):
+            raise MusicBrainzError(MSG_NETWORK)
         out: list[Candidate] = []
         for rec in data.get("recordings") or []:
             base = (rec.get("title") or "", _artist(rec))

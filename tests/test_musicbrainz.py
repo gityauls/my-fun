@@ -154,3 +154,15 @@ def test_label_skips_empty():
 
 def test_default_client_shared():
     assert mb.default_client() is mb.default_client()
+
+
+def test_odd_responses_become_network_error():
+    import http.client
+
+    def incomplete(url, headers):
+        raise http.client.IncompleteRead(b"")
+
+    with pytest.raises(mb.MusicBrainzError, match=mb.MSG_NETWORK):
+        mb.Client(fetch=incomplete, sleep=lambda s: None).search("a", "b")
+    with pytest.raises(mb.MusicBrainzError, match=mb.MSG_NETWORK):
+        mb.Client(fetch=lambda u, h: b"[]", sleep=lambda s: None).search("a", "b")
