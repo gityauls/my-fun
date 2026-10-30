@@ -54,3 +54,10 @@ def test_small_edges():
     assert fx.with_level("depth", -5).depth == 0
     nan = FxSettings.from_dict({"bands": [float("nan")] * 10, "width": float("inf")})
     assert nan.bands == (0,) * 10 and nan.width == 100
+
+
+def test_from_dict_unhashable_and_huge_values_do_not_crash():
+    fx = FxSettings.from_dict({"preset": [], "mode": {}, "bands": [10 ** 400] * 10, "width": 10 ** 400,
+                               "depth": -(10 ** 400), "custom": [10 ** 400] * 10})
+    assert fx.preset == "기본" and fx.mode == "off" and fx.bands == (12,) * 10
+    assert (fx.width, fx.depth) == (100, 0) and fx.custom == (12,) * 10

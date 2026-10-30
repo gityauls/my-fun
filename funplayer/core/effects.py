@@ -37,22 +37,31 @@ def _is_number(value) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float))
 
 
+def _is_finite(value) -> bool:
+    # 아주 큰 int는 math.isfinite가 OverflowError를 내서 int는 따로 본다
+    return isinstance(value, int) or math.isfinite(value)
+
+
 def _read_bands(value) -> tuple[int, ...]:
     # 숫자 10개짜리 목록만 쓰고, 아니면 전부 0
     if not isinstance(value, (list, tuple)) or len(value) != len(BANDS_HZ):
         return _ZEROS
-    if not all(_is_number(v) and math.isfinite(v) for v in value):
+    if not all(_is_number(v) and _is_finite(v) for v in value):
         return _ZEROS
     return tuple(_clamp(v, -BAND_MAX, BAND_MAX) for v in value)
 
 
 def _read_level(d: dict, key: str) -> int:
     value = d.get(key)
-    if not _is_number(value) or math.isnan(value):
+    if not _is_number(value) or (isinstance(value, float) and math.isnan(value)):
         return _DEFAULT_LEVELS[key]
-    if math.isinf(value):
+    if not _is_finite(value):
         return 100 if value > 0 else 0
     return _clamp(value, 0, 100)
+
+
+def _is_preset_name(value) -> bool:
+    return isinstance(value, str) and (value in PRESETS or value == CUSTOM)
 
 
 @dataclass(frozen=True)
@@ -116,8 +125,8 @@ class FxSettings:
         preset = d.get("preset")
         mode = d.get("mode")
         return cls(enabled=enabled if isinstance(enabled, bool) else False,
-                   preset=preset if preset in PRESETS or preset == CUSTOM else "기본",
+                   preset=preset if _is_preset_name(preset) else "기본",
                    bands=_read_bands(d.get("bands")),
-                   mode=mode if mode in MODES else "off",
+                   mode=mode if isinstance(mode, str) and mode in MODES else "off",
                    width=_read_level(d, "width"), depth=_read_level(d, "depth"),
                    bass=_read_level(d, "bass"), custom=_read_bands(d.get("custom")))
