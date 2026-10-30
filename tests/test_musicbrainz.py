@@ -166,3 +166,24 @@ def test_odd_responses_become_network_error():
         mb.Client(fetch=incomplete, sleep=lambda s: None).search("a", "b")
     with pytest.raises(mb.MusicBrainzError, match=mb.MSG_NETWORK):
         mb.Client(fetch=lambda u, h: b"[]", sleep=lambda s: None).search("a", "b")
+
+
+def test_busy_retries_then_succeeds():
+    tries = []
+
+    def flaky(url, headers):
+        tries.append(url)
+        if len(tries) < 3:
+            raise urllib.error.HTTPError(url, 503, "busy", {}, None)
+        return json.dumps(FIXTURE).encode()
+
+    c, ft = make_client(flaky)
+    assert c.search("a", "")
+    assert len(tries) == 3
+    assert 2.0 in ft.sleeps and 4.0 in ft.sleeps
+
+
+def test_track_uses_position_over_display_number():
+    assert mb._track({"media": [{"track": [{"number": "1-9", "position": 9}]}]}) == "9"
+    assert mb._track({"media": [{"track": [{"number": "1-9"}]}]}) == "9"
+    assert mb._track({"media": [{"track": [{"number": "A1"}]}]}) == ""

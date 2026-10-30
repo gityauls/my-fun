@@ -14,6 +14,7 @@ from typing import Callable
 USER_AGENT = "my-fun/0.5 ( personal music player )"
 TIMEOUT = 10
 MIN_SPACING = 1.0
+BUSY_RETRY_WAITS = (2.0, 4.0)
 SEARCH_URL = "https://musicbrainz.org/ws/2/recording"
 COVER_URL = "https://coverartarchive.org/release/{}/front-500"
 
@@ -66,8 +67,14 @@ def _genre(rec: dict) -> str:
 def _track(rel: dict) -> str:
     for m in rel.get("media") or []:
         for t in m.get("track") or []:
-            if t.get("number"):
-                return str(t["number"])
+            # number는 "1-9", "A1" 같은 표시 글자일 수 있어 디스크 안 순번(position)을 먼저 쓴다
+            if isinstance(t.get("position"), int) and t["position"] > 0:
+                return str(t["position"])
+            number = str(t.get("number") or "")
+            if number.isdigit():
+                return number
+            tail = number.rsplit("-", 1)[-1]
+            return tail if tail.isdigit() else ""
     return ""
 
 
@@ -107,8 +114,17 @@ class Client:
         url = (
             f"{SEARCH_URL}?query={urllib.parse.quote(query)}&fmt=json&limit={limit}"
         )
-        self._wait()
-        raw = self._get(url, {"User-Agent": USER_AGENT, "Accept": "application/json"})
+        headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+        for attempt in range(len(BUSY_RETRY_WAITS) + 1):
+            self._wait()
+            try:
+                raw = self._get(url, headers)
+                break
+            except MusicBrainzError as e:
+                # 503은 잠깐 몰린 것: 조금 기다렸다 다시 묻는다(MusicBrainz 권장)
+                if str(e) != MSG_BUSY or attempt == len(BUSY_RETRY_WAITS):
+                    raise
+                self._sleep(BUSY_RETRY_WAITS[attempt])
         try:
             data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as e:
