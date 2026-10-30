@@ -20,6 +20,7 @@ from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
+from funplayer.ui.fx_strip import FxStrip
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
@@ -50,7 +51,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Delete", "remove_selected"), ("Return", "play_selected"), ("Enter", "play_selected"),
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
     ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"), ("Ctrl+Tab", "next_tab"),
-    ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"),
+    ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"), ("Ctrl+E", "toggle_fx_visible"),
 ]
 
 # 작게 볼 때 숨기는 위젯 (이름). 탭·라디오에 따라 바뀌는 위젯은 _apply_visibility가 맡는다
@@ -230,6 +231,16 @@ class PlayerPanel(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         root.addWidget(line)
 
+        # 음향 효과 칸: 조작 줄과 탭 사이 (보이기는 [보기] 메뉴·Ctrl+E, 작게 볼 때는 숨김)
+        self.fx_strip = FxStrip()
+        self.fx_strip.set_value(self.controller.effects)
+        self.fx_strip.set_open(self._settings.fx_open)
+        root.addWidget(self.fx_strip)
+        fx_line = self.fx_separator = QFrame()
+        fx_line.setFrameShape(QFrame.HLine)
+        fx_line.setFrameShadow(QFrame.Sunken)
+        root.addWidget(fx_line)
+
         self.tab_bar = QTabBar()
         for title in TAB_TITLES:
             self.tab_bar.addTab(title)
@@ -300,6 +311,8 @@ class PlayerPanel(QWidget):
                   self.view_button):
             self._fit_min_width(b)
         self.tab_bar.currentChanged.connect(self._tab_changed)
+        self.fx_strip.changed.connect(self._fx_changed)
+        self.fx_strip.open_changed.connect(self._fx_open_changed)
         sv = self.station_view
         sv.station_activated.connect(self._play_station)
         sv.changed.connect(self._stations_changed)
@@ -393,6 +406,9 @@ class PlayerPanel(QWidget):
         mini = self._add_action(menu, "mini", "작게 보기\tCtrl+M", self.toggle_mini)
         mini.setCheckable(True)
         mini.setChecked(self._settings.mini)
+        fx = self._add_action(menu, "fx_visible", "음향 효과 칸 보이기\tCtrl+E", self.toggle_fx_visible)
+        fx.setCheckable(True)
+        fx.setChecked(self._settings.fx_visible)
         menu.addSeparator()
         on_top = self._add_action(menu, "mini_on_top", "작게 볼 때 항상 위", self._mini_on_top_clicked)
         on_top.setCheckable(True)
@@ -402,6 +418,17 @@ class PlayerPanel(QWidget):
         keys.setChecked(self._settings.media_keys)
         menu.aboutToShow.connect(self._update_actions)
         self.view_button.setMenu(menu)
+
+    def toggle_fx_visible(self) -> None:
+        self._settings.fx_visible = not self._settings.fx_visible
+        self.actions["fx_visible"].setChecked(self._settings.fx_visible)
+        self._apply_visibility()
+
+    def _fx_changed(self, fx, final: bool) -> None:
+        self.controller.set_effects(fx, save=bool(final))
+
+    def _fx_open_changed(self, on: bool) -> None:
+        self._settings.fx_open = bool(on)
 
     def _media_keys_clicked(self) -> None:
         self.set_media_keys(self.actions["media_keys"].isChecked())
@@ -482,6 +509,7 @@ class PlayerPanel(QWidget):
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
         self.actions["mini"].setChecked(self.is_mini)
+        self.actions["fx_visible"].setChecked(self._settings.fx_visible)
         self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
         self.actions["media_keys"].setChecked(self._settings.media_keys)
         on_station = self.controller.source == "radio" and self.radio.current is not None
@@ -529,6 +557,9 @@ class PlayerPanel(QWidget):
         radio_tab = self._tab == "radio"
         on_radio = self.controller.source == "radio"
         self.tab_bar.setVisible(not mini)
+        fx_on = self._settings.fx_visible and not mini
+        self.fx_strip.setVisible(fx_on)
+        self.fx_separator.setVisible(fx_on)
         self.playlist_view.setVisible(not mini and not radio_tab)
         self.station_view.setVisible(not mini and radio_tab)
         for b in (self.open_button, self.add_button, self.list_button):

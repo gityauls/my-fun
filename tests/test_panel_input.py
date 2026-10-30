@@ -56,7 +56,8 @@ def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
                                 "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M", "Ctrl+Tab",
-                                "Ctrl+Left", "Ctrl+Right"}
+                                "Ctrl+Left", "Ctrl+Right", "Ctrl+E"}
+    assert dict(SHORTCUTS)["Ctrl+E"] == "toggle_fx_visible"
     assert dict(SHORTCUTS)["Ctrl+Left"] == "prev" and dict(SHORTCUTS)["Ctrl+Right"] == "next"
     assert dict(SHORTCUTS)["Space"] == "toggle"
     assert all(sc.context() == Qt.WidgetWithChildrenShortcut for sc in p.shortcuts.values())
@@ -306,7 +307,8 @@ def test_mini_toggles_by_key_button_and_title_double_click(rig):
 def test_view_menu_mini_items(rig):
     p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)
     assert [a.text() for a in p.view_menu.actions()] == [
-        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "", "작게 볼 때 항상 위", "멀티미디어 키 사용"]
+        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "음향 효과 칸 보이기\tCtrl+E", "",
+        "작게 볼 때 항상 위", "멀티미디어 키 사용"]
     p.view_menu.aboutToShow.emit()
     assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()
     p.actions["mini"].trigger(); assert p.is_mini

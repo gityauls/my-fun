@@ -8,6 +8,11 @@
 - 기능 메뉴판: `docs/alsong_features.md` (매뉴얼 쪽별 요약: `docs/alsong_manual.md`)
 - 단계 설계: `docs/stageN_design.md`, 구현 계획: `docs/superpowers/plans/`
 
+## 파일 (4단계 음향 효과)
+- `funplayer/core/effects.py`: 음향 효과 값(프리셋·밴드·모드) — 화면·소리 없음
+- `funplayer/engine/fx.py`: 효과 필터 체인 처리
+- `funplayer/ui/fx_strip.py`: 음향 효과 칸 (PlayerPanel 조작 줄 아래)
+
 ## 원칙
 - 알송의 코드, 아이콘, 이미지, 문구, 이름을 쓰지 않는다. 기능 아이디어만 참고한다.
 - REA 분석은 구현이 막혔을 때만 한다. 가져오는 것은 동작 원리뿐이다.
