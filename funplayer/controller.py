@@ -4,6 +4,7 @@ import logging
 import os
 
 from funplayer.core import taginfo
+from funplayer.core.effects import FxSettings
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
 from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
@@ -49,6 +50,16 @@ class PlayerController:
         self.status = ""
         self.status_error = False
         self._apply_gain()
+        self._player.set_effects(self.effects)
+
+    @property
+    def effects(self) -> FxSettings:
+        return FxSettings.from_dict(self._settings.fx)
+
+    def set_effects(self, fx: FxSettings, save: bool = True) -> None:
+        self._player.set_effects(fx)
+        if save:
+            self._settings.fx = fx.to_dict()
 
     @property
     def state(self) -> State:

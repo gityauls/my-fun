@@ -2,6 +2,7 @@ import time
 import numpy as np
 import pytest
 from conftest import read_frames
+from funplayer.core.effects import FxSettings
 from funplayer.engine.decoder import DecodeError, open_decoder
 from funplayer.engine.player import DEVICE_ERROR_MSG, AudioPlayer, State
 from funplayer.engine.sink import FakeSink
@@ -45,6 +46,36 @@ def test_gain_scales_output(rig, tone_wav):
     ref = read_frames(open_decoder(tone_wav), 2048)
     p, sinks, *_ = rig; p.load(tone_wav); p.set_gain(0.25); p.play(); fill(p)
     assert np.allclose(sinks[0].pull(2048), ref * 0.25, atol=1e-6)
+
+def test_player_effects_toggle(rig, tone_wav):
+    n = 2048
+    ref = read_frames(open_decoder(tone_wav), 5 * n) * 0.25
+    p, sinks, *_ = rig; p.load(tone_wav); p.set_gain(0.25); p.play(); fill(p)
+    blocks = [sinks[0].pull(n)]
+    assert np.allclose(blocks[0], ref[:n], atol=1e-6)
+    p.set_effects(FxSettings().with_enabled(True).with_preset("록"))
+    blocks += [sinks[0].pull(n), sinks[0].pull(n)]
+    assert not np.allclose(blocks[1], ref[n:2 * n], atol=1e-4)
+    p.set_effects(FxSettings())
+    blocks += [sinks[0].pull(n), sinks[0].pull(n)]
+    assert np.allclose(blocks[4], ref[4 * n:5 * n], atol=1e-6)
+
+def test_callback_uses_injected_processor_only_when_active(tone_wav):
+    class Fake:
+        def __init__(self): self.active = False; self.updates = []; self.calls = 0
+        def update(self, fx): self.updates.append(fx)
+        def process(self, block): self.calls += 1; return block * 0.0
+    fake, sinks = Fake(), []
+    def factory(cb):
+        sinks.append(FakeSink(cb)); return sinks[-1]
+    p = AudioPlayer(sink_factory=factory, threaded=False, fx_processor=fake)
+    p.load(tone_wav); p.play(); fill(p)
+    assert sinks[0].pull(256).any() and fake.calls == 0
+    fx = FxSettings().with_enabled(True)
+    p.set_effects(fx); fake.active = True
+    assert fake.updates == [fx]
+    assert not sinks[0].pull(256).any() and fake.calls == 1
+    p.close()
 
 def test_zero_gain_is_silent(rig, tone_wav):
     p, sinks, *_ = rig; p.load(tone_wav); p.set_gain(0.0); p.play(); fill(p)

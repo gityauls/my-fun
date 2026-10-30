@@ -13,6 +13,7 @@ class FakePlayer:
         self.loaded: list[str] = []
         self.seeks: list[float] = []
         self.gain = 1.0
+        self.effects = None
         self.closed = False
         self.state = State.STOPPED
         self.position = 0.0
@@ -81,6 +82,9 @@ class FakePlayer:
 
     def set_gain(self, g: float) -> None:
         self.gain = g
+
+    def set_effects(self, fx) -> None:
+        self.effects = fx
 
     def close(self) -> None:
         self.closed = True

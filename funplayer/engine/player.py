@@ -10,7 +10,9 @@ from typing import Callable
 
 import numpy as np
 
+from funplayer.core.effects import FxSettings
 from funplayer.engine.decoder import SAMPLE_RATE, open_decoder
+from funplayer.engine.fx import FxProcessor
 from funplayer.engine.sink import SinkError, SoundDeviceSink
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,9 @@ class AudioPlayer:
         buffer_seconds: float = 2.0,
         live_buffer_seconds: float = 8.0,
         clock: Callable[[], float] = time.monotonic,
+        fx_processor: FxProcessor | None = None,
     ) -> None:
+        self._fx = fx_processor if fx_processor is not None else FxProcessor()
         self.on_end: Callable[[], None] | None = None
         self.on_error: Callable[[str], None] | None = None
         self.on_lost: Callable[[], None] | None = None
@@ -231,6 +235,9 @@ class AudioPlayer:
     def set_gain(self, g: float) -> None:
         with self._buf_lock:
             self._gain = float(g)
+
+    def set_effects(self, fx: FxSettings) -> None:
+        self._fx.update(fx)  # UI 스레드에서 불러도 된다
 
     def pump(self) -> bool:
         with self._lock:
@@ -472,6 +479,8 @@ class AudioPlayer:
             outdata *= self._gain
             self._buffered -= filled
             self._played += filled
+        if self._fx.active:
+            outdata[:] = self._fx.process(outdata)
 
 
 def _close_quietly(decoder) -> None:

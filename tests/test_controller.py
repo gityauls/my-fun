@@ -3,6 +3,7 @@ import random
 import pytest
 from fakes import FakePlayer, make_songs
 from funplayer.controller import EMPTY_TITLE, NO_FILES_MSG, PlayerController
+from funplayer.core.effects import FxSettings
 from funplayer.core.settings import Settings
 from funplayer.engine.player import State
 
@@ -108,6 +109,23 @@ def test_initial_gain_from_settings():
     fake = FakePlayer()
     PlayerController(fake, Settings({"player_volume": 50, "player_muted": True}, lambda: None))
     assert fake.gain == 0.0
+
+def test_controller_applies_saved_effects_on_start():
+    fx = FxSettings().with_enabled(True).with_preset("팝")
+    fake = FakePlayer()
+    c = PlayerController(fake, Settings({"player_fx": fx.to_dict()}, lambda: None))
+    assert fake.effects.preset == "팝" and fake.effects.enabled and c.effects == fx
+
+def test_set_effects_save_flag():
+    saved = []
+    fake = FakePlayer(); store = {}
+    c = PlayerController(fake, Settings(store, lambda: saved.append(1)))
+    assert fake.effects == FxSettings() and "player_fx" not in store
+    fx = FxSettings().with_enabled(True).with_preset("록")
+    c.set_effects(fx, save=False)
+    assert fake.effects == fx and "player_fx" not in store and not saved
+    c.set_effects(fx)
+    assert store["player_fx"] == fx.to_dict() and saved and c.effects == fx
 
 def test_clear(ctl, tmp_path):
     c, fake, _ = ctl; c.open([str(make_songs(tmp_path, ABC))]); c.clear()
