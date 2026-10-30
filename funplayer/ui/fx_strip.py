@@ -93,6 +93,7 @@ class FxStrip(QWidget):
         for i, name in enumerate(BAND_LABELS):
             slider = QSlider(Qt.Vertical)
             slider.setRange(-12, 12)
+            slider.setPageStep(3)   # PageUp/PageDown은 3 dB씩 (기본 10은 너무 크다)
             slider.setFixedHeight(80)
             slider.setTickPosition(QSlider.NoTicks)
             slider.valueChanged.connect(lambda v, i=i: self._band_changed(i, v))

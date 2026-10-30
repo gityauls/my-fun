@@ -5,7 +5,7 @@ import time
 from PyQt5.QtWidgets import QApplication
 
 from funplayer.core.effects import CUSTOM, PRESETS, FxSettings
-from funplayer.ui.fx_strip import FxStrip
+from funplayer.ui.fx_strip import THROTTLE_MS, FxStrip
 
 
 def make(qapp):
@@ -20,6 +20,7 @@ def test_widgets_exist(qapp):
     strip, _ = make(qapp)
     assert len(strip.band_sliders) == 10
     assert all(s.minimum() == -12 and s.maximum() == 12 for s in strip.band_sliders)
+    assert all(s.pageStep() == 3 for s in strip.band_sliders)   # PageUp/Down은 3 dB씩
     assert strip.preset_combo.count() == 11
     assert strip.preset_combo.itemText(10) == CUSTOM
     assert strip.enabled_box.text() == "켜기"
@@ -45,18 +46,34 @@ def test_slider_makes_custom(qapp):
     assert emitted[-1][0].bands[0] == 5
 
 
+def test_custom_choice_restores_remembered_bands(qapp):
+    strip, emitted = make(qapp)
+    strip.band_sliders[1].setValue(7)
+    strip.band_sliders[4].setValue(-3)
+    mine = [s.value() for s in strip.band_sliders]
+    strip.preset_combo.setCurrentText("록")
+    assert [s.value() for s in strip.band_sliders] == list(PRESETS["록"])
+    emitted.clear()
+    strip.preset_combo.setCurrentText(CUSTOM)
+    assert [s.value() for s in strip.band_sliders] == mine
+    assert len(emitted) == 1 and emitted[0][1] is True
+    assert list(emitted[0][0].bands) == mine and emitted[0][0].preset == CUSTOM
+
+
 def test_drag_throttled_and_final_on_release(qapp):
+    # 벽시계 창에 기대지 않는다: 이벤트 루프를 돌리기 전에는 타이머가 울 수 없고,
+    # 울린 뒤에는 몇 번 보냈는지와 값만 본다 (느린 기계에서도 같다)
     strip, emitted = make(qapp)
     s = strip.band_sliders[0]
     s.setSliderDown(True)
     for v in range(1, 11):
         s.setValue(v)
-    QApplication.processEvents()
-    assert sum(1 for _, final in emitted if not final) == 0   # 아직 50 ms 전
-    deadline = time.monotonic() + 0.3
+    assert emitted == [] and strip._timer.isActive() and strip._timer.interval() == THROTTLE_MS
+    deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline and not emitted:
         QApplication.processEvents()
-    assert [final for _, final in emitted] == [False]
+        time.sleep(0.005)
+    assert [final for _, final in emitted] == [False]   # 열 번 움직여도 한 번만
     assert emitted[0][0].bands[0] == 10
     s.setSliderDown(False)
     assert emitted[-1][1] is True
