@@ -158,7 +158,7 @@ def test_fx_state_survives_restart(qapp):
     p, fake, _ = make_panel(store)
     try:
         assert p.fx_strip.isVisible() and not p.fx_strip.is_open
-        assert p.fx_strip.summary_label.text() == "켜짐 · 발라드"
+        assert "켜짐" in p.fx_strip.power_link.text() and "발라드" in p.fx_strip.preset_link.text()
         assert fake.effects.preset == "발라드"
         p.view_menu.aboutToShow.emit()
         assert p.actions["fx_visible"].isChecked()

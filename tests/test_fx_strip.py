@@ -4,8 +4,13 @@ import time
 
 from PyQt5.QtWidgets import QApplication
 
-from funplayer.core.effects import CUSTOM, PRESETS, FxSettings
+from PyQt5.QtCore import Qt
+from PyQt5.QtTest import QTest
+
+from funplayer.core.effects import AUTO, CUSTOM, PRESETS, FxSettings
+from funplayer.ui.colors import INFO_COLOR
 from funplayer.ui.fx_strip import THROTTLE_MS, FxStrip
+from funplayer.ui.spectrum_view import SpectrumView
 
 
 def make(qapp):
@@ -16,13 +21,21 @@ def make(qapp):
     return strip, emitted
 
 
+def _plain(label):
+    from PyQt5.QtGui import QTextDocument
+    doc = QTextDocument()
+    doc.setHtml(label.text())
+    return doc.toPlainText()
+
+
 def test_widgets_exist(qapp):
     strip, _ = make(qapp)
     assert len(strip.band_sliders) == 10
     assert all(s.minimum() == -12 and s.maximum() == 12 for s in strip.band_sliders)
     assert all(s.pageStep() == 3 for s in strip.band_sliders)   # PageUp/Down은 3 dB씩
-    assert strip.preset_combo.count() == 19
-    assert strip.preset_combo.itemText(18) == CUSTOM
+    assert strip.preset_combo.count() == 20
+    assert strip.preset_combo.itemText(0) == AUTO
+    assert strip.preset_combo.itemText(19) == CUSTOM
     assert strip.enabled_box.text() == "켜기"
     assert strip.reset_button.text() == "초기화"
     assert [strip.mode_buttons[m].text() for m in ("off", "speaker", "earphone")] == \
@@ -109,13 +122,14 @@ def test_fold_and_summary(qapp):
     assert not strip.is_open
     assert opened == [False]
     assert not strip.band_sliders[0].isVisibleTo(strip)
-    assert strip.summary_label.isVisibleTo(strip)
-    assert strip.summary_label.text() == strip.value.summary() == "켜짐 · 발라드 · 이어폰"
+    assert strip.summary_box.isVisibleTo(strip)
+    assert _plain(strip.power_link) == "켜짐" and _plain(strip.preset_link) == "발라드"
+    assert strip.mode_label.text() == "이어폰" and strip.mode_label.isVisibleTo(strip)
     assert strip.fold_button.toolTip() == "펼치기"
     strip.fold_button.click()
     assert strip.is_open and opened == [False, True]
     assert strip.band_sliders[0].isVisibleTo(strip)
-    assert not strip.summary_label.isVisibleTo(strip)
+    assert not strip.summary_box.isVisibleTo(strip)
 
 
 def test_set_open_does_not_emit(qapp):
@@ -136,7 +150,7 @@ def test_set_value_does_not_emit(qapp):
     assert strip.preset_combo.currentText() == "록"
     assert strip.mode_buttons["speaker"].isChecked()
     assert strip.level_sliders["width"].value() == 70
-    assert strip.summary_label.text() == fx.summary()
+    assert _plain(strip.preset_link) == "록" and strip.mode_label.text() == "스피커"
 
 
 def test_set_value_custom(qapp):
@@ -162,7 +176,7 @@ def test_checkbox_emits_final(qapp):
     strip, emitted = make(qapp)
     strip.enabled_box.click()
     assert emitted[-1][1] is True and emitted[-1][0].enabled
-    assert strip.summary_label.text() == "켜짐 · 기본"
+    assert _plain(strip.power_link) == "켜짐" and _plain(strip.preset_link) == "기본"
 
 
 def test_level_slider_emits(qapp):
@@ -186,3 +200,119 @@ def test_tooltips(qapp):
     assert strip.level_sliders["bass"].toolTip() == "베이스 30%"
     strip.level_sliders["width"].setValue(60)
     assert strip.level_sliders["width"].toolTip() == "넓이 60%"
+
+
+def test_combo_has_auto_first_and_shows_applied(qapp):
+    strip, emitted = make(qapp)
+    strip.set_value(FxSettings().with_preset(AUTO))
+    strip.set_genre_preset("록")
+    assert strip.preset_combo.currentIndex() == 0
+    assert strip.preset_combo.currentText() == "자동: 록"
+    assert [s.value() for s in strip.band_sliders] == list(PRESETS["록"])
+    assert emitted == []
+    strip.set_genre_preset(None)
+    assert strip.preset_combo.currentText() == "자동: 기본"
+    strip.set_value(FxSettings().with_preset("발라드"))
+    assert strip.preset_combo.itemText(0) == AUTO and strip.preset_combo.currentText() == "발라드"
+
+
+def test_picking_auto_item_turns_auto_on(qapp):
+    strip, emitted = make(qapp)
+    strip.set_genre_preset("재즈")
+    strip.preset_combo.setCurrentIndex(0)
+    assert emitted[-1][1] is True and emitted[-1][0].auto
+    assert strip.preset_combo.currentText() == "자동: 재즈"
+
+
+def test_slider_while_auto_becomes_custom(qapp):
+    strip, emitted = make(qapp)
+    strip.set_value(FxSettings().with_preset(AUTO))
+    strip.set_genre_preset("록")
+    strip.band_sliders[0].setValue(PRESETS["록"][0] + 1)
+    fx = emitted[-1][0]
+    assert not fx.auto and fx.preset == CUSTOM
+    assert fx.bands[0] == PRESETS["록"][0] + 1 and fx.bands[1:] == PRESETS["록"][1:]
+    assert strip.preset_combo.currentText() == CUSTOM
+
+
+def test_reset_turns_auto_off(qapp):
+    strip, emitted = make(qapp)
+    strip.set_value(FxSettings().with_preset(AUTO))
+    strip.reset_button.click()
+    assert not emitted[-1][0].auto and strip.preset_combo.currentText() == "기본"
+
+
+def test_collapsed_power_click_toggles(qapp):
+    strip, emitted = make(qapp)
+    strip.show()
+    strip.set_open(False)
+    assert strip.power_link.toolTip() == "눌러서 켜기"
+    strip.power_link.linkActivated.emit("#")
+    assert emitted[-1][1] is True and emitted[-1][0].enabled
+    assert strip.enabled_box.isChecked() and strip.power_link.toolTip() == "눌러서 끄기"
+    strip.power_link.linkActivated.emit("#")
+    assert not emitted[-1][0].enabled and strip.power_link.toolTip() == "눌러서 켜기"
+    assert strip.power_link.cursor().shape() == Qt.PointingHandCursor
+    assert "text-decoration:underline" in strip.power_link.text()
+
+
+def test_collapsed_preset_click_cycles(qapp):
+    strip, emitted = make(qapp)
+    strip.set_open(False)
+    assert strip.preset_link.toolTip() == "눌러서 다음 프리셋"
+    names = list(PRESETS)
+    strip.preset_link.linkActivated.emit("#")
+    assert emitted[-1][1] is True and emitted[-1][0].preset == names[1]   # 기본 -> 다음
+    assert _plain(strip.preset_link) == names[1]
+    strip.set_value(FxSettings())
+    strip.set_genre_preset("록")
+    strip.set_value(FxSettings().with_preset(AUTO))
+    assert _plain(strip.preset_link) == "자동: 록"
+    strip.preset_link.linkActivated.emit("#")
+    assert emitted[-1][0].preset == "기본" and not emitted[-1][0].auto
+
+
+def test_collapsed_shows_preset_when_off_and_hides_mode_off(qapp):
+    strip, _ = make(qapp)
+    strip.show()
+    strip.set_open(False)
+    strip.set_value(FxSettings().with_preset("발라드"))
+    assert _plain(strip.power_link) == "꺼짐" and _plain(strip.preset_link) == "발라드"
+    assert not strip.mode_label.isVisibleTo(strip) and not strip._mode_sep.isVisibleTo(strip)
+    strip.set_value(FxSettings().with_mode("speaker"))
+    assert strip.mode_label.isVisibleTo(strip) and strip._mode_sep.isVisibleTo(strip)
+
+
+def test_mode_label_not_clickable(qapp):
+    strip, emitted = make(qapp)
+    strip.show()
+    strip.set_open(False)
+    strip.set_value(FxSettings().with_mode("speaker"))
+    label = strip.mode_label
+    assert INFO_COLOR in label.styleSheet()
+    assert label.cursor().shape() != Qt.PointingHandCursor and "<a " not in label.text()
+    QTest.mouseClick(label, Qt.LeftButton)
+    assert emitted == [] and strip.value.mode == "speaker"
+
+
+def test_spectrum_views_placed(qapp):
+    strip, _ = make(qapp)
+    strip.show()
+    big, small = strip.big_spectrum, strip.small_spectrum
+    assert big.bars == 24 and big.height() == 38
+    assert small.bars == 12 and (small.width(), small.height()) == (72, 16)
+    body = strip.body.layout()
+    assert body.indexOf(big) == 0 and body.indexOf(big) < body.indexOf(body.itemAt(1).layout())
+    assert big.isVisibleTo(strip) and not small.isVisibleTo(strip)
+    strip.set_open(False)
+    assert small.isVisibleTo(strip) and not big.isVisibleTo(strip)
+
+
+def test_spectrum_view_paints(qapp):
+    view = SpectrumView(24)
+    view.resize(240, 38)
+    assert view.levels == [0.0] * 24
+    view.grab()
+    view.set_levels([0.5] * 24, [0.8] * 24)
+    assert view.levels == [0.5] * 24 and view.peaks == [0.8] * 24
+    assert not view.grab().isNull()

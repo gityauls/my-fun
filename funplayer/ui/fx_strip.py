@@ -5,15 +5,37 @@ from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QGridLayout,
                              QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider,
                              QStyle, QToolButton, QVBoxLayout, QWidget)
 
-from funplayer.core.effects import (BAND_LABELS, BANDS_HZ, CUSTOM, PRESETS,
-                                    FxSettings)
-from funplayer.ui.colors import INFO_COLOR
+from html import escape
+
+from funplayer.core.effects import (AUTO, BAND_LABELS, BANDS_HZ, CUSTOM, MODE_NAMES,
+                                    PRESETS, FxSettings)
+from funplayer.ui.colors import INFO_COLOR, LINK_COLOR
+from funplayer.ui.spectrum_view import SpectrumView
 
 THROTTLE_MS = 50
 MODE_TEXT = (("off", "끄기"), ("speaker", "스피커"), ("earphone", "이어폰"))
 LEVEL_TEXT = {"width": "넓이", "depth": "입체감", "bass": "베이스"}
 LEVEL_MODE = {"speaker": ("width",), "earphone": ("depth", "bass")}
 SMALL_STYLE = f"color: {INFO_COLOR}; font-size: 8pt;"
+
+
+def _link_label(tip: str) -> QLabel:
+    label = QLabel()
+    label.setTextFormat(Qt.RichText)
+    label.setToolTip(tip)
+    label.setCursor(Qt.PointingHandCursor)
+    return label
+
+
+def _set_link_text(label: QLabel, text: str) -> None:
+    label.setText(f'<a href="#" style="color:{LINK_COLOR}; text-decoration:underline;">'
+                  f'{escape(text)}</a>')
+
+
+def _gray_label(text: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(f"color: {INFO_COLOR};")
+    return label
 
 
 def _hz_text(hz: int) -> str:
@@ -30,6 +52,7 @@ class FxStrip(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._fx = FxSettings()
+        self._genre: str | None = None   # 자동일 때 곡/방송 장르로 고른 프리셋
         self._open = True
         self._pending: FxSettings | None = None   # 끄는 중 아직 못 보낸 최신값
         self._timer = QTimer(self)
@@ -56,20 +79,37 @@ class FxStrip(QWidget):
         self.title_label.setFont(font)
         self.enabled_box = QCheckBox("켜기")
         self.enabled_box.toggled.connect(self._enabled_toggled)
-        self.summary_label = QLabel()
-        self.summary_label.setStyleSheet(SMALL_STYLE)
+        # 접은 줄: 켜짐 · 프리셋 · 듣는 곳 (앞의 둘만 눌린다, 듣는 곳은 회색 글자)
+        self.summary_box = QWidget()
+        sbox = QHBoxLayout(self.summary_box)
+        sbox.setContentsMargins(0, 0, 0, 0)
+        sbox.setSpacing(4)
+        self.power_link = _link_label("")
+        self.power_link.linkActivated.connect(self._power_clicked)
+        self.preset_link = _link_label("눌러서 다음 프리셋")
+        self.preset_link.linkActivated.connect(self._preset_clicked)
+        self.mode_label = _gray_label()
+        self._mode_sep = _gray_label("·")
+        for w in (self.power_link, _gray_label("·"), self.preset_link, self._mode_sep,
+                  self.mode_label):
+            sbox.addWidget(w)
+        self.small_spectrum = SpectrumView(12)
+        self.small_spectrum.setFixedSize(72, 16)
+        self.big_spectrum = SpectrumView(24)
+        self.big_spectrum.setFixedHeight(38)
         self.preset_label = QLabel("프리셋")
         self.preset_combo = QComboBox()
         # 가장 긴 프리셋 이름만큼 넓어지지 않게 (창이 넓어지는 것을 막는다)
         self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.preset_combo.setMinimumContentsLength(6)
-        self.preset_combo.addItems(list(PRESETS) + [CUSTOM])
+        self.preset_combo.addItems([AUTO, *PRESETS, CUSTOM])
         self.preset_combo.currentIndexChanged.connect(self._preset_picked)
         head.addWidget(self.fold_button)
         head.addWidget(self.title_label)
         head.addWidget(self.enabled_box)
-        head.addWidget(self.summary_label)
+        head.addWidget(self.summary_box)
         head.addStretch(1)
+        head.addWidget(self.small_spectrum)
         head.addWidget(self.preset_label)
         head.addWidget(self.preset_combo)
         root.addLayout(head)
@@ -78,6 +118,7 @@ class FxStrip(QWidget):
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(4)
+        body.addWidget(self.big_spectrum)
 
         grid = QGridLayout()
         grid.setSpacing(2)
@@ -166,6 +207,19 @@ class FxStrip(QWidget):
         self._fx = fx
         self._refresh()
 
+    def set_genre_preset(self, name: str | None) -> None:
+        """자동일 때 쓸 장르 프리셋 이름(없으면 None). 신호 없이 화면만 맞춘다."""
+        name = name if name in PRESETS else None
+        if name == self._genre:
+            return
+        self._genre = name
+        if self._fx.auto:
+            self._refresh()
+
+    def _display_name(self) -> str:
+        name = self._fx.applied_name(self._genre)
+        return f"자동: {name}" if self._fx.auto else name
+
     def set_open(self, on: bool, notify: bool = False) -> None:
         on = bool(on)
         if on == self._open:
@@ -179,13 +233,14 @@ class FxStrip(QWidget):
 
     def _refresh(self) -> None:
         fx = self._fx
+        shown = fx.applied(self._genre)   # 자동이면 장르 프리셋의 값
         for w in (self.enabled_box, self.preset_combo, self._mode_group, *self.band_sliders,
                   *self.level_sliders.values()):
             w.blockSignals(True)
         try:
             self.enabled_box.setChecked(fx.enabled)
-            self.preset_combo.setCurrentText(fx.preset)
-            for slider, db in zip(self.band_sliders, fx.bands):
+            self._sync_combo()
+            for slider, db in zip(self.band_sliders, shown.bands):
                 slider.setValue(db)
             for key, slider in self.level_sliders.items():
                 slider.setValue(getattr(fx, key))
@@ -196,8 +251,28 @@ class FxStrip(QWidget):
                 w.blockSignals(False)
         self._refresh_tips()
         self._refresh_mode()
-        self.summary_label.setText(fx.summary())
+        self._refresh_summary()
         self._refresh_open()
+
+    def _sync_combo(self) -> None:
+        # 0번 칸은 자동일 때 '자동: 록'처럼 지금 적용된 이름으로 보인다
+        combo = self.preset_combo
+        blocked = combo.blockSignals(True)
+        try:
+            combo.setItemText(0, self._display_name() if self._fx.auto else AUTO)
+            combo.setCurrentIndex(0 if self._fx.auto else combo.findText(self._fx.preset))
+        finally:
+            combo.blockSignals(blocked)
+
+    def _refresh_summary(self) -> None:
+        fx = self._fx
+        _set_link_text(self.power_link, "켜짐" if fx.enabled else "꺼짐")
+        self.power_link.setToolTip("눌러서 끄기" if fx.enabled else "눌러서 켜기")
+        _set_link_text(self.preset_link, self._display_name())
+        mode = MODE_NAMES.get(fx.mode)
+        self.mode_label.setText(mode or "")
+        self.mode_label.setVisible(bool(mode) and not self._open)
+        self._mode_sep.setVisible(bool(mode) and not self._open)
 
     def _refresh_tips(self) -> None:
         for slider, hz in zip(self.band_sliders, BANDS_HZ):
@@ -219,7 +294,10 @@ class FxStrip(QWidget):
         self.enabled_box.setVisible(on)
         self.preset_label.setVisible(on)
         self.preset_combo.setVisible(on)
-        self.summary_label.setVisible(not on)
+        self.summary_box.setVisible(not on)
+        self.small_spectrum.setVisible(not on)
+        self.big_spectrum.setVisible(on)
+        self._refresh_summary()
         self.fold_button.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
         self.fold_button.setToolTip("접기" if on else "펼치기")
 
@@ -229,14 +307,29 @@ class FxStrip(QWidget):
         self._timer.stop()
         self._pending = None
         self._fx = fx
-        self.summary_label.setText(fx.summary())
+        self._refresh_summary()
         self.changed.emit(fx, True)
 
     def _enabled_toggled(self, on: bool) -> None:
         self._emit_final(self._fx.with_enabled(on))
 
-    def _preset_picked(self, _index: int) -> None:
-        fx = self._fx.with_preset(self.preset_combo.currentText())
+    def _power_clicked(self, _link: str = "") -> None:
+        fx = self._fx.with_enabled(not self._fx.enabled)
+        self.enabled_box.blockSignals(True)
+        self.enabled_box.setChecked(fx.enabled)
+        self.enabled_box.blockSignals(False)
+        self._emit_final(fx)
+
+    def _preset_clicked(self, _link: str = "") -> None:
+        fx = self._fx.next_choice()
+        self._fx = fx
+        self._refresh()
+        self._emit_final(fx)
+
+    def _preset_picked(self, index: int) -> None:
+        combo = self.preset_combo
+        name = AUTO if index == 0 else combo.itemText(index)
+        fx = self._fx.with_preset(name)
         self._fx = fx
         self._refresh()
         self._emit_final(fx)
@@ -254,10 +347,10 @@ class FxStrip(QWidget):
         self._emit_final(fx)
 
     def _band_changed(self, i: int, db: int) -> None:
-        fx = self._fx.with_band(i, db)
-        self.preset_combo.blockSignals(True)
-        self.preset_combo.setCurrentText(CUSTOM)
-        self.preset_combo.blockSignals(False)
+        # 자동 중이면 지금 보이는(장르 프리셋) 값에서 움직인 값이 사용자 설정이 된다
+        fx = self._fx.applied(self._genre).with_band(i, db)
+        self._fx = fx
+        self._sync_combo()
         self._after_slider(fx)
 
     def _level_changed(self, key: str, value: int) -> None:
@@ -280,7 +373,6 @@ class FxStrip(QWidget):
         # 끄는 중에는 50 ms마다 최신값 하나만 보낸다
         if self._pending is not None:
             fx, self._pending = self._pending, None
-            self.summary_label.setText(fx.summary())
             self.changed.emit(fx, False)
 
     def _released(self) -> None:
