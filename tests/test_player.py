@@ -60,6 +60,51 @@ def test_player_effects_toggle(rig, tone_wav):
     blocks += [sinks[0].pull(n), sinks[0].pull(n)]
     assert np.allclose(blocks[4], ref[4 * n:5 * n], atol=1e-6)
 
+class _LiveTone:
+    """라이브 디코더 흉내: 1 kHz 블록 몇 개를 주고 끝 (seek 없음)."""
+    duration = 0.0
+    live = True
+    title = ""
+
+    def __init__(self, n_blocks=8, n=2048):
+        t = np.arange(n * n_blocks) / 44100
+        wave = (0.3 * np.sin(2 * np.pi * 1000 * t)).astype(np.float32)
+        data = np.column_stack([wave, wave])
+        self._blocks = [np.ascontiguousarray(data[i * n:(i + 1) * n]) for i in range(n_blocks)]
+        self.closed = False
+
+    def read(self):
+        return self._blocks.pop(0) if self._blocks else None
+
+    def seek(self, sec):
+        raise AssertionError("live decoder must not be seeked")
+
+    def close(self):
+        self.closed = True
+
+
+def test_effects_survive_file_radio_file(rig, tone_wav):
+    # 곡 → 라디오 → 곡으로 바꿔도 켠 효과가 그대로 걸린다 (raw와 다르다)
+    n = 2048
+    p, sinks, *_ = rig
+    p.set_effects(FxSettings().with_enabled(True).with_preset("록"))
+    p.load(tone_wav); p.play(); fill(p)
+    ref = read_frames(open_decoder(tone_wav), 3 * n)
+    sinks[-1].pull(n); sinks[-1].pull(n)
+    out = sinks[-1].pull(n)
+    assert np.abs(out).max() > 0.05 and not np.allclose(out, ref[2 * n:3 * n], atol=1e-3)
+    live = _LiveTone()
+    raw_live = np.concatenate(list(live._blocks))
+    p.play_stream(live); fill(p)
+    sinks[-1].pull(n); sinks[-1].pull(n)
+    out = sinks[-1].pull(n)
+    assert np.abs(out).max() > 0.05 and not np.allclose(out, raw_live[2 * n:3 * n], atol=1e-3)
+    p.load(tone_wav); p.play(); fill(p)
+    sinks[-1].pull(n); sinks[-1].pull(n)
+    out = sinks[-1].pull(n)
+    assert np.abs(out).max() > 0.05 and not np.allclose(out, ref[2 * n:3 * n], atol=1e-3)
+
+
 def test_callback_uses_injected_processor_only_when_active(tone_wav):
     class Fake:
         def __init__(self): self.active = False; self.updates = []; self.calls = 0; self.seen = 0

@@ -1,5 +1,5 @@
 import pytest
-from fakes import FakePlayer, FakeRunner
+from fakes import FakePlayer, FakeRunner, FakeStream, make_songs
 from funplayer.core.effects import FxSettings
 from funplayer.core.settings import Settings
 from funplayer.ui.player_panel import PlayerPanel
@@ -72,6 +72,54 @@ def test_fx_open_state_saved(fpanel):
     p, _, store = fpanel
     p.fx_strip.set_open(False, notify=True)
     assert store["player_fx_open"] is False
+
+
+def test_effects_stay_across_song_radio_song(qapp, tmp_path):
+    p, fake, runner = make_panel()
+    try:
+        _song_radio_song(p, fake, runner, tmp_path)
+    finally:
+        p.shutdown(); p.deleteLater()
+
+
+def _song_radio_song(p, fake, runner, tmp_path):
+    calls = []
+    real = fake.set_effects
+    fake.set_effects = lambda fx: (calls.append(fx), real(fx))
+    fx = FxSettings.from_dict({"enabled": True, "preset": "록", "mode": "earphone"})
+    p.fx_strip.changed.emit(fx, True)
+    assert fake.effects == fx and calls == [fx]
+    p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))])
+    p.set_tab("radio"); p.station_view.station_activated.emit("kbs-25")
+    runner.finish(len(runner.calls) - 1, result=FakeStream()); p.refresh()
+    assert fake.is_live and fake.effects == fx
+    p.switch_button.click()   # MP3로
+    assert p.controller.source == "file" and fake.loaded[-1].endswith("01 a.mp3")
+    assert fake.effects == fx and calls == [fx]   # 다시 걸지도, 다른 값으로 바꾸지도 않는다
+
+
+def test_values_changed_while_off_apply_when_on(fpanel):
+    p, fake, _ = fpanel
+    p.toggle_fx_visible()
+    strip = p.fx_strip
+    strip.preset_combo.setCurrentText("록")
+    strip.mode_buttons["earphone"].click()
+    assert not fake.effects.enabled and fake.effects.preset == "록"
+    strip.enabled_box.click()
+    assert fake.effects.enabled and fake.effects.preset == "록" and fake.effects.mode == "earphone"
+    assert fake.effects.bands == strip.value.bands
+
+
+def test_hiding_or_folding_strip_keeps_effects_on(fpanel):
+    p, fake, _ = fpanel
+    p.toggle_fx_visible()
+    p.fx_strip.enabled_box.click()
+    on = fake.effects
+    assert on.enabled
+    p.fx_strip.fold_button.click()
+    assert not p.fx_strip.is_open and fake.effects == on
+    p.toggle_fx_visible()
+    assert not p.fx_strip.isVisible() and fake.effects == on and p.controller.effects == on
 
 
 def test_showing_strip_keeps_window_width(qapp):
