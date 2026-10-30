@@ -21,8 +21,8 @@ def test_widgets_exist(qapp):
     assert len(strip.band_sliders) == 10
     assert all(s.minimum() == -12 and s.maximum() == 12 for s in strip.band_sliders)
     assert all(s.pageStep() == 3 for s in strip.band_sliders)   # PageUp/Down은 3 dB씩
-    assert strip.preset_combo.count() == 11
-    assert strip.preset_combo.itemText(10) == CUSTOM
+    assert strip.preset_combo.count() == 19
+    assert strip.preset_combo.itemText(18) == CUSTOM
     assert strip.enabled_box.text() == "켜기"
     assert strip.reset_button.text() == "초기화"
     assert [strip.mode_buttons[m].text() for m in ("off", "speaker", "earphone")] == \

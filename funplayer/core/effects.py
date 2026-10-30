@@ -7,6 +7,7 @@ BANDS_HZ = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
 BAND_LABELS = ("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
 BAND_MAX = 12
 CUSTOM = "사용자 설정"
+AUTO = "자동 (장르 따라)"
 MODES = ("off", "speaker", "earphone")
 MODE_NAMES = {"speaker": "스피커", "earphone": "이어폰"}
 LEVELS = ("width", "depth", "bass")
@@ -23,6 +24,14 @@ PRESETS: dict[str, tuple[int, ...]] = {
     "보컬": (-2, -1, 0, 2, 4, 4, 3, 1, 0, -1),
     "베이스 강하게": (7, 6, 5, 3, 1, 0, 0, 0, 0, 0),
     "고음 강하게": (0, 0, 0, 0, 0, 1, 3, 5, 6, 7),
+    "알앤비": (5, 6, 3, 0, -1, 1, 2, 2, 3, 2),
+    "힙합": (6, 6, 3, 1, -1, -1, 1, 1, 2, 3),
+    "일렉트로닉": (5, 4, 1, 0, -2, 1, 0, 2, 4, 5),
+    "어쿠스틱": (2, 2, 1, 1, 2, 2, 3, 3, 2, 1),
+    "블루스": (2, 3, 2, 1, 0, 1, 2, 1, 0, 0),
+    "트로트": (1, 2, 2, 1, 2, 3, 3, 2, 1, 0),
+    "라운지": (2, 1, 1, 0, -1, -1, 0, 1, 1, 1),
+    "라이브": (-1, 1, 2, 3, 2, 2, 3, 3, 2, 1),
 }
 
 _ZEROS = (0,) * len(BANDS_HZ)
@@ -74,16 +83,42 @@ class FxSettings:
     depth: int = 40
     bass: int = 30
     custom: tuple[int, ...] = _ZEROS
+    auto: bool = False
 
     def with_enabled(self, on: bool) -> FxSettings:
         return replace(self, enabled=bool(on))
 
+    def with_auto(self, on: bool) -> FxSettings:
+        return replace(self, auto=bool(on))
+
     def with_preset(self, name: str) -> FxSettings:
+        if name == AUTO:
+            return replace(self, auto=True)
         if name == CUSTOM:
-            return replace(self, preset=CUSTOM, bands=self.custom)
+            return replace(self, preset=CUSTOM, bands=self.custom, auto=False)
         if name in PRESETS:
-            return replace(self, preset=name, bands=PRESETS[name])
+            return replace(self, preset=name, bands=PRESETS[name], auto=False)
         return self
+
+    def applied(self, genre_preset: str | None) -> FxSettings:
+        # 자동일 때 장르로 고른 프리셋의 값을 입힌 복사본. 아니면 자기 자신
+        if self.auto and genre_preset in PRESETS:
+            return replace(self, bands=PRESETS[genre_preset])
+        return self
+
+    def applied_name(self, genre_preset: str | None) -> str:
+        if self.auto and genre_preset in PRESETS:
+            return genre_preset
+        return self.preset
+
+    def next_choice(self) -> FxSettings:
+        order = [AUTO, *PRESETS]
+        if any(self.custom):
+            order.append(CUSTOM)
+        current = AUTO if self.auto else self.preset
+        if current not in order:
+            return self.with_preset(order[0])
+        return self.with_preset(order[(order.index(current) + 1) % len(order)])
 
     def with_band(self, i: int, db: int) -> FxSettings:
         if not 0 <= i < len(self.bands):
@@ -91,7 +126,7 @@ class FxSettings:
         bands = list(self.bands)
         bands[i] = _clamp(db, -BAND_MAX, BAND_MAX)
         bands = tuple(bands)
-        return replace(self, preset=CUSTOM, bands=bands, custom=bands)
+        return replace(self, preset=CUSTOM, bands=bands, custom=bands, auto=False)
 
     def with_mode(self, mode: str) -> FxSettings:
         return replace(self, mode=mode if mode in MODES else "off")
@@ -102,12 +137,13 @@ class FxSettings:
         return replace(self, **{name: _clamp(value, 0, 100)})
 
     def reset(self) -> FxSettings:
-        return replace(self, preset="기본", bands=_ZEROS, mode="off", **_DEFAULT_LEVELS)
+        return replace(self, preset="기본", bands=_ZEROS, mode="off", auto=False, **_DEFAULT_LEVELS)
 
-    def summary(self) -> str:
-        if not self.enabled:
-            return "꺼짐"
-        text = f"켜짐 · {self.preset}"
+    def summary(self, genre_preset: str | None = None) -> str:
+        name = self.applied_name(genre_preset)
+        if self.auto:
+            name = f"자동: {name}"
+        text = f"{'켜짐' if self.enabled else '꺼짐'} · {name}"
         if self.mode in MODE_NAMES:
             text += f" · {MODE_NAMES[self.mode]}"
         return text
@@ -115,7 +151,7 @@ class FxSettings:
     def to_dict(self) -> dict:
         return {"enabled": self.enabled, "preset": self.preset, "bands": list(self.bands),
                 "mode": self.mode, "width": self.width, "depth": self.depth, "bass": self.bass,
-                "custom": list(self.custom)}
+                "custom": list(self.custom), "auto": self.auto}
 
     @classmethod
     def from_dict(cls, d: object) -> FxSettings:
@@ -124,7 +160,9 @@ class FxSettings:
         enabled = d.get("enabled")
         preset = d.get("preset")
         mode = d.get("mode")
-        return cls(enabled=enabled if isinstance(enabled, bool) else False,
+        auto = d.get("auto")
+        return cls(auto=auto if isinstance(auto, bool) else False,
+enabled=enabled if isinstance(enabled, bool) else False,
                    preset=preset if _is_preset_name(preset) else "기본",
                    bands=_read_bands(d.get("bands")),
                    mode=mode if isinstance(mode, str) and mode in MODES else "off",
