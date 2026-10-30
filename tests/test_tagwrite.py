@@ -110,7 +110,7 @@ def test_readonly_untouched(mp3):
     before = open(mp3, "rb").read()
     os.chmod(mp3, stat.S_IREAD)
     try:
-        with pytest.raises(TagWriteError, match="파일에 쓸 수 없습니다 \(읽기 전용이거나 다른 프로그램이 쓰는 중\)"):
+        with pytest.raises(TagWriteError, match=r"파일에 쓸 수 없습니다 \(읽기 전용이거나 다른 프로그램이 쓰는 중\)"):
             write_tags(mp3, {"title": "t"})
         assert open(mp3, "rb").read() == before
         assert _tmpfiles(mp3) == []

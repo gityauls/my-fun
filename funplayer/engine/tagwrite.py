@@ -103,7 +103,8 @@ def write_tags(path: str, fields: dict[str, str], picture: bytes | object = KEEP
                 continue
             tags.delall(fid)
             if key == "year":
-                tags.delall("TDRC")
+                for old in ("TDRC", "TDAT", "TIME"):   # 옛 날짜 조각이 새 년도와 섞이지 않게
+                    tags.delall(old)
             value = fields[key]
             if value:
                 tags.add(cls(encoding=1, text=[value]))

@@ -11,7 +11,7 @@ from funplayer.core.tagguess import guess_from_filename
     ("가수 - 제목.mp3", ("가수", "제목")),
     ("그냥제목.mp3", ("", "그냥제목")),
     ("", ("", "")),
-    ("C:\music\_가수_ - _제목_.mp3", ("가수", "제목")),
+    (r"C:\music\_가수_ - _제목_.mp3", ("가수", "제목")),
 ])
 def test_guess(path, expected):
     assert guess_from_filename(path) == expected
