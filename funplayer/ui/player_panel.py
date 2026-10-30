@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -11,6 +12,7 @@ from PyQt5.QtWidgets import (
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
+from funplayer import musicbrainz
 from funplayer.controller import PlayerController
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
@@ -20,6 +22,7 @@ from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
 from funplayer.engine.player import AudioPlayer, State
+from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
@@ -85,11 +88,12 @@ class PlayerPanel(QWidget):
 
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
-                 stations_path: str | None = None, runner=None) -> None:
+                 stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
-            self._player, settings, session_path=session_path, read_info=read_info)
+            self._player, settings, session_path=session_path, read_info=read_info,
+            write_tags=write_tags, clear_tags=clear_tags)
         # 라디오: 경로가 없으면(테스트) 저장하지 않는 메모리 목록이다
         self._stations_path = stations_path
         self.stations = load_stations(stations_path) if stations_path else StationList()
@@ -374,7 +378,7 @@ class PlayerPanel(QWidget):
     def _make_context_menu(self) -> None:
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
-                 ("info_row", "곡 정보…", self.show_row_info),
+                 ("info_row", "곡 정보 고치기…", self.show_row_info),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
                  None,
                  ("select_all", "전체 선택\tCtrl+A", self.select_all)]
@@ -830,7 +834,16 @@ class PlayerPanel(QWidget):
 
     def _show_info_for(self, i: int) -> None:
         info = self.controller.info_for(i)
-        self._show_info(info, load_cover(info))
+        editable, note = self._edit_state(info.path)
+        self._show_info(info, load_cover(info), editable, note)
+
+    @staticmethod
+    def _edit_state(path: str) -> tuple[bool, str]:
+        if not path.lower().endswith(".mp3"):
+            return False, "MP3만 고칠 수 있습니다"
+        if not os.path.isfile(path):
+            return False, "파일이 없습니다"
+        return True, ""
 
     def _station_info(self) -> TrackInfo:
         # 형식 칸(codec·sample_rate·channels)은 디코더가 밖으로 내주지 않아 비워 둔다
@@ -838,13 +851,35 @@ class PlayerPanel(QWidget):
         path = DOMESTIC_INFO_PATH if s.kind in ("kbs", "mbc", "sbs") else s.key
         return TrackInfo(path=path, title=s.name, artist=s.source)
 
-    def _show_info(self, info: TrackInfo, cover) -> None:
+    def _show_info(self, info: TrackInfo, cover, editable: bool = False, note: str = "") -> None:
         if self.info_dialog is None:
-            self.info_dialog = TrackInfoDialog(self)
-        self.info_dialog.show_info(info, cover)
+            dialog = TrackInfoDialog(self)
+            dialog.set_services(self.runner.run_async, musicbrainz.default_client)
+            dialog.save_requested.connect(self._save_tags)
+            dialog.clear_requested.connect(self._clear_tags)
+            self.info_dialog = dialog
+        if not self.info_dialog.show_info(info, cover, editable, note):
+            return
         self.info_dialog.show()
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
+
+    def _save_tags(self, path: str, fields: dict, picture) -> None:
+        self._edit_tags(lambda: self.controller.save_tags(path, fields, picture))
+
+    def _clear_tags(self, path: str) -> None:
+        self._edit_tags(lambda: self.controller.clear_tags(path))
+
+    def _edit_tags(self, write) -> None:
+        dialog = self.info_dialog
+        try:
+            info = write()
+        except TagWriteError as e:
+            dialog.failed(str(e))
+            return
+        dialog.saved(info, load_cover(info))
+        self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
+        self.refresh()
 
     def select_all(self) -> None:
         if self._tab == "playlist":

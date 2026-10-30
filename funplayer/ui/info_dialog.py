@@ -5,13 +5,14 @@ import math
 import os
 import subprocess
 
-from PyQt5.QtCore import QPointF, QSize, Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QTextLayout, QTextOption
 from PyQt5.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
+from funplayer.core.tagguess import guess_from_filename
 from funplayer.core.taginfo import TrackInfo, format_line, format_size
 from funplayer.core.timefmt import format_time
 from funplayer.engine.tagwrite import KEEP, REMOVE, picture_mime
@@ -129,6 +130,12 @@ class TrackInfoDialog(QDialog):
         self._transient: tuple[str, str] | None = None   # (글, 색): 저장했습니다 / 오류
         self._note = ""
         self._discarding = False
+        self._run_async = None   # 인터넷에서 찾기: set_services로 받는다
+        self._client_factory = None
+        self._search_path = None   # 찾기 칸·결과가 어느 곡 것인지
+        self._prefilled = False
+        self._candidates: list = []
+        self._counter = 0   # 요청 번호: 늦게 온 응답을 가려내는 표
 
         self.art_label = QLabel()
         self.art_label.setFixedSize(ART_SIZE, ART_SIZE)
@@ -191,6 +198,8 @@ class TrackInfoDialog(QDialog):
         path_row.addWidget(path_name, 0, Qt.AlignTop)
         path_row.addWidget(self.path_label, 1)
 
+        self._build_search()
+
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
         self.message_label.hide()
@@ -224,6 +233,7 @@ class TrackInfoDialog(QDialog):
         root.setSpacing(10)
         root.addLayout(top)
         root.addLayout(path_row)
+        root.addWidget(self.search_section)
         root.addWidget(self.message_label)
         root.addWidget(self.confirm_bar)
         root.addLayout(buttons)
@@ -245,6 +255,199 @@ class TrackInfoDialog(QDialog):
         self.save_button.clicked.connect(lambda _=False: self._save())
         self.folder_button.clicked.connect(lambda _=False: reveal_in_explorer(self._path))
         self.close_button.clicked.connect(self.close)
+
+    # ---- 인터넷에서 찾기 ----
+    def _build_search(self) -> None:
+        self.search_section = QWidget()
+        outer = QVBoxLayout(self.search_section)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+        self.search_toggle = QToolButton()
+        self.search_toggle.setArrowType(Qt.RightArrow)
+        self.search_toggle.setAutoRaise(True)
+        head = QHBoxLayout()
+        head.setSpacing(4)
+        head.addWidget(self.search_toggle)
+        head.addWidget(QLabel(f"<b>인터넷에서 찾기</b> <span style='color:{INFO_COLOR};'>(MusicBrainz)</span>"))
+        head.addStretch(1)
+        outer.addLayout(head)
+
+        self.search_body = QWidget()
+        body = QVBoxLayout(self.search_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(6)
+        self.search_title = QLineEdit()
+        self.search_artist = QLineEdit()
+        self.search_button = QPushButton("찾기")
+        self.search_button.setAutoDefault(False)
+        query = QHBoxLayout()
+        query.setSpacing(6)
+        for name, edit in (("제목", self.search_title), ("가수", self.search_artist)):
+            label = QLabel(name)
+            label.setStyleSheet(f"color: {INFO_COLOR};")
+            query.addWidget(label)
+            query.addWidget(edit, 1)
+            edit.installEventFilter(self)   # Enter = 찾기 (저장 단추로 새지 않게)
+        query.addWidget(self.search_button)
+        body.addLayout(query)
+        self.result_list = QListWidget()
+        self.result_list.setMaximumHeight(self.result_list.fontMetrics().height() * 6 + 12)
+        body.addWidget(self.result_list)
+        self.only_empty_box = QCheckBox("빈 칸만 채우기")
+        self.only_empty_box.setChecked(True)
+        self.fill_button = QPushButton("고른 곡으로 채우기")
+        self.fill_button.setAutoDefault(False)
+        fill = QHBoxLayout()
+        fill.addWidget(self.only_empty_box)
+        fill.addStretch(1)
+        fill.addWidget(self.fill_button)
+        body.addLayout(fill)
+        self.search_status = QLabel()
+        self.search_status.setWordWrap(True)
+        self.search_status.hide()
+        body.addWidget(self.search_status)
+        self.search_body.hide()
+        outer.addWidget(self.search_body)
+        self.search_section.hide()
+
+        self.search_toggle.clicked.connect(lambda _=False: self._toggle_search())
+        self.search_title.textChanged.connect(lambda _t: self._update_search_buttons())
+        self.search_button.clicked.connect(lambda _=False: self._search())
+        self.result_list.currentRowChanged.connect(lambda _r: self._update_search_buttons())
+        self.fill_button.clicked.connect(lambda _=False: self._fill())
+        self._update_search_buttons()
+
+    def set_services(self, run_async, client_factory) -> None:
+        """인터넷 찾기에 쓸 것: run_async(work, done), client_factory() -> musicbrainz.Client."""
+        self._run_async, self._client_factory = run_async, client_factory
+        self._refresh_search_visibility()
+
+    def eventFilter(self, obj, event) -> bool:
+        if (obj in (self.search_title, self.search_artist) and event.type() == QEvent.KeyPress
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+            self._search()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _refresh_search_visibility(self) -> None:
+        self.search_section.setVisible(self._editable and self._run_async is not None)
+
+    def _reset_search(self) -> None:
+        """곡이 바뀌면 찾기 칸·결과를 비운다 (펼침 상태는 그대로)."""
+        self._counter += 1   # 이전 곡 요청의 응답은 버려진다
+        self._candidates = []
+        self.result_list.clear()
+        self.search_status.hide()
+        self._prefilled = False
+        if not self.search_body.isHidden():
+            self._prefill()
+        self._update_search_buttons()
+
+    def _toggle_search(self) -> None:
+        open_now = self.search_body.isHidden()
+        self.search_body.setVisible(open_now)
+        self.search_toggle.setArrowType(Qt.DownArrow if open_now else Qt.RightArrow)
+        if open_now:
+            self._prefill()
+        self.adjustSize()
+
+    def _prefill(self) -> None:
+        if self._prefilled:
+            return
+        self._prefilled = True
+        info = self._info
+        if info is not None and (info.title or info.artist):
+            artist, title = info.artist, info.title
+        else:
+            artist, title = guess_from_filename(self._path)
+        self.search_title.setText(title)
+        self.search_artist.setText(artist)
+
+    def _update_search_buttons(self) -> None:
+        self.search_button.setEnabled(bool(self.search_title.text().strip()))
+        self.fill_button.setEnabled(0 <= self.result_list.currentRow() < len(self._candidates))
+
+    def _set_status(self, text: str, error: bool = False) -> None:
+        self.search_status.setText(text)
+        self.search_status.setStyleSheet(f"color: {ERROR_COLOR if error else INFO_COLOR};")
+        self.search_status.setVisible(bool(text))
+
+    def _token(self) -> tuple[str, int]:
+        self._counter += 1
+        return (self._path, self._counter)
+
+    def _current_token(self, token) -> bool:
+        return token == (self._path, self._counter)
+
+    @staticmethod
+    def _error_text(error) -> str:
+        text = str(error) if error.__class__.__name__ == "MusicBrainzError" else ""
+        return text or "인터넷에 연결하지 못했습니다"
+
+    def _search(self) -> None:
+        title, artist = self.search_title.text().strip(), self.search_artist.text().strip()
+        if not title or self._run_async is None or self._client_factory is None:
+            return
+        token = self._token()
+        self._candidates = []
+        self.result_list.clear()
+        self._set_status("찾는 중…")
+        self._update_search_buttons()
+        client = self._client_factory()
+        self._run_async(lambda: client.search(title, artist),
+                        lambda result, error: self._on_search(token, result, error))
+
+    def _on_search(self, token, result, error) -> None:
+        if not self._current_token(token):
+            return
+        if error is not None:
+            self._set_status(self._error_text(error), error=True)
+            return
+        self._candidates = list(result or [])
+        for cand in self._candidates:
+            self.result_list.addItem(cand.label())
+        if not self._candidates:
+            self._set_status("찾은 곡이 없습니다")
+        else:
+            self._set_status(f"{len(self._candidates)}곡 찾음")
+            self.result_list.setCurrentRow(0)
+        self._update_search_buttons()
+
+    def _fill(self) -> None:
+        row = self.result_list.currentRow()
+        if not self._editable or not 0 <= row < len(self._candidates):
+            return
+        cand = self._candidates[row]
+        only_empty = self.only_empty_box.isChecked()
+        values = {"title": cand.title, "artist": cand.artist, "album": cand.album,
+                  "year": cand.year, "track": cand.track, "genre": cand.genre}
+        for key, value in values.items():
+            if value and not (only_empty and self._current(key)):
+                edit = self.edits[key]
+                if isinstance(edit, QComboBox):
+                    edit.setEditText(value)
+                else:
+                    edit.setText(value)
+        has_picture = bool(self._info and self._info.picture)
+        need_cover = (not has_picture and self._picture is KEEP) or not only_empty
+        if need_cover and cand.release_id and self._run_async and self._client_factory:
+            token = self._token()
+            self._set_status("앨범 그림 받는 중…")
+            client = self._client_factory()
+            self._run_async(lambda: client.cover(cand.release_id),
+                            lambda result, error: self._on_cover(token, result, error))
+
+    def _on_cover(self, token, result, error) -> None:
+        if not self._current_token(token):
+            return
+        if error is not None:
+            self._set_status(self._error_text(error), error=True)
+        elif not result:
+            self._set_status("앨범 그림 없음")
+        elif self.set_picture_bytes(result):
+            self._set_status("앨범 그림 받음")
+        else:
+            self._set_status("앨범 그림 없음")
 
     # ---- 채우기 ----
     def show_info(self, info: TrackInfo, cover: QPixmap | None, editable: bool = False,
@@ -315,6 +518,10 @@ class TrackInfoDialog(QDialog):
                 label.setVisible(not self._editable)
                 self.edits[field].setVisible(self._editable)
         self.setAcceptDrops(self._editable)
+        self._refresh_search_visibility()
+        if self._search_path != self._path:
+            self._search_path = self._path
+            self._reset_search()
         self.path_label.setText(info.path)
         self.folder_button.setEnabled(
             os.path.isfile(info.path) or os.path.isdir(os.path.dirname(info.path)))

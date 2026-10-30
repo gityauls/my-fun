@@ -282,3 +282,179 @@ def test_edit_clears_failed_text(qapp, tmp_path):
     set_text(d.edits["title"], "N"); d.failed("저장하지 못했습니다")
     set_text(d.edits["title"], "NN"); assert d.message_label.text().startswith("노란 칸")
     set_text(d.edits["genre"], "재즈"); assert d.is_dirty()
+
+
+# ---- 인터넷에서 찾기 ----
+from PyQt5.QtTest import QTest
+from funplayer.musicbrainz import Candidate, MusicBrainzError
+
+
+def inline(work, done):
+    try:
+        result = work()
+    except Exception as e:  # noqa: BLE001
+        done(None, e)
+    else:
+        done(result, None)
+
+
+class FakeClient:
+    def __init__(self, cands=(), cover=None, error=None):
+        self.cands, self.cover_bytes, self.error = list(cands), cover, error
+        self.searches, self.covers = [], []
+
+    def search(self, title, artist, limit=10):
+        self.searches.append((title, artist))
+        if self.error:
+            raise self.error
+        return self.cands
+
+    def cover(self, release_id):
+        self.covers.append(release_id)
+        if self.error:
+            raise self.error
+        return self.cover_bytes
+
+
+CAND = Candidate("Song", "Singer", "Album", "2001", "5", "록", "rel-1")
+
+
+def searcher(qapp, tmp_path, client, run=inline, info_kw=None, **kw):
+    d, info = editor(qapp, tmp_path, **kw)
+    if info_kw is not None:
+        info = TrackInfo(info.path, **info_kw)
+        d.show_info(info, None, editable=True)
+    d.set_services(run, lambda: client)
+    d.search_toggle.click()
+    return d, info
+
+
+def test_search_section_hidden_until_editable_with_services(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    assert d.search_section.isHidden()   # 서비스 없음
+    d.set_services(inline, lambda: None)
+    assert not d.search_section.isHidden() and d.search_body.isHidden()   # 접힌 채
+    d.show_info(info, None, editable=False)
+    assert d.search_section.isHidden()
+
+
+def test_prefill_from_tags_then_filename(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient())
+    assert (d.search_title.text(), d.search_artist.text()) == ("Old", "A")
+    d2, _ = searcher(qapp, tmp_path, FakeClient())
+    f = tmp_path / "가수 - 노래.mp3"; f.write_bytes(b"1")
+    d2.show_info(TrackInfo(str(f)), None, editable=True)   # 태그가 없으면 파일 이름에서
+    assert (d2.search_title.text(), d2.search_artist.text()) == ("노래", "가수")
+    d2.search_toggle.click(); d2.search_toggle.click()   # 접었다 펴도 그대로
+    assert (d2.search_title.text(), d2.search_artist.text()) == ("노래", "가수")
+
+
+def test_search_lists_and_fills_empty_only(qapp, tmp_path):
+    c = FakeClient([CAND, Candidate("Other", "", "", "", "", "", "")])
+    d, _ = searcher(qapp, tmp_path, c, info_kw=dict(title="Mine"))
+    assert d.search_button.isEnabled()
+    d.search_button.click()
+    assert c.searches == [("Mine", "")] and d.search_status.text() == "2곡 찾음"
+    assert [d.result_list.item(i).text() for i in range(2)] == ["Song · Singer · Album · 2001", "Other"]
+    assert d.result_list.currentRow() == 0 and d.fill_button.isEnabled()
+    d.fill_button.click()
+    got = {k: (e.currentText() if isinstance(e, QComboBox) else e.text()) for k, e in d.edits.items()}
+    assert got == {"title": "Mine", "artist": "Singer", "album": "Album", "year": "2001", "genre": "록", "track": "5"}
+    assert d.is_dirty() and YELLOW.lower() in d.edits["artist"].styleSheet().lower()
+
+
+def test_fill_overwrites_when_box_off(qapp, tmp_path):
+    cand = Candidate("Song", "Singer", "", "2001", "", "", "")   # 앨범·트랙·장르는 없음 -> 비우지 않는다
+    d, _ = searcher(qapp, tmp_path, FakeClient([cand]))
+    d.only_empty_box.setChecked(False)
+    d.search_button.click(); d.fill_button.click()
+    assert d.edits["title"].text() == "Song" and d.edits["artist"].text() == "Singer"
+    assert d.edits["album"].text() == "B" and d.edits["track"].text() == "3" and d.edits["genre"].currentText() == "Pop"
+
+
+def test_cover_fetched_only_when_missing(qapp, tmp_path):
+    c = FakeClient([CAND], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c)   # 그림 없음 -> 받는다
+    d.search_button.click(); d.fill_button.click()
+    assert c.covers == ["rel-1"] and d._picture == PNG and d.search_status.text() == "앨범 그림 받음"
+    c2 = FakeClient([CAND], cover=PNG)
+    d2, _ = searcher(qapp, tmp_path, c2, picture=JPG)   # 그림 있음 + 켬 -> 안 받는다
+    d2.search_button.click(); d2.fill_button.click()
+    assert c2.covers == [] and d2._picture is KEEP
+    d2.only_empty_box.setChecked(False); d2.fill_button.click()   # 끄면 받는다
+    assert c2.covers == ["rel-1"] and d2._picture == PNG
+    c3 = FakeClient([CAND], cover=PNG)
+    d3, _ = searcher(qapp, tmp_path, c3)
+    d3.set_picture_bytes(JPG)   # 이미 넣은 그림이 있으면 켠 채로는 안 받는다
+    d3.search_button.click(); d3.fill_button.click()
+    assert c3.covers == [] and d3._picture == JPG
+    c4 = FakeClient([CAND], cover=None)
+    d4, _ = searcher(qapp, tmp_path, c4)
+    d4.search_button.click(); d4.fill_button.click()
+    assert d4.search_status.text() == "앨범 그림 없음" and d4._picture is KEEP
+
+
+def test_candidate_without_release_skips_cover(qapp, tmp_path):
+    c = FakeClient([Candidate("S", "", "", "", "", "", "")], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c)
+    d.search_button.click(); d.fill_button.click()
+    assert c.covers == []
+
+
+def test_late_reply_ignored(qapp, tmp_path):
+    pending = []
+    c = FakeClient([CAND], cover=PNG)
+    d, info = searcher(qapp, tmp_path, c, run=lambda work, done: pending.append((work, done)))
+    d.search_button.click(); d.search_button.click()   # 요청 둘
+    (w1, d1), (w2, d2) = pending
+    d2(w2(), None); d1([Candidate("Stale", "", "", "", "", "", "")], None)   # 먼저 보낸 것의 응답은 버림
+    assert d.result_list.count() == 1 and d.result_list.item(0).text().startswith("Song")
+    d.fill_button.click()   # 그림 요청 대기
+    other = tmp_path / "y.mp3"; other.write_bytes(b"1")
+    assert d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)   # 다른 곡으로
+    assert d.result_list.count() == 0 and d.search_title.text() == "Y"
+    work, done = pending[-1]
+    done(work(), None)
+    assert d._picture is KEEP and not d.search_status.isVisible()
+
+
+def test_late_search_reply_after_track_change_ignored(qapp, tmp_path):
+    pending = []
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]), run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    other = tmp_path / "y.mp3"; other.write_bytes(b"1")
+    d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)
+    work, done = pending[0]; done(work(), None)
+    assert d.result_list.count() == 0
+
+
+def test_search_error_text(qapp, tmp_path):
+    busy = "MusicBrainz가 바쁩니다. 잠시 뒤 다시 눌러 보세요"
+    d, _ = searcher(qapp, tmp_path, FakeClient(error=MusicBrainzError(busy)))
+    d.search_button.click()
+    assert d.search_status.text() == busy
+    assert "#b3261e" in d.search_status.styleSheet().lower() and not d.fill_button.isEnabled()
+    d2, _ = searcher(qapp, tmp_path, FakeClient(error=OSError("x")))
+    d2.search_button.click(); assert d2.search_status.text() == "인터넷에 연결하지 못했습니다"
+    d3, _ = searcher(qapp, tmp_path, FakeClient([]))
+    d3.search_button.click(); assert d3.search_status.text() == "찾은 곡이 없습니다"
+
+
+def test_empty_title_disables_search_and_enter_searches(qapp, tmp_path):
+    c = FakeClient([CAND])
+    d, _ = searcher(qapp, tmp_path, c)
+    saves = []
+    d.save_requested.connect(lambda *a: saves.append(a))
+    d.search_title.setText("  ")
+    assert not d.search_button.isEnabled()
+    QTest.keyClick(d.search_title, Qt.Key_Return); assert c.searches == []
+    d.search_title.setText("abc")
+    QTest.keyClick(d.search_artist, Qt.Key_Return)
+    assert c.searches == [("abc", "A")] and saves == []   # Enter가 저장으로 새지 않는다
+
+
+def test_genre_pick_marks_changed(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    combo = d.edits["genre"]; combo.setCurrentIndex(combo.findText("재즈"))
+    assert combo.currentText() == "재즈" and d.is_dirty() and d._changed_fields() == {"genre": "재즈"}
+    assert YELLOW.lower() in combo.lineEdit().styleSheet().lower()
