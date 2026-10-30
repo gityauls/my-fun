@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QGridLayout,
-                             QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider,
+                             QHBoxLayout, QLabel, QPushButton, QRadioButton, QSizePolicy,
+                             QSlider,
                              QStyle, QToolButton, QVBoxLayout, QWidget)
 
 from html import escape
@@ -30,6 +31,42 @@ def _link_label(tip: str) -> QLabel:
 def _set_link_text(label: QLabel, text: str) -> None:
     label.setText(f'<a href="#" style="color:{LINK_COLOR}; text-decoration:underline;">'
                   f'{escape(text)}</a>')
+
+
+class _ElidedLink(QLabel):
+    """링크 글자. 자리가 모자라면 줄임표로 줄어들어 창을 넓히지 않는다 (툴팁은 따로 둔다)."""
+
+    def __init__(self, tip: str) -> None:
+        super().__init__()
+        self.setTextFormat(Qt.RichText)
+        self.setToolTip(tip)
+        self.setCursor(Qt.PointingHandCursor)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text
+        _set_link_text(self, text)
+        self.updateGeometry()
+        QTimer.singleShot(0, self._render)   # 자리가 정해진 뒤에 줄인다
+
+    def _render(self) -> None:
+        width = self.width()
+        shown = self._full
+        if self._full and 0 < width < self.fontMetrics().horizontalAdvance(self._full):
+            shown = self.fontMetrics().elidedText(self._full, Qt.ElideRight, width)
+        _set_link_text(self, shown)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render()
+
+    def sizeHint(self) -> QSize:
+        base = super().sizeHint()
+        return QSize(self.fontMetrics().horizontalAdvance(self._full) + 2, base.height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, super().minimumSizeHint().height())
 
 
 def _gray_label(text: str = "") -> QLabel:
@@ -86,7 +123,7 @@ class FxStrip(QWidget):
         sbox.setSpacing(4)
         self.power_link = _link_label("")
         self.power_link.linkActivated.connect(self._power_clicked)
-        self.preset_link = _link_label("눌러서 다음 프리셋")
+        self.preset_link = _ElidedLink("눌러서 다음 프리셋")
         self.preset_link.linkActivated.connect(self._preset_clicked)
         self.mode_label = _gray_label()
         self._mode_sep = _gray_label("·")
@@ -94,7 +131,12 @@ class FxStrip(QWidget):
                   self.mode_label):
             sbox.addWidget(w)
         self.small_spectrum = SpectrumView(12)
-        self.small_spectrum.setFixedSize(72, 16)
+        # 접은 줄이 길어지면 줄어든다 (36~72 px): 창 너비를 밀어 넓히지 않게
+        self.small_spectrum.hint_width = 72
+        self.small_spectrum.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.small_spectrum.setMinimumWidth(36)
+        self.small_spectrum.setMaximumWidth(72)
+        self.small_spectrum.setFixedHeight(16)
         self.big_spectrum = SpectrumView(24)
         self.big_spectrum.setFixedHeight(38)
         self.preset_label = QLabel("프리셋")
@@ -268,7 +310,7 @@ class FxStrip(QWidget):
         fx = self._fx
         _set_link_text(self.power_link, "켜짐" if fx.enabled else "꺼짐")
         self.power_link.setToolTip("눌러서 끄기" if fx.enabled else "눌러서 켜기")
-        _set_link_text(self.preset_link, self._display_name())
+        self.preset_link.set_full_text(self._display_name())
         mode = MODE_NAMES.get(fx.mode)
         self.mode_label.setText(mode or "")
         self.mode_label.setVisible(bool(mode) and not self._open)

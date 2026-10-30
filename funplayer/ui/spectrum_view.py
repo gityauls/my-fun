@@ -16,6 +16,7 @@ class SpectrumView(QWidget):
     def __init__(self, bars: int, parent=None) -> None:
         super().__init__(parent)
         self.bars = max(1, int(bars))
+        self.hint_width = 0   # 0이면 막대 수 x 4
         self.levels = [0.0] * self.bars
         self.peaks = [0.0] * self.bars
         self._bar_color = QColor(SPECTRUM_COLOR)
@@ -34,7 +35,7 @@ class SpectrumView(QWidget):
         return 0.0 if v != v else min(1.0, max(0.0, v))   # NaN은 0
 
     def sizeHint(self) -> QSize:
-        return QSize(self.bars * 4, self.height() or 16)
+        return QSize(self.hint_width or self.bars * 4, self.height() or 16)
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)

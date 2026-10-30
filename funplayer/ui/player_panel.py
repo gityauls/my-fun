@@ -450,7 +450,27 @@ class PlayerPanel(QWidget):
             return self.radio.state is RadioState.LIVE
         return c.state is State.PLAYING
 
+    def _spectrum_wanted(self) -> bool:
+        # 효과 칸이 실제로 보일 때만 (패널·창이 숨겨졌거나 최소화되면 계산하지 않는다)
+        return (self._settings.fx_visible and not self.is_mini and self.isVisible()
+                and not self.window().isMinimized())
+
+    def _sync_spectrum_timer(self) -> None:
+        self._set_spectrum_running(self._spectrum_wanted())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_spectrum_timer()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._sync_spectrum_timer()
+
     def _spectrum_tick(self) -> None:
+        if not self._spectrum_wanted():   # 안전망: 숨겨졌는데 타이머가 남았다면 멈추고 끝낸다
+            self._spectrum_last = None
+            self._set_spectrum_running(False)
+            return
         now = time.monotonic()
         last, self._spectrum_last = self._spectrum_last, now
         dt = 0.0 if last is None else min(max(now - last, 0.0), SPECTRUM_MAX_DT)
@@ -465,7 +485,10 @@ class PlayerPanel(QWidget):
             levels = np.zeros(bars)
         else:
             levels = band_levels(block, SAMPLE_RATE, bars)
-        view.set_levels(*decay.update(levels, dt))
+        shown, peaks = decay.update(levels, dt)
+        if not (any(shown) or any(peaks) or any(view.levels) or any(view.peaks)):
+            return   # 이미 0이고 그대로 0이면 다시 그리지 않는다
+        view.set_levels(shown, peaks)
 
     def _set_spectrum_running(self, on: bool) -> None:
         t = self._spectrum_timer
@@ -495,6 +518,8 @@ class PlayerPanel(QWidget):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self._sync_spectrum_timer()
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._retry_media_keys()
 
@@ -608,7 +633,7 @@ class PlayerPanel(QWidget):
         fx_on = self._settings.fx_visible and not mini
         self.fx_strip.setVisible(fx_on)
         self.fx_separator.setVisible(fx_on)
-        self._set_spectrum_running(fx_on)
+        self._sync_spectrum_timer()
         self.playlist_view.setVisible(not mini and not radio_tab)
         self.station_view.setVisible(not mini and radio_tab)
         for b in (self.open_button, self.add_button, self.list_button):

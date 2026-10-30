@@ -153,6 +153,52 @@ def test_showing_strip_keeps_window_width(qapp):
         qapp.setFont(old_font)
 
 
+def test_collapsed_longest_summary_keeps_window_width(qapp):
+    from funplayer.ui.window_keeper import DEFAULT_SIZE
+    old_font = qapp.font()
+    font = qapp.font()
+    font.setPointSize(9)
+    qapp.setFont(font)
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), runner=FakeRunner())
+    try:
+        p.resize(*DEFAULT_SIZE); p.show(); qapp.processEvents()
+        width, panel_min = p.width(), p.minimumSizeHint().width()
+        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        p.fx_strip.set_open(False, notify=True); qapp.processEvents()
+        for fx in (FxSettings().with_preset("베이스 강하게").with_auto(True),
+                   FxSettings().with_auto(True)):
+            fx = FxSettings.from_dict({**fx.to_dict(), "enabled": True, "mode": "earphone"})
+            p.fx_strip.set_value(fx)
+            p.fx_strip.set_genre_preset("베이스 강하게")
+            qapp.processEvents()
+            assert p.fx_strip.preset_link.sizeHint().width() > 0
+            assert p.fx_strip.minimumSizeHint().width() <= panel_min
+            assert p.width() == width and p.minimumSizeHint().width() == panel_min
+        assert p.fx_strip.preset_link.toolTip() == "눌러서 다음 프리셋"
+        assert p.fx_strip.small_spectrum.minimumWidth() == 36
+    finally:
+        p.shutdown(); p.deleteLater()
+        qapp.setFont(old_font)
+
+
+def test_spectrum_timer_stops_when_panel_hidden(fpanel):
+    p, fake, _ = fpanel
+    p.toggle_fx_visible()
+    assert p._spectrum_timer.isActive()
+    p.hide()
+    assert not p._spectrum_timer.isActive()
+    calls = []
+    fake.latest_block = lambda: calls.append(1)
+    p._spectrum_tick()   # 안전망: 숨겨졌으면 계산하지 않는다
+    assert calls == []
+    p.show()
+    assert p._spectrum_timer.isActive()
+    p.showMinimized()
+    assert not p._spectrum_timer.isActive()
+    p.showNormal()
+    assert p._spectrum_timer.isActive()
+
+
 def test_fx_state_survives_restart(qapp):
     fx = FxSettings.from_dict({"enabled": True, "preset": "발라드"})
     store = {"player_fx": fx.to_dict(), "player_fx_visible": True, "player_fx_open": False}
