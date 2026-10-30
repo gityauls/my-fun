@@ -815,3 +815,88 @@ def test_set_effects_saves_user_settings_not_applied(tmp_path):
     c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
     assert c.effects.bands == PRESETS["발라드"] and c.effects.auto
     assert fake.effects.bands == PRESETS["록"]
+
+
+# --- 태그 저장/지우기 (5-A) ---
+from funplayer.engine.tagwrite import KEEP, TagWriteError
+
+def tag_ctl(tmp_path, genres=None, fail=False, names=("a.mp3", "b.mp3")):
+    genres = genres if genres is not None else {}
+    fake = FakePlayer()
+    def read(path):
+        return TrackInfo(path, genre=genres.get(os.path.basename(path), ""))
+    def writer(path, fields=None, picture=KEEP):
+        fake.calls.append(("write", path))
+        if fail:
+            raise TagWriteError("fail")
+        if fields and "genre" in fields:
+            genres[os.path.basename(path)] = fields["genre"]
+    def clearer(path):
+        fake.calls.append(("clear", path))
+    c = PlayerController(fake, Settings({}, lambda: None), read_info=read,
+                         write_tags=writer, clear_tags=clearer)
+    folder = make_songs(tmp_path, list(names))
+    c.open([str(folder)])
+    fake.calls.clear()
+    return c, fake, str(folder / names[0]), str(folder / names[-1])
+
+def test_save_playing_reloads_at_position(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 42.0
+    info = c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 42.0), ("play",)]
+    assert info.path == a
+
+def test_save_paused_stays_paused(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 10.0; fake.pause()
+    fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 10.0)]
+    assert fake.state is State.STOPPED or ("play",) not in fake.calls
+
+def test_save_other_file_no_reload(tmp_path):
+    c, fake, a, b = tag_ctl(tmp_path)
+    c.save_tags(b, {"title": "x"})
+    assert fake.calls == [("write", b)]
+
+def test_save_stopped_no_reload_when_unloaded(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.unload(); fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("write", a)]
+
+def test_save_cued_stays_cued_at_position(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.stop(); fake.position = 30.0; c._cued = True
+    fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 30.0)]
+    assert fake.state is State.STOPPED and c._cued
+
+def test_failed_save_still_reloads(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path, fail=True)
+    fake.position = 5.0
+    with pytest.raises(TagWriteError):
+        c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 5.0), ("play",)]
+
+def test_save_resyncs_genre(tmp_path):
+    genres = {"a.mp3": "Rock"}
+    c, fake, a, _ = tag_ctl(tmp_path, genres=genres)
+    c.set_effects(FxSettings().with_preset("발라드").with_auto(True))
+    assert fake.effects.bands == PRESETS["록"]
+    c.save_tags(a, {"genre": "Ballad"})
+    assert fake.effects.bands == PRESETS["발라드"]
+
+def test_clear_tags_reloads(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 7.0
+    c.clear_tags(a)
+    assert fake.calls == [("unload",), ("clear", a), ("load", a), ("seek", 7.0), ("play",)]
+
+def test_save_radio_source_no_reload(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    c.source = "radio"
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("write", a)]

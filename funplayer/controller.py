@@ -11,7 +11,7 @@ from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
 from funplayer.core.timefmt import format_time
 from funplayer.core.tracks import expand_paths
-from funplayer.engine import tags
+from funplayer.engine import tags, tagwrite
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
 from funplayer.radio import RESUME_RADIO_MSG, RadioState
@@ -36,10 +36,13 @@ logger = logging.getLogger(__name__)
 class PlayerController:
     _UNSET = object()
 
-    def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None) -> None:
+    def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None,
+                 write_tags=None, clear_tags=None) -> None:
         self._player = player
         self._settings = settings
         self._read_info = read_info or tags.read_info
+        self._write_tags = write_tags or tagwrite.write_tags
+        self._clear_tags = clear_tags or tagwrite.clear_tags
         self._session_path = session_path
         self._info_cache: taginfo.TrackInfo | None = None
         self._cued = False
@@ -116,6 +119,47 @@ class PlayerController:
         if self._info_cache is None or self._info_cache.path != track.path:
             self._info_cache = self._read_info(track.path)
         return self._info_cache
+
+    def save_tags(self, path: str, fields: dict[str, str], picture=tagwrite.KEEP) -> taginfo.TrackInfo:
+        """태그를 쓴다. 지금 플레이어에 올라간 파일이면 내렸다가 같은 자리로 다시 올린다."""
+        return self._edit_tags(path, lambda: self._write_tags(path, fields, picture))
+
+    def clear_tags(self, path: str) -> taginfo.TrackInfo:
+        return self._edit_tags(path, lambda: self._clear_tags(path))
+
+    def _is_loaded(self, path: str) -> bool:
+        track = self.playlist.current
+        return (self.source == "file" and self._player.has_track
+                and not getattr(self._player, "is_live", False)
+                and track is not None and os.path.normcase(track.path) == os.path.normcase(path))
+
+    def _edit_tags(self, path: str, write) -> taginfo.TrackInfo:
+        loaded = self._is_loaded(path)
+        state = self._player.state if loaded else None
+        position = self._player.position if loaded else 0.0
+        cued = self._cued
+        if loaded:
+            self._player.unload()
+        try:
+            write()
+        finally:
+            if loaded:
+                self._reload(path, state, position, cued)
+        self._info_cache = None
+        self._synced_key = None   # 어떤 곡 키와도 달라 sync_effects()가 다시 보낸다
+        self.sync_effects()
+        return self._read_info(path)
+
+    def _reload(self, path: str, state, position: float, cued: bool) -> None:
+        try:
+            self._player.load(path)
+        except DecodeError:
+            self._error(FAIL_MSG.format(name=os.path.basename(path)))
+            return
+        if position > 0 and (state is not State.STOPPED or cued):
+            self._player.seek(position)
+        if state is State.PLAYING:
+            self._player.play()
 
     def info_for(self, index: int) -> taginfo.TrackInfo:
         path = self.playlist.tracks[index].path
