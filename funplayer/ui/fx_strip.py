@@ -3,7 +3,7 @@ from __future__ import annotations
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QGridLayout,
                              QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider,
-                             QToolButton, QVBoxLayout, QWidget)
+                             QStyle, QToolButton, QVBoxLayout, QWidget)
 
 from funplayer.core.effects import (BAND_LABELS, BANDS_HZ, CUSTOM, PRESETS,
                                     FxSettings)
@@ -60,6 +60,9 @@ class FxStrip(QWidget):
         self.summary_label.setStyleSheet(SMALL_STYLE)
         self.preset_label = QLabel("프리셋")
         self.preset_combo = QComboBox()
+        # 가장 긴 프리셋 이름만큼 넓어지지 않게 (창이 넓어지는 것을 막는다)
+        self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.preset_combo.setMinimumContentsLength(6)
         self.preset_combo.addItems(list(PRESETS) + [CUSTOM])
         self.preset_combo.currentIndexChanged.connect(self._preset_picked)
         head.addWidget(self.fold_button)
@@ -116,6 +119,7 @@ class FxStrip(QWidget):
         mode_row.addStretch(1)
         self.reset_button = QPushButton("초기화")
         self.reset_button.clicked.connect(self._reset)
+        self._fit_min_width(self.reset_button)
         mode_row.addWidget(self.reset_button)
         body.addLayout(mode_row)
 
@@ -136,6 +140,13 @@ class FxStrip(QWidget):
             level.addWidget(slider, 1)
         body.addWidget(self.level_row)
         root.addWidget(self.body)
+
+    def _fit_min_width(self, button: QPushButton) -> None:
+        # 글자에 맞춘 최소 폭 (스타일의 기본 최소폭 75~80px을 덮어쓴다, 패널과 같은 방식)
+        st = self.style()
+        w = button.fontMetrics().horizontalAdvance(button.text())
+        w += 2 * st.pixelMetric(QStyle.PM_ButtonMargin, None, button) + 8
+        button.setMinimumWidth(w)
 
     # --- 바깥에서 쓰는 것 ---
 

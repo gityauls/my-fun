@@ -74,6 +74,36 @@ def test_fx_open_state_saved(fpanel):
     assert store["player_fx_open"] is False
 
 
+def test_showing_strip_keeps_window_width(qapp):
+    # offscreen의 대체 글꼴은 12pt에 글자마다 17px이라 모든 글자가 실제보다 넓다.
+    # 앱이 Windows에서 실제로 쓰는 9pt로 맞춰 재고, 패널과 칸을 같은 글꼴로 비교한다
+    from PyQt5.QtWidgets import QComboBox
+    from funplayer.ui.window_keeper import DEFAULT_SIZE
+    old_font = qapp.font()
+    font = qapp.font()
+    font.setPointSize(9)
+    qapp.setFont(font)
+    fake, runner = FakePlayer(), FakeRunner()
+    p = PlayerPanel(Settings({}, lambda: None), player=fake, runner=runner)
+    try:
+        combo = p.fx_strip.preset_combo
+        assert combo.sizeAdjustPolicy() == QComboBox.AdjustToMinimumContentsLengthWithIcon
+        assert p.fx_strip.reset_button.minimumWidth() > 0
+        p.resize(*DEFAULT_SIZE); p.show(); qapp.processEvents()
+        width, panel_min = p.width(), p.minimumSizeHint().width()
+        assert p.fx_strip.minimumSizeHint().width() <= panel_min
+        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        assert p.fx_strip.isVisible() and p.width() == width
+        assert p.minimumSizeHint().width() == panel_min
+        p.fx_strip.set_open(False, notify=True); qapp.processEvents()
+        assert p.width() == width
+        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        assert not p.fx_strip.isVisible() and p.width() == width
+    finally:
+        p.shutdown(); p.deleteLater()
+        qapp.setFont(old_font)
+
+
 def test_fx_state_survives_restart(qapp):
     fx = FxSettings.from_dict({"enabled": True, "preset": "발라드"})
     store = {"player_fx": fx.to_dict(), "player_fx_visible": True, "player_fx_open": False}
