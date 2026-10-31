@@ -32,6 +32,7 @@ RESUME_MSG = "이어 듣기: {time}부터"
 RESUME_TAIL = 5.0
 RENAME_EXISTS = "같은 이름의 파일이 이미 있습니다 ({name}). 아무것도 저장하지 않았습니다."
 RENAME_PARTIAL = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
+RENAME_PARTIAL_EXISTS = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (같은 이름의 파일이 이미 있습니다)."
 RENAME_FAILED = "파일 이름을 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
 UNDO_DONE = "파일 이름을 되돌렸습니다"
 UNDO_MISSING = "되돌릴 파일이 없습니다 ({name})"
@@ -191,7 +192,7 @@ class PlayerController:
         if renamer.conflict(path, new_path):
             raise renamer.RenameError(RENAME_EXISTS.format(name=os.path.basename(new_path)))
         need_write = bool(fields) or picture is not tagwrite.KEEP
-        partial = False
+        partial = ""
 
         def action() -> str:
             nonlocal partial
@@ -199,16 +200,19 @@ class PlayerController:
                 self._write_tags(path, fields, picture)
             try:
                 self._rename_file(path, new_path)
-            except renamer.RenameError:
+            except renamer.RenameError as e:
+                # 미리 확인한 뒤에 같은 이름이 생긴 경우(RenameConflict)는 문구가 다르다
+                exists = isinstance(e, renamer.RenameConflict)
                 if not need_write:
-                    raise renamer.RenameError(RENAME_FAILED) from None
-                partial = True
+                    text = RENAME_EXISTS.format(name=os.path.basename(new_path)) if exists else RENAME_FAILED
+                    raise renamer.RenameError(text) from None
+                partial = RENAME_PARTIAL_EXISTS if exists else RENAME_PARTIAL
                 return path
             return new_path
 
         final = self._edit_file(path, action)
         if partial:
-            return SaveOutcome(self._read_info(path), None, RENAME_PARTIAL)
+            return SaveOutcome(self._read_info(path), None, partial)
         self._rename_log.add(path, final)
         return SaveOutcome(self._read_info(final), path)
 

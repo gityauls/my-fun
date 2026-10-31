@@ -913,9 +913,9 @@ def test_save_radio_source_no_reload(tmp_path):
 
 
 # --- 저장하며 이름 바꾸기 / 되돌리기 (5-C) ---
-from funplayer.controller import (RENAME_EXISTS, RENAME_FAILED, RENAME_PARTIAL, UNDO_DONE,
+from funplayer.controller import (RENAME_EXISTS, RENAME_FAILED, RENAME_PARTIAL, RENAME_PARTIAL_EXISTS, UNDO_DONE,
                                   UNDO_EXISTS, UNDO_FAILED, UNDO_MISSING)
-from funplayer.core.renamer import RenameError, RenameLog, rename_file
+from funplayer.core.renamer import RenameConflict, RenameError, RenameLog, rename_file
 
 def rn_ctl(tmp_path, rename_file_fn=None, fail_write=False, names=("a.mp3", "b.mp3")):
     fake = FakePlayer()
@@ -1042,3 +1042,20 @@ def test_undo_empty_log(tmp_path):
     c, *_ = rn_ctl(tmp_path)
     c._set_status("그대로", False)
     assert c.undo_rename() == (None, "") and c.status == "그대로"
+
+
+def _toctou(old, new):
+    raise RenameConflict(new)
+
+def test_rename_toctou_conflict_after_tags_written(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _toctou)
+    out = c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert out.warning == RENAME_PARTIAL_EXISTS and out.renamed_from is None and out.info.path == a
+    assert writes == [a] and c.last_rename() is None
+
+def test_rename_toctou_conflict_nothing_written(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _toctou)
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {}, KEEP, new)
+    assert str(e.value) == RENAME_EXISTS.format(name="가수 - 제목.mp3")
+    assert writes == [] and c.last_rename() is None
