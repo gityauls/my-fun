@@ -352,7 +352,7 @@ class TrackInfoDialog(QDialog):
         self.search_toggle.setArrowType(Qt.DownArrow if open_now else Qt.RightArrow)
         if open_now:
             self._prefill()
-        self.adjustSize()
+        self._fit_height()   # 펼친 찾기 칸 때문에 위 칸들이 눌리지 않게
 
     def _prefill(self) -> None:
         if self._prefilled:
@@ -375,6 +375,7 @@ class TrackInfoDialog(QDialog):
         self.search_status.setText(text)
         self.search_status.setStyleSheet(f"color: {ERROR_COLOR if error else INFO_COLOR};")
         self.search_status.setVisible(bool(text))
+        self._grow_to_fit()
 
     def _token(self) -> tuple[str, int]:
         self._counter += 1
@@ -560,9 +561,20 @@ class TrackInfoDialog(QDialog):
         self.folder_button.setEnabled(
             os.path.isfile(info.path) or os.path.isdir(os.path.dirname(info.path)))
         self._refresh_state()
+        self._fit_height()
+
+    def _fit_height(self) -> None:
         self.adjustSize()   # 줄바꿈된 값까지 다 보이는 높이로
-        need = self.layout().totalHeightForWidth(self.width())
-        if self.height() < need:   # adjustSize는 화면 높이의 2/3에서 자르므로 모자라면 더 키운다
+        self._grow_to_fit()   # adjustSize는 화면 높이의 2/3에서 자르므로 모자라면 더 키운다
+
+    def _grow_to_fit(self) -> None:
+        """상태 글·안내 줄·찾은 목록이 늘어도 위 칸들이 눌리지 않게, 모자랄 때만 키운다."""
+        layout = self.layout()
+        if layout is None:
+            return
+        layout.activate()
+        need = layout.totalHeightForWidth(self.width())
+        if self.height() < need:
             self.resize(self.width(), need)
 
     # ---- 바뀐 값 ----
@@ -616,6 +628,7 @@ class TrackInfoDialog(QDialog):
         self.message_label.setText(text)
         self.message_label.setStyleSheet(f"color: {color};")
         self.message_label.setVisible(bool(text))
+        self._grow_to_fit()
 
     # ---- 그림 ----
     def set_picture_bytes(self, data: bytes) -> bool:

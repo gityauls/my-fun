@@ -351,6 +351,14 @@ def test_search_section_hidden_until_editable_with_services(qapp, tmp_path):
     assert d.search_section.isHidden()
 
 
+def test_open_search_grows_dialog_not_squeezes_fields(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND] * 10))
+    d.search_button.click()
+    assert d.height() >= d.layout().totalHeightForWidth(d.width())
+    title = d.edits["title"]
+    assert title.height() >= title.sizeHint().height()
+
+
 def test_prefill_from_tags_then_filename(qapp, tmp_path):
     d, _ = searcher(qapp, tmp_path, FakeClient())
     assert (d.search_title.text(), d.search_artist.text()) == ("Old", "A")
