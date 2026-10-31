@@ -1,23 +1,31 @@
 from __future__ import annotations
 
+import html
 import logging
 import math
 import os
 import re
 import subprocess
 
-from PyQt5.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap, QTextLayout, QTextOption
+from PyQt5.QtCore import QBuffer, QEvent, QIODevice, QPointF, QSize, Qt, QUrl, pyqtSignal
+from PyQt5.QtGui import (
+    QColor, QDesktopServices, QImage, QKeySequence, QPalette, QPixmap, QTextLayout, QTextOption,
+)
 from PyQt5.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
+from funplayer import websearch
+from funplayer.core import renamer
 from funplayer.core.tagguess import clean_search_title, guess_from_filename
 from funplayer.core.taginfo import TrackInfo, format_line, format_size
 from funplayer.core.timefmt import format_time
 from funplayer.engine.tagwrite import KEEP, REMOVE, picture_mime
-from funplayer.ui.colors import CHANGED_BG, CHANGED_BORDER, ERROR_COLOR, INFO_COLOR, NOTE_COLOR
+from funplayer.ui.colors import (
+    CHANGED_BG, CHANGED_BORDER, ERROR_COLOR, INFO_COLOR, LINK_COLOR, NOTE_COLOR, RENAME_OK_COLOR,
+)
 from funplayer.ui.cover import art_pixmap
 
 log = logging.getLogger(__name__)
@@ -116,6 +124,8 @@ class TrackInfoDialog(QDialog):
 
     save_requested = pyqtSignal(str, dict, object)   # 경로, 바뀐 칸만, 그림(KEEP/REMOVE/바이트)
     clear_requested = pyqtSignal(str)
+    rename_toggled = pyqtSignal(bool)   # 사용자가 체크를 눌렀을 때만
+    undo_rename_requested = pyqtSignal(str, str)   # (옛 경로, 새 경로)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -138,6 +148,10 @@ class TrackInfoDialog(QDialog):
         self._candidates: list = []
         self._counter = 0   # 요청 번호: 늦게 온 응답을 가려내는 표
         self._busy = False   # 찾기·그림 요청이 가는 중
+        self._open_url = QDesktopServices.openUrl
+        self._fetch_image = websearch.fetch_image
+        self._undo_pair: tuple[str, str] | None = None   # 되돌리기 링크가 되돌릴 (옛, 새)
+        self._save_tags: bool | None = None   # 이번 저장에서 태그·그림이 바뀌었나(초록 글 고르기용)
 
         self.art_label = QLabel()
         self.art_label.setFixedSize(ART_SIZE, ART_SIZE)
@@ -151,6 +165,9 @@ class TrackInfoDialog(QDialog):
         art_box.setSpacing(4)
         art_box.addWidget(self.art_label)
         art_box.addLayout(pic_row)
+        self.paste_hint = QLabel("끌어다 놓기 · Ctrl+V")
+        self.paste_hint.setStyleSheet(f"color: {INFO_COLOR}; font-size: 11px;")
+        art_box.addWidget(self.paste_hint)
         art_box.addStretch(1)
 
         grid = QGridLayout()
@@ -200,11 +217,25 @@ class TrackInfoDialog(QDialog):
         path_row.addWidget(path_name, 0, Qt.AlignTop)
         path_row.addWidget(self.path_label, 1)
 
+        self._build_web_row()
+        self._build_rename_row()
         self._build_search()
 
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
         self.message_label.hide()
+        self.undo_link = QLabel('<a href="#">되돌리기</a>')
+        self.undo_link.setTextFormat(Qt.RichText)
+        pal = self.undo_link.palette()
+        pal.setColor(QPalette.Link, QColor(LINK_COLOR))
+        self.undo_link.setPalette(pal)
+        self.undo_link.hide()
+        self.message_row = QWidget()
+        msg = QHBoxLayout(self.message_row)
+        msg.setContentsMargins(0, 0, 0, 0)
+        msg.addWidget(self.message_label, 1)
+        msg.addWidget(self.undo_link, 0, Qt.AlignTop)
+        self.message_row.hide()
 
         self.confirm_bar = QWidget()
         bar = QHBoxLayout(self.confirm_bar)
@@ -234,9 +265,11 @@ class TrackInfoDialog(QDialog):
         root.setContentsMargins(14, 14, 14, 12)
         root.setSpacing(10)
         root.addLayout(top)
+        root.addWidget(self.web_row)
         root.addLayout(path_row)
+        root.addWidget(self.rename_row)
         root.addWidget(self.search_section)
-        root.addWidget(self.message_label)
+        root.addWidget(self.message_row)
         root.addWidget(self.confirm_bar)
         root.addLayout(buttons)
 
@@ -244,6 +277,8 @@ class TrackInfoDialog(QDialog):
         for w in (*(e.lineEdit() if isinstance(e, QComboBox) else e for e in self.edits.values()),
                   self.path_label, self.path_label.viewport()):
             w.setAcceptDrops(False)
+            w.installEventFilter(self)   # Ctrl+V 그림 붙여 넣기
+        self.installEventFilter(self)
         for edit in self.edits.values():
             if isinstance(edit, QComboBox):
                 edit.editTextChanged.connect(self._on_edited)
@@ -256,7 +291,103 @@ class TrackInfoDialog(QDialog):
         self.confirm_button.clicked.connect(lambda _=False: self._confirm_clear())
         self.save_button.clicked.connect(lambda _=False: self._save())
         self.folder_button.clicked.connect(lambda _=False: reveal_in_explorer(self._path))
+        self.undo_link.linkActivated.connect(lambda _h: self._undo_clicked())
         self.close_button.clicked.connect(self.close)
+
+    # ---- 브라우저로 찾기 · 파일 이름 바꾸기 줄 ----
+    def _build_web_row(self) -> None:
+        self.web_row = QWidget()
+        row = QHBoxLayout(self.web_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        name = QLabel("브라우저로 찾기")
+        name.setStyleSheet(f"color: {INFO_COLOR};")
+        self.genie_button = QPushButton("지니에서 찾기")
+        self.melon_button = QPushButton("멜론에서 찾기")
+        hint = QLabel("보고 직접 입력")
+        hint.setStyleSheet(f"color: {INFO_COLOR}; font-size: 11px;")
+        row.addWidget(name)
+        row.addWidget(self.genie_button)
+        row.addWidget(self.melon_button)
+        row.addWidget(hint)
+        row.addStretch(1)
+        for site, button in (("genie", self.genie_button), ("melon", self.melon_button)):
+            button.setAutoDefault(False)
+            button.clicked.connect(lambda _=False, s=site: self._open_site(s))
+        self.web_row.hide()
+
+    def _web_terms(self) -> str:
+        return websearch.search_terms(self._current("artist"), self._current("title"), self._path)
+
+    def _open_site(self, site: str) -> None:
+        terms = self._web_terms()
+        if terms:
+            self._open_url(QUrl.fromEncoded(websearch.search_url(site, terms).encode("ascii")))
+
+    def _build_rename_row(self) -> None:
+        self.rename_row = QWidget()
+        row = QHBoxLayout(self.rename_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        self.rename_box = QCheckBox("저장할 때 파일 이름도 바꾸기")
+        self.rename_preview = QLabel()
+        self.rename_preview.setTextFormat(Qt.RichText)
+        self.rename_preview.setWordWrap(True)
+        self.rename_preview.hide()
+        row.addWidget(self.rename_box, 0, Qt.AlignTop)
+        row.addWidget(self.rename_preview, 1)
+        self.rename_row.hide()
+        self.rename_box.clicked.connect(self._on_rename_clicked)
+
+    def _on_rename_clicked(self, checked: bool) -> None:
+        self._refresh_state()
+        self.rename_toggled.emit(checked)
+
+    def set_rename_checked(self, on: bool) -> None:
+        self.rename_box.blockSignals(True)
+        self.rename_box.setChecked(on)
+        self.rename_box.blockSignals(False)
+        self._refresh_state()
+
+    def _rename_candidate(self) -> str | None:
+        """지금 칸 값으로 만든 새 경로(이름이 같으면 지금 경로). 만들 수 없으면 None."""
+        return renamer.target_path(self._path, self._current("artist"), self._current("title"))
+
+    def rename_target(self) -> str | None:
+        if not (self._editable and self.rename_box.isChecked() and self._path):
+            return None
+        new = self._rename_candidate()
+        if new is None or new == self._path or renamer.conflict(self._path, new):
+            return None
+        return new
+
+    def has_pending_rename(self) -> bool:
+        return self.rename_target() is not None
+
+    def _refresh_rename(self) -> None:
+        show = self._editable and self.rename_box.isChecked()
+        self.rename_preview.setVisible(show)
+        if not show:
+            return
+        new = self._rename_candidate()
+        if new is None:
+            text, color = "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다.", INFO_COLOR
+        elif new == self._path:
+            text, color = "(지금 이름과 같음)", INFO_COLOR
+        elif renamer.conflict(self._path, new):
+            text, color = "같은 이름의 파일이 이미 있습니다", ERROR_COLOR
+        else:
+            text, color = f"→ <b>{html.escape(os.path.basename(new))}</b>", NOTE_COLOR
+        self.rename_preview.setText(text)
+        self.rename_preview.setStyleSheet(f"color: {color};")
+
+    def _undo_clicked(self) -> None:
+        if self._undo_pair:
+            self.undo_rename_requested.emit(*self._undo_pair)
+
+    def clear_undo(self) -> None:
+        self._undo_pair = None
+        self.undo_link.hide()
 
     # ---- 인터넷에서 찾기 ----
     def _build_search(self) -> None:
@@ -319,12 +450,18 @@ class TrackInfoDialog(QDialog):
         self.fill_button.clicked.connect(lambda _=False: self._fill())
         self._update_search_buttons()
 
-    def set_services(self, run_async, client_factory) -> None:
-        """인터넷 찾기에 쓸 것: run_async(work, done), client_factory() -> musicbrainz.Client."""
+    def set_services(self, run_async, client_factory, open_url=None, fetch_image=None) -> None:
+        """인터넷 찾기에 쓸 것: run_async(work, done), client_factory() -> musicbrainz.Client.
+        open_url(QUrl): 브라우저 열기, fetch_image(url) -> bytes: 끌어다 놓은 주소의 그림 받기."""
         self._run_async, self._client_factory = run_async, client_factory
+        self._open_url = open_url or QDesktopServices.openUrl
+        self._fetch_image = fetch_image or websearch.fetch_image
         self._refresh_search_visibility()
 
     def eventFilter(self, obj, event) -> bool:
+        if (event.type() == QEvent.KeyPress and self._editable and event.matches(QKeySequence.Paste)
+                and self._paste_picture()):
+            return True   # 클립보드에 그림이 있을 때만 막는다: 글자는 그대로 붙는다
         if (obj in (self.search_title, self.search_artist) and event.type() == QEvent.KeyPress
                 and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
             self._search()
@@ -500,16 +637,36 @@ class TrackInfoDialog(QDialog):
         self._populate()
         return True
 
-    def saved(self, info: TrackInfo, cover: QPixmap | None) -> None:
+    def saved(self, info: TrackInfo, cover: QPixmap | None, renamed_from: str | None = None,
+              warning: str = "") -> None:
         self._cancel_requests()   # 아직 오는 중인 그림은 저장한 창을 다시 바꾸지 않게
+        tags_changed = self._save_tags if self._save_tags is not None else self.is_dirty()
+        self._save_tags = None
         self._info, self._cover = info, cover
         self._path = info.path
         self._populate()
-        self._transient = ("저장했습니다", INFO_COLOR)
+        if warning:
+            self._transient = (warning, ERROR_COLOR)
+        elif renamed_from:
+            text = "저장했습니다 · 파일 이름을 바꿨습니다" if tags_changed else "파일 이름을 바꿨습니다"
+            self._transient = (text, RENAME_OK_COLOR)
+            self._undo_pair = (renamed_from, info.path)
+        else:
+            self._transient = ("저장했습니다", INFO_COLOR)
+        self._refresh_state()
+
+    def renamed_back(self, info: TrackInfo, cover: QPixmap | None) -> None:
+        self._cancel_requests()
+        self._save_tags = None
+        self._info, self._cover = info, cover
+        self._path = info.path
+        self._populate()   # 되돌리기 링크도 여기서 사라진다
+        self._transient = ("파일 이름을 되돌렸습니다", RENAME_OK_COLOR)
         self._refresh_state()
 
     def failed(self, message: str) -> None:
         self._cancel_requests()
+        self._save_tags = None
         self._transient = (message, ERROR_COLOR)
         self._refresh_state()
 
@@ -519,6 +676,7 @@ class TrackInfoDialog(QDialog):
         self._picture = KEEP
         self._picture_pm = None
         self._transient = None
+        self.clear_undo()
         self.confirm_bar.hide()
         self._orig = {
             "title": info.title, "artist": info.artist, "album": info.album,
@@ -608,11 +766,15 @@ class TrackInfoDialog(QDialog):
         else:
             self.art_label.setPixmap(art_pixmap(self._cover, ART_SIZE))
         has_embedded = bool(self._info and self._info.picture)
-        for w in (self.pick_button, self.remove_pic_button, self.clear_button, self.save_button):
+        for w in (self.pick_button, self.remove_pic_button, self.clear_button, self.save_button,
+                  self.web_row, self.rename_row, self.paste_hint):
             w.setVisible(editable)
+        for button in (self.genie_button, self.melon_button):
+            button.setEnabled(bool(self._web_terms()))
+        self._refresh_rename()
         self.remove_pic_button.setEnabled(
             isinstance(self._picture, bytes) or (has_embedded and self._picture is not REMOVE))
-        self.save_button.setEnabled(editable and self.is_dirty())
+        self.save_button.setEnabled(editable and (self.is_dirty() or self.has_pending_rename()))
         self.save_button.setDefault(editable)   # 보기만 할 때는 Enter가 닫기
         self.close_button.setDefault(not editable)
         if not editable:
@@ -628,6 +790,8 @@ class TrackInfoDialog(QDialog):
         self.message_label.setText(text)
         self.message_label.setStyleSheet(f"color: {color};")
         self.message_label.setVisible(bool(text))
+        self.undo_link.setVisible(self._undo_pair is not None)
+        self.message_row.setVisible(bool(text) or self._undo_pair is not None)
         self._grow_to_fit()
 
     # ---- 그림 ----
@@ -675,30 +839,92 @@ class TrackInfoDialog(QDialog):
         self._refresh_state()
 
     @staticmethod
-    def _dropped_file(event) -> str | None:
-        urls = event.mimeData().urls()
+    def _mime_file(mime) -> str | None:
+        """로컬 jpg·png 파일 하나면 그 경로."""
+        urls = mime.urls()
         if len(urls) != 1 or not urls[0].isLocalFile():
             return None
         path = urls[0].toLocalFile()
         return path if path.lower().endswith((".jpg", ".jpeg", ".png")) else None
 
+    @staticmethod
+    def _mime_http_url(mime) -> str | None:
+        urls = mime.urls()
+        if len(urls) == 1 and urls[0].scheme().lower() in ("http", "https"):
+            return urls[0].toString()
+        return None
+
+    @staticmethod
+    def _mime_image_bytes(mime) -> bytes | None:
+        """그림 데이터를 JPEG(품질 90) 바이트로. 없거나 못 바꾸면 None."""
+        if not mime.hasImage():
+            return None
+        img = mime.imageData()
+        if not isinstance(img, QImage) or img.isNull():
+            return None
+        if img.hasAlphaChannel():
+            img = img.convertToFormat(QImage.Format_RGB32)   # JPEG에는 투명이 없다
+        buf = QBuffer()
+        buf.open(QIODevice.WriteOnly)
+        ok = img.save(buf, "JPG", 90)
+        return bytes(buf.data()) if ok else None
+
+    def _picture_from_mime(self, mime) -> bool:
+        """그림 데이터 -> 로컬 그림 파일 순으로 넣는다. 넣었으면(오류 표시 포함) True."""
+        data = self._mime_image_bytes(mime)
+        if data is not None:
+            self.set_picture_bytes(data)
+            return True
+        path = self._mime_file(mime)
+        if path:
+            self._load_picture_file(path)
+            return True
+        return False
+
+    def _paste_picture(self) -> bool:
+        mime = QApplication.clipboard().mimeData()
+        return mime is not None and self._picture_from_mime(mime)
+
+    def _fetch_dropped(self, url: str) -> None:
+        token = self._token()
+        self._transient = ("그림 받는 중…", INFO_COLOR)
+        self._refresh_state()
+        fetch = self._fetch_image
+        self._run_async(lambda: fetch(url), lambda result, error: self._on_dropped(token, result, error))
+
+    def _on_dropped(self, token, result, error) -> None:
+        if not self._current_token(token):
+            return
+        if error is not None or not result:
+            self._picture_error("그림을 받지 못했습니다")
+        else:
+            self.set_picture_bytes(result)
+
+    def _can_fetch(self, mime) -> bool:
+        return self._run_async is not None and self._mime_http_url(mime) is not None
+
     def dragEnterEvent(self, event) -> None:
-        if self._editable and event.mimeData().hasUrls() and self._dropped_file(event):
+        mime = event.mimeData()
+        if self._editable and (mime.hasImage() or self._mime_file(mime) or self._can_fetch(mime)):
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dropEvent(self, event) -> None:
-        path = self._dropped_file(event) if self._editable else None
-        if path:
+        mime = event.mimeData()
+        if not self._editable:
+            super().dropEvent(event)
+        elif self._picture_from_mime(mime):
             event.acceptProposedAction()
-            self._load_picture_file(path)
+        elif self._can_fetch(mime):
+            event.acceptProposedAction()
+            self._fetch_dropped(self._mime_http_url(mime))
         else:
             super().dropEvent(event)
 
     # ---- 저장·지우기 ----
     def _save(self) -> None:
-        if not self.is_dirty():
+        if not (self.is_dirty() or self.has_pending_rename()):
             return
         fields = self._changed_fields()
         if "year" in fields and fields["year"] and not re.fullmatch(r"\d{4}", fields["year"]):
@@ -707,6 +933,7 @@ class TrackInfoDialog(QDialog):
         if "track" in fields and fields["track"] and not re.fullmatch(r"\d+(/\d+)?", fields["track"]):
             self._picture_error("트랙은 숫자로 적어 주세요 (예: 3 또는 3/12)")
             return
+        self._save_tags = bool(fields) or self._picture is not KEEP
         self.save_requested.emit(self._path, fields, self._picture)
 
     def _confirm_clear(self) -> None:
