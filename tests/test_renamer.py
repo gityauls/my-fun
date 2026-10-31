@@ -130,3 +130,19 @@ def test_log_memory_only():
     assert log.last() == ("a", "b")
     log.pop(); log.pop()
     assert log.last() is None
+
+
+def test_target_path_nfd_current_name_is_same():
+    import unicodedata
+    p = r"C:\m" + "\\" + unicodedata.normalize("NFD", "가수 - 제목") + ".mp3"
+    assert target_path(p, "가수", "제목") is p
+
+
+def test_log_bad_byte_keeps_other_lines(tmp_path):
+    p = tmp_path / "log.txt"
+    p.write_bytes("t1\told1\tnew1\n".encode("utf-8") + b"t2\told\xff2\tnew2\n"
+                  + "t3\told3\tnew3\n".encode("utf-8"))
+    log = RenameLog(str(p))
+    assert log.last() == ("old3", "new3")
+    log.pop()
+    assert log.last() == ("old1", "new1")   # 깨진 줄만 버려지고 나머지는 산다

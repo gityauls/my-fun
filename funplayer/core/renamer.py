@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -45,13 +46,17 @@ def build_name(artist: str, title: str, ext: str, dir_len: int = 0) -> str:
     return stem + ext
 
 
+def _nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s)
+
+
 def target_path(path: str, artist: str, title: str) -> str | None:
     folder, base = os.path.split(path)
     ext = os.path.splitext(base)[1]
     name = build_name(artist, title, ext, len(folder))
     if not name:
         return None
-    if name == base:
+    if _nfc(name) == _nfc(base):   # 맥에서 온 NFD 이름도 같은 이름으로 본다
         return path
     return os.path.join(folder, name)
 
@@ -93,14 +98,14 @@ class RenameLog:
         if self._path is None:
             return []
         try:
-            with open(self._path, encoding="utf-8") as f:
+            with open(self._path, encoding="utf-8", errors="replace") as f:
                 lines = f.read().splitlines()
         except (OSError, ValueError):
             return []
         rows = []
         for line in lines:
             parts = line.split("\t")
-            if len(parts) == 3 and parts[1] and parts[2]:
+            if len(parts) == 3 and parts[1] and parts[2] and "�" not in line:   # 깨진 바이트 줄만 버린다
                 rows.append((parts[0], parts[1], parts[2]))
         return rows[-MAX_LOG:]
 
