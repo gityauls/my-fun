@@ -812,3 +812,77 @@ def test_drop_image_beats_url(qapp, tmp_path):
     m = QMimeData(); m.setImageData(png_image()); m.setUrls([QUrl("http://x.example/a.png")])
     drop_mime(d, m)
     assert seen == [] and d._picture[:2] == b"\xff\xd8"
+
+
+# ---- 5-C 최종 검토 수정 ----
+def test_conflict_target_kept_but_not_pending(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    other = tmp_path / "서지원 - I Miss You.mp3"; other.write_bytes(b"2")
+    d.set_rename_checked(True)
+    assert d.rename_target() == str(other)   # 겹쳐도 후보를 돌려줘야 저장 쪽이 겹침 오류를 낸다
+    assert not d.has_pending_rename() and not d.save_button.isEnabled()
+    set_text(d.edits["album"], "X")
+    assert d.save_button.isEnabled() and d.rename_target() == str(other)
+
+
+def test_rename_preview_too_long(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.set_rename_checked(True)
+    set_text(d.edits["artist"], "가" * 160)
+    assert d.rename_preview.text() == "이름이 너무 길어 바꿀 수 없습니다."
+    assert "#5F6368" in d.rename_preview.styleSheet() and d.rename_target() is None
+    set_text(d.edits["artist"], "")
+    assert d.rename_preview.text() == "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다."
+
+
+def test_refresh_checks_conflict_once(qapp, tmp_path, monkeypatch):
+    from funplayer.core import renamer
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.set_rename_checked(True)
+    calls = []
+    real = renamer.conflict
+    monkeypatch.setattr(renamer, "conflict", lambda a, b: calls.append(1) or real(a, b))
+    set_text(d.edits["album"], "X")
+    assert len(calls) == 1
+    d.rename_target(); d.has_pending_rename()
+    assert len(calls) == 1
+
+
+def test_close_drops_late_dropped_image(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    d.close()
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_reject_drops_late_dropped_image(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    d.reject()
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_renamed_back_dirty_keeps_edits(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    new = tmp_path / "n.mp3"
+    d.show_info(TrackInfo(str(new), title="I Miss You", artist="서지원"), None, editable=True)
+    set_text(d.edits["album"], "Edited")
+    d.renamed_back(TrackInfo(str(f), title="I Miss You", artist="서지원"), None)
+    assert d.path == str(f) and d.path_label.text() == str(f)
+    assert d.edits["album"].text() == "Edited" and d.is_dirty()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다" and RENAME_OK_COLOR in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible()
+
+
+def test_transparent_image_becomes_white(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    img = QImage(8, 8, QImage.Format_ARGB32); img.fill(0x00000000)
+    m = QMimeData(); m.setImageData(img)
+    drop_mime(d, m)
+    out = QImage.fromData(d._picture)
+    c = out.pixelColor(4, 4)
+    assert min(c.red(), c.green(), c.blue()) > 240

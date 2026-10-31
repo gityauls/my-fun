@@ -9,7 +9,7 @@ import subprocess
 
 from PyQt5.QtCore import QBuffer, QEvent, QIODevice, QPointF, QSize, Qt, QUrl, pyqtSignal
 from PyQt5.QtGui import (
-    QColor, QDesktopServices, QImage, QKeySequence, QPalette, QPixmap, QTextLayout, QTextOption,
+    QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPalette, QPixmap, QTextLayout, QTextOption,
 )
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -151,6 +151,8 @@ class TrackInfoDialog(QDialog):
         self._open_url = QDesktopServices.openUrl
         self._fetch_image = websearch.fetch_image
         self._undo_pair: tuple[str, str] | None = None   # 되돌리기 링크가 되돌릴 (옛, 새)
+        self._rn_new: str | None = None   # _refresh_state가 계산해 두는 이름 바꾸기 후보와 겹침
+        self._rn_conflict = False
         self._save_tags: bool | None = None   # 이번 저장에서 태그·그림이 바뀌었나(초록 글 고르기용)
 
         self.art_label = QLabel()
@@ -354,28 +356,37 @@ class TrackInfoDialog(QDialog):
         """지금 칸 값으로 만든 새 경로(이름이 같으면 지금 경로). 만들 수 없으면 None."""
         return renamer.target_path(self._path, self._current("artist"), self._current("title"))
 
+    def _compute_rename(self) -> None:
+        """새 경로 후보와 겹침을 한 번만 계산해 둔다 (글자 칠 때마다 os.path.exists 한 번)."""
+        self._rn_new = None
+        self._rn_conflict = False
+        if self._editable and self._path and self.rename_box.isChecked():
+            self._rn_new = self._rename_candidate()
+            if self._rn_new is not None and self._rn_new != self._path:
+                self._rn_conflict = renamer.conflict(self._path, self._rn_new)
+
     def rename_target(self) -> str | None:
-        if not (self._editable and self.rename_box.isChecked() and self._path):
-            return None
-        new = self._rename_candidate()
-        if new is None or new == self._path or renamer.conflict(self._path, new):
-            return None
-        return new
+        """바꿀 새 경로. 겹쳐도 돌려준다: 저장 쪽이 겹침 오류를 내서 아무것도 안 쓰게."""
+        new = self._rn_new
+        return new if new is not None and new != self._path else None
 
     def has_pending_rename(self) -> bool:
-        return self.rename_target() is not None
+        return self.rename_target() is not None and not self._rn_conflict
 
     def _refresh_rename(self) -> None:
         show = self._editable and self.rename_box.isChecked()
         self.rename_preview.setVisible(show)
         if not show:
             return
-        new = self._rename_candidate()
+        new = self._rn_new
         if new is None:
-            text, color = "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다.", INFO_COLOR
+            if renamer.clean_part(self._current("artist")) and renamer.clean_part(self._current("title")):
+                text, color = "이름이 너무 길어 바꿀 수 없습니다.", INFO_COLOR
+            else:
+                text, color = "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다.", INFO_COLOR
         elif new == self._path:
             text, color = "(지금 이름과 같음)", INFO_COLOR
-        elif renamer.conflict(self._path, new):
+        elif self._rn_conflict:
             text, color = "같은 이름의 파일이 이미 있습니다", ERROR_COLOR
         else:
             text, color = f"→ <b>{html.escape(os.path.basename(new))}</b>", NOTE_COLOR
@@ -665,7 +676,11 @@ class TrackInfoDialog(QDialog):
         self._save_tags = None
         self._info, self._cover = info, cover
         self._path = info.path
-        self._populate()   # 되돌리기 링크도 여기서 사라진다
+        if self.is_dirty():   # 고치던 칸·그림은 그대로 두고 경로만 옛 경로로
+            self._show_path()
+            self.clear_undo()
+        else:
+            self._populate()   # 되돌리기 링크도 여기서 사라진다
         self._transient = ("파일 이름을 되돌렸습니다", RENAME_OK_COLOR)
         self._refresh_state()
 
@@ -720,11 +735,14 @@ class TrackInfoDialog(QDialog):
         if self._search_path != self._path:
             self._search_path = self._path
             self._reset_search()
-        self.path_label.setText(info.path)
-        self.folder_button.setEnabled(
-            os.path.isfile(info.path) or os.path.isdir(os.path.dirname(info.path)))
+        self._show_path()
         self._refresh_state()
         self._fit_height()
+
+    def _show_path(self) -> None:
+        path = self._path
+        self.path_label.setText(path)
+        self.folder_button.setEnabled(os.path.isfile(path) or os.path.isdir(os.path.dirname(path)))
 
     def _fit_height(self) -> None:
         self.adjustSize()   # 줄바꿈된 값까지 다 보이는 높이로
@@ -758,6 +776,7 @@ class TrackInfoDialog(QDialog):
         self._refresh_state()
 
     def _refresh_state(self) -> None:
+        self._compute_rename()
         editable = self._editable
         changed = self._changed_fields() if editable else {}
         for key, edit in self.edits.items():
@@ -878,7 +897,12 @@ class TrackInfoDialog(QDialog):
         if img is None:
             return None
         if img.hasAlphaChannel():
-            img = img.convertToFormat(QImage.Format_RGB32)   # JPEG에는 투명이 없다
+            bg = QImage(img.size(), QImage.Format_RGB32)   # JPEG에는 투명이 없다: 흰 바탕에 얹는다
+            bg.fill(Qt.white)
+            painter = QPainter(bg)
+            painter.drawImage(0, 0, img)
+            painter.end()
+            img = bg
         buf = QBuffer()
         buf.open(QIODevice.WriteOnly)
         ok = img.save(buf, "JPG", 90)
@@ -977,6 +1001,7 @@ class TrackInfoDialog(QDialog):
             close_super()
         finally:
             self._discarding = False
+        self._cancel_requests()   # 닫은 뒤에 도착한 그림이 다음 번 창을 바꾸지 않게
         if dirty and self._info is not None:
             self._populate()   # 버린 값은 사라지고 처음 값으로 돌아간다
         return True
