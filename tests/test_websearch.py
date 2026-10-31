@@ -67,3 +67,54 @@ def test_fetch_image_oserror_wrapped():
         with pytest.raises(websearch.ImageFetchError) as ei:
             websearch.fetch_image("https://x.com/a.jpg", fetch=fake)
         assert ei.value.__cause__ is exc
+
+
+class _Resp:
+    def __init__(self, chunks, url="https://x.com/a.jpg", clock=None, step=0.0):
+        self._chunks, self._url, self._clock, self._step = list(chunks), url, clock, step
+
+    def geturl(self):
+        return self._url
+
+    def read(self, n=-1):
+        if self._clock is not None:
+            self._clock[0] += self._step
+        chunk = self._chunks.pop(0) if self._chunks else b""
+        if 0 <= n < len(chunk):
+            self._chunks.insert(0, chunk[n:])
+            chunk = chunk[:n]
+        return chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_default_fetch_reads_in_chunks_up_to_limit():
+    resp = _Resp([b"a" * 10, b"b" * 10, b"c" * 10])
+    data = websearch._default_fetch("https://x.com/a.jpg", {}, 15, opener=lambda req, timeout: resp)
+    assert data == b"a" * 10 + b"b" * 5
+
+
+def test_default_fetch_total_deadline():
+    now = [0.0]
+    resp = _Resp([b"x"] * 100, clock=now, step=4.0)   # 읽을 때마다 4초: 천천히 흘려 보내는 서버
+    with pytest.raises(websearch.ImageFetchError):
+        websearch._default_fetch("https://x.com/a.jpg", {}, 1000, opener=lambda req, timeout: resp,
+                                 clock=lambda: now[0])
+
+
+def test_default_fetch_rejects_non_http_final_url():
+    resp = _Resp([b"x"], url="file:///c:/secret.jpg")
+    with pytest.raises(websearch.ImageFetchError):
+        websearch._default_fetch("https://x.com/a.jpg", {}, 10, opener=lambda req, timeout: resp)
+
+
+def test_redirect_to_non_http_refused():
+    import urllib.request
+    handler = websearch._HttpOnlyRedirect()
+    req = urllib.request.Request("https://x.com/a.jpg")
+    with pytest.raises(websearch.ImageFetchError):
+        handler.redirect_request(req, None, 302, "Found", {}, "ftp://evil/a.jpg")
