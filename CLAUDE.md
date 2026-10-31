@@ -18,6 +18,8 @@
 - `funplayer/core/tagguess.py`: 파일 이름 → (가수, 제목) 짐작 (곡 정보 고치기, 5-A) — 화면 없음
 - `funplayer/engine/tagwrite.py`: MP3 태그·그림 쓰기·지우기 (mutagen, 5-A) — 화면 없음
 - `funplayer/musicbrainz.py`: MusicBrainz 곡 찾기·앨범 그림 받기 (5-A) — 화면 없음
+- `funplayer/core/renamer.py`: 파일 이름 짓기·겹침 검사·이름 바꾸기 기록 (5-C) — 화면 없음
+- `funplayer/websearch.py`: 지니·멜론 브라우저 검색 주소 (5-C) — 화면 없음
 - `funplayer/ui/info_dialog.py`: 곡 정보 창 (보기 + 고치기 + 인터넷에서 찾기)
 
 ## 원칙

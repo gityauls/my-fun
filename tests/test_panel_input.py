@@ -154,7 +154,7 @@ def test_enter_and_select_all(rig):
 def test_context_menu(rig):
     p, fake, *_ = rig
     assert [a.text() for a in p.context_menu.actions()] == [
-        "재생\tEnter", "곡 정보 고치기…", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
+        "재생\tEnter", "곡 정보 고치기…", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
     assert not p.actions["remove"].isEnabled()
     p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()

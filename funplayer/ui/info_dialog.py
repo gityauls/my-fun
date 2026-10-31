@@ -386,6 +386,10 @@ class TrackInfoDialog(QDialog):
         if self._undo_pair:
             self.undo_rename_requested.emit(*self._undo_pair)
 
+    @property
+    def path(self) -> str:
+        return self._path
+
     def clear_undo(self) -> None:
         self._undo_pair = None
         self.undo_link.hide()

@@ -146,3 +146,113 @@ def test_close_without_edits_does_not_ask(rig, monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("물으면 안 됨")))
     p.show_track_info()
     assert p.close()
+
+
+# ---- 5-C: 파일 이름 바꾸기 ----
+
+@pytest.fixture
+def rename_rig(qapp, tmp_path, tone_mp3):
+    import shutil
+    path = tmp_path / "곡.mp3"
+    shutil.copy(tone_mp3, path)
+    log = tmp_path / "rename_log.txt"
+    settings = Settings({}, lambda: None)
+    p = PlayerPanel(settings, player=FakePlayer(), runner=FakeRunner(), rename_log_path=str(log))
+    p.resize(380, 480); p.show()
+    p.controller.open([str(path)]); p.refresh()
+    yield p, settings, path, log
+    p.shutdown(); p.deleteLater()
+
+
+def _rename_save(p, artist="가수", title="제목"):
+    p.playlist_view.setCurrentRow(0); p.show_row_info()
+    d = p.info_dialog
+    d.edits["artist"].setText(artist); d.edits["title"].setText(title)
+    d.rename_box.click()
+    d.save_button.click()
+    return d
+
+
+def test_save_with_rename_updates_row_text(rename_rig):
+    p, settings, path, log = rename_rig
+    _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    assert new.exists() and not path.exists()
+    assert p.playlist_view.item(0).text().endswith("가수 - 제목")
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_rename_setting_persisted(rename_rig):
+    p, settings, path, log = rename_rig
+    p.playlist_view.setCurrentRow(0); p.show_row_info()
+    assert settings.rename_on_save is False
+    p.info_dialog.rename_box.click()
+    assert settings.rename_on_save is True
+    p.info_dialog.close(); p.info_dialog = None
+    p.show_row_info()
+    assert p.info_dialog.rename_box.isChecked()
+
+
+def test_conflict_shows_red_and_writes_nothing(rename_rig):
+    p, settings, path, log = rename_rig
+    other = path.with_name("가수 - 제목.mp3")
+    other.write_bytes(b"x")
+    before = path.read_bytes()
+    p.playlist_view.setCurrentRow(0); p.show_row_info()
+    d = p.info_dialog
+    d.edits["artist"].setText("가수"); d.edits["title"].setText("제목")
+    d.rename_box.click()
+    assert d.rename_preview.text() == "같은 이름의 파일이 이미 있습니다"
+    # 미리보기 뒤에 겹친 경우를 흉내 낸다: 저장 경로가 겹침 오류를 받아도 아무것도 쓰지 않는다
+    d.rename_target = lambda: str(other)
+    d.save_button.click()
+    assert path.read_bytes() == before and other.read_bytes() == b"x"
+    assert d.message_label.text().startswith("같은 이름의 파일이 이미 있습니다")
+    assert p.controller.last_rename() is None
+
+
+def test_menu_undo_visible_and_text(rename_rig):
+    p, settings, path, log = rename_rig
+    p._update_actions()
+    assert not p.actions["undo_rename"].isVisible()
+    _rename_save(p)
+    p._update_actions()
+    act = p.actions["undo_rename"]
+    assert act.isVisible()
+    assert act.text() == "이름 되돌리기: 가수 - 제목.mp3 → 곡.mp3"
+    act.trigger()
+    assert path.exists() and not path.with_name("가수 - 제목.mp3").exists()
+    assert p.playlist_view.item(0).text().endswith("곡")
+    p._update_actions()
+    assert not act.isVisible()
+    assert "파일 이름을 되돌렸습니다" in p.status_label.text()
+    assert "되돌렸습니다" in p.info_dialog.message_label.text()
+
+
+def test_menu_undo_hidden_without_log(rename_rig):
+    p, settings, path, log = rename_rig
+    p._update_actions()
+    assert not p.actions["undo_rename"].isVisible()
+    keys = list(p.actions)
+    assert keys.index("undo_rename") == keys.index("info_row") + 1
+
+
+def test_dialog_undo_link_restores(rename_rig):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    d.undo_rename_requested.emit(str(path), str(new))
+    assert path.exists() and not new.exists()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다"
+    assert d.path == str(path)
+    assert p.controller.last_rename() is None
+
+
+def test_dialog_undo_stale_pair_ignored(rename_rig):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    d.undo_rename_requested.emit(r"C:\no\old.mp3", r"C:\no\new.mp3")
+    assert new.exists() and not path.exists()
+    assert p.controller.last_rename() == (str(path), str(new))
+    assert d.undo_link.isHidden()

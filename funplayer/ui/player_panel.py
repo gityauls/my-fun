@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 
 from funplayer import musicbrainz
 from funplayer.controller import PlayerController
+from funplayer.core.renamer import RenameError, RenameLog
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
@@ -21,6 +22,7 @@ from funplayer.core.taginfo import TrackInfo
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
+from funplayer.engine import tags
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
@@ -88,12 +90,13 @@ class PlayerPanel(QWidget):
 
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
-                 stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None) -> None:
+                 stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
+                 rename_log_path: str | None = None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
             self._player, settings, session_path=session_path, read_info=read_info,
-            write_tags=write_tags, clear_tags=clear_tags)
+            write_tags=write_tags, clear_tags=clear_tags, rename_log=RenameLog(rename_log_path))
         # 라디오: 경로가 없으면(테스트) 저장하지 않는 메모리 목록이다
         self._stations_path = stations_path
         self.stations = load_stations(stations_path) if stations_path else StationList()
@@ -379,6 +382,7 @@ class PlayerPanel(QWidget):
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
                  ("info_row", "곡 정보 고치기…", self.show_row_info),
+                 ("undo_rename", "이름 되돌리기", self.undo_rename_from_menu),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
                  None,
                  ("select_all", "전체 선택\tCtrl+A", self.select_all)]
@@ -585,6 +589,11 @@ class PlayerPanel(QWidget):
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
+        last = self.controller.last_rename()
+        self.actions["undo_rename"].setVisible(last is not None)
+        if last is not None:
+            old, new = (self._elide(os.path.basename(x)) for x in last)
+            self.actions["undo_rename"].setText(f"이름 되돌리기: {new} → {old}")
         self.actions["mini"].setChecked(self.is_mini)
         self.actions["fx_visible"].setChecked(self._settings.fx_visible)
         self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
@@ -855,6 +864,9 @@ class PlayerPanel(QWidget):
         if self.info_dialog is None:
             dialog = TrackInfoDialog(self)
             dialog.set_services(self.runner.run_async, musicbrainz.default_client)
+            dialog.set_rename_checked(self._settings.rename_on_save)
+            dialog.rename_toggled.connect(lambda on: setattr(self._settings, "rename_on_save", on))
+            dialog.undo_rename_requested.connect(self._undo_from_dialog)
             dialog.save_requested.connect(self._save_tags)
             dialog.clear_requested.connect(self._clear_tags)
             self.info_dialog = dialog
@@ -864,8 +876,55 @@ class PlayerPanel(QWidget):
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
 
+    @staticmethod
+    def _elide(name: str, limit: int = 40) -> str:
+        return name if len(name) <= limit else name[:limit - 1] + "…"
+
     def _save_tags(self, path: str, fields: dict, picture) -> None:
-        self._edit_tags(lambda: self.controller.save_tags(path, fields, picture))
+        target = self.info_dialog.rename_target()
+        if target is None:
+            self._edit_tags(lambda: self.controller.save_tags(path, fields, picture))
+            return
+        self._edit_tags(lambda: self.controller.save_and_rename(path, fields, picture, target))
+
+    def undo_rename_from_menu(self) -> None:
+        self._undo_rename(from_menu=True)
+
+    def _undo_from_dialog(self, old: str, new: str) -> None:
+        if self.controller.last_rename() != (old, new):   # 그 사이 다른 이름 바꾸기가 있었다
+            self.info_dialog.clear_undo()
+            return
+        self._undo_rename()
+
+    def _undo_rename(self, from_menu: bool = False) -> None:
+        last = self.controller.last_rename()
+        if last is None:
+            return
+        shown_new = last[1]
+        dialog = self.info_dialog
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            old, text = self.controller.undo_rename()
+        finally:
+            QApplication.restoreOverrideCursor()
+        if dialog is not None:
+            showing = (dialog.isVisible()
+                       and os.path.normcase(dialog.path) == os.path.normcase(shown_new))
+            if old is not None and showing:
+                info = self._info_for_path(old)
+                dialog.renamed_back(info, load_cover(info))
+            elif old is None and dialog.isVisible():
+                dialog.failed(text)
+            if from_menu:
+                dialog.clear_undo()
+        self._cover_key = object()
+        self.refresh()
+
+    def _info_for_path(self, path: str) -> TrackInfo:
+        for i, t in enumerate(self.controller.playlist.tracks):
+            if os.path.normcase(t.path) == os.path.normcase(path):
+                return self.controller.info_for(i)
+        return tags.read_info(path)
 
     def _clear_tags(self, path: str) -> None:
         self._edit_tags(lambda: self.controller.clear_tags(path))
@@ -874,13 +933,16 @@ class PlayerPanel(QWidget):
         dialog = self.info_dialog
         QApplication.setOverrideCursor(Qt.WaitCursor)   # 큰 파일·느린 드라이브에서 멈춘 게 아님을 보인다
         try:
-            info = write()
-        except TagWriteError as e:
+            result = write()
+        except (TagWriteError, RenameError) as e:
             dialog.failed(str(e))
             return
         finally:
             QApplication.restoreOverrideCursor()
-        dialog.saved(info, load_cover(info))
+        if isinstance(result, TrackInfo):
+            dialog.saved(result, load_cover(result))
+        else:   # 저장+이름 바꾸기 결과
+            dialog.saved(result.info, load_cover(result.info), result.renamed_from, result.warning)
         self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
         self.refresh()
 
