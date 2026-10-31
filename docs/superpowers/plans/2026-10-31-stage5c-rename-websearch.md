@@ -81,7 +81,7 @@
 
 - [ ] **Step 1: Write failing tests.**
   - `test_clean_part_invalid_chars`: `clean_part('AC/DC: "Live"?') == "AC_DC_ _Live__"`.
-  - `test_clean_part_control_and_spaces`: `clean_part(" a\t\x01  b. ") == "a _ b"`. Tab is a control char → `_`; runs collapse; trailing `.` stripped.
+  - `test_clean_part_control_and_spaces`: `clean_part(" a\t\x01  b. ") == "a__ b"`. Tab and `\x01` are control chars → `_` each; space runs collapse to one; trailing `.` stripped.
   - `test_build_name_basic`: `build_name("서지원", "I Miss You", ".mp3") == "서지원 - I Miss You.mp3"`.
   - `test_build_name_empty_part`: `build_name("", "x", ".mp3") == ""` and `build_name("a", "  ", ".mp3") == ""`.
   - `test_is_reserved`: helper `is_reserved(stem)`: `"nul"`, `"COM3"`, `"lpt9"` → True; `"COM10"`, `"a - b"` → False. `build_name` appends `_` to the stem when `is_reserved(stem)` (a guard; the `a - t` pattern rarely hits it).
