@@ -910,3 +910,135 @@ def test_save_radio_source_no_reload(tmp_path):
     c.source = "radio"
     c.save_tags(a, {"title": "x"})
     assert fake.calls == [("write", a)]
+
+
+# --- 저장하며 이름 바꾸기 / 되돌리기 (5-C) ---
+from funplayer.controller import (RENAME_EXISTS, RENAME_FAILED, RENAME_PARTIAL, UNDO_DONE,
+                                  UNDO_EXISTS, UNDO_FAILED, UNDO_MISSING)
+from funplayer.core.renamer import RenameError, RenameLog, rename_file
+
+def rn_ctl(tmp_path, rename_file_fn=None, fail_write=False, names=("a.mp3", "b.mp3")):
+    fake = FakePlayer()
+    writes = []
+    def writer(path, fields=None, picture=KEEP):
+        writes.append(path)
+        if fail_write:
+            raise TagWriteError("fail")
+    settings = Settings({}, lambda: None)
+    c = PlayerController(fake, settings, read_info=lambda p: TrackInfo(p),
+                         write_tags=writer, rename_log=RenameLog(None),
+                         rename_file=rename_file_fn)
+    folder = make_songs(tmp_path, list(names))
+    c.open([str(folder)])
+    fake.calls.clear()
+    return c, fake, writes, settings, str(folder / names[0]), str(folder / "가수 - 제목.mp3")
+
+def test_rename_playing_reloads_new_path(tmp_path):
+    c, fake, writes, settings, a, new = rn_ctl(tmp_path)
+    settings.last_track = a
+    fake.position = 12.0
+    out = c.save_and_rename(a, {"title": "제목"}, KEEP, new)
+    assert fake.calls == [("unload",), ("load", new), ("seek", 12.0), ("play",)]
+    assert fake.state is State.PLAYING and writes == [a]
+    assert os.path.exists(new) and not os.path.exists(a)
+    assert c.playlist.tracks[0].path == new and settings.last_track == new
+    assert c.info.path == new and out.info.path == new and out.renamed_from == a and out.warning == ""
+    assert c.last_rename() == (a, new)
+
+def test_rename_paused_stays_paused(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path)
+    fake.position = 10.0; fake.pause(); fake.calls.clear()
+    c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert fake.calls == [("unload",), ("load", new), ("seek", 10.0), ("play",), ("pause",)]
+    assert fake.state is State.PAUSED
+
+def test_rename_only_skips_tag_write(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path)
+    out = c.save_and_rename(a, {}, KEEP, new)
+    assert writes == [] and out.renamed_from == a and os.path.exists(new)
+
+def test_conflict_writes_nothing(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path)
+    open(new, "wb").write(b"other")
+    before = open(a, "rb").read()
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert str(e.value) == RENAME_EXISTS.format(name="가수 - 제목.mp3")
+    assert writes == [] and fake.calls == [] and open(a, "rb").read() == before
+    assert c.last_rename() is None
+
+def _boom(old, new):
+    raise RenameError("busy")
+
+def test_rename_failure_reloads_old_path(tmp_path):
+    c, fake, writes, settings, a, new = rn_ctl(tmp_path, _boom)
+    fake.position = 5.0
+    out = c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert out.warning == RENAME_PARTIAL and out.renamed_from is None and out.info.path == a
+    assert writes == [a] and fake.calls == [("unload",), ("load", a), ("seek", 5.0), ("play",)]
+    assert c.playlist.tracks[0].path == a and c.last_rename() is None
+
+def test_rename_only_failure_raises(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _boom)
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {}, KEEP, new)
+    assert str(e.value) == RENAME_FAILED and writes == []
+    assert fake.calls == [("unload",), ("load", a), ("play",)]
+    assert c.last_rename() is None
+
+def test_tag_failure_no_rename(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, fail_write=True)
+    with pytest.raises(TagWriteError):
+        c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert os.path.exists(a) and not os.path.exists(new)
+    assert ("load", a) in fake.calls and c.last_rename() is None
+
+def test_rename_updates_last_track(tmp_path):
+    c, fake, _, settings, a, new = rn_ctl(tmp_path)
+    c.playlist.add([os.path.join(os.path.dirname(a), "A.MP3")])   # 대소문자만 다른 중복 줄
+    settings.last_track = os.path.join(os.path.dirname(a), "A.MP3")
+    c.save_and_rename(a, {}, KEEP, new)
+    assert [t.path for t in c.playlist.tracks if t.path == new] == [new, new]
+    assert settings.last_track == new
+
+def test_undo_roundtrip(tmp_path):
+    c, fake, _, settings, a, new = rn_ctl(tmp_path)
+    settings.last_track = a
+    c.save_and_rename(a, {}, KEEP, new)
+    fake.position = 3.0; fake.calls.clear()
+    assert c.undo_rename() == (a, UNDO_DONE)
+    assert os.path.exists(a) and not os.path.exists(new)
+    assert fake.calls == [("unload",), ("load", a), ("seek", 3.0), ("play",)]
+    assert c.playlist.tracks[0].path == a and settings.last_track == a
+    assert c.last_rename() is None and c.status == UNDO_DONE and not c.status_error
+
+def test_undo_missing_pops(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path)
+    c.save_and_rename(a, {}, KEEP, new)
+    os.remove(new)
+    assert c.undo_rename() == (None, UNDO_MISSING.format(name="가수 - 제목.mp3"))
+    assert c.last_rename() is None and c.status_error
+
+def test_undo_conflict_keeps_entry(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path, rename_file)
+    c.save_and_rename(a, {}, KEEP, new)
+    open(a, "wb").write(b"other")
+    assert c.undo_rename() == (None, UNDO_EXISTS.format(name="a.mp3"))
+    assert c.last_rename() == (a, new) and c.status_error and os.path.exists(new)
+
+def test_undo_other_error_keeps_entry(tmp_path):
+    calls = []
+    def flaky(old, new):
+        calls.append(1)
+        if len(calls) > 1:
+            raise RenameError("busy")
+        rename_file(old, new)
+    c, fake, _, _, a, new = rn_ctl(tmp_path, flaky)
+    c.save_and_rename(a, {}, KEEP, new)
+    assert c.undo_rename() == (None, UNDO_FAILED)
+    assert c.last_rename() == (a, new) and c.playlist.tracks[0].path == new
+
+def test_undo_empty_log(tmp_path):
+    c, *_ = rn_ctl(tmp_path)
+    c._set_status("그대로", False)
+    assert c.undo_rename() == (None, "") and c.status == "그대로"
