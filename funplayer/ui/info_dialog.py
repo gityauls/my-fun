@@ -340,6 +340,7 @@ class TrackInfoDialog(QDialog):
         self.rename_box.clicked.connect(self._on_rename_clicked)
 
     def _on_rename_clicked(self, checked: bool) -> None:
+        self.clear_undo()
         self._refresh_state()
         self.rename_toggled.emit(checked)
 
@@ -460,7 +461,7 @@ class TrackInfoDialog(QDialog):
 
     def eventFilter(self, obj, event) -> bool:
         if (event.type() == QEvent.KeyPress and self._editable and event.matches(QKeySequence.Paste)
-                and self._paste_picture()):
+                and self._paste_picture(isinstance(obj, QLineEdit))):
             return True   # 클립보드에 그림이 있을 때만 막는다: 글자는 그대로 붙는다
         if (obj in (self.search_title, self.search_artist) and event.type() == QEvent.KeyPress
                 and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
@@ -749,6 +750,7 @@ class TrackInfoDialog(QDialog):
 
     def _on_edited(self, *_args) -> None:
         self._transient = None
+        self.clear_undo()   # 고친 뒤에 되돌리면 새로 고친 값이 날아간다
         self._refresh_state()
 
     def _refresh_state(self) -> None:
@@ -798,6 +800,7 @@ class TrackInfoDialog(QDialog):
     def set_picture_bytes(self, data: bytes) -> bool:
         if not self._editable:
             return False
+        self.clear_undo()
         if picture_mime(data) is None:
             return self._picture_error("jpg·png 그림만 넣을 수 있습니다")
         if len(data) > MAX_PICTURE:
@@ -810,6 +813,7 @@ class TrackInfoDialog(QDialog):
         return True
 
     def _picture_error(self, text: str) -> bool:
+        self.clear_undo()
         self._transient = (text, ERROR_COLOR)
         self._refresh_state()
         return False
@@ -833,6 +837,7 @@ class TrackInfoDialog(QDialog):
 
     def _remove_picture(self) -> None:
         has_embedded = bool(self._info and self._info.picture)
+        self.clear_undo()
         self._picture = REMOVE if has_embedded else KEEP
         self._picture_pm = None
         self._transient = None
@@ -855,12 +860,18 @@ class TrackInfoDialog(QDialog):
         return None
 
     @staticmethod
-    def _mime_image_bytes(mime) -> bytes | None:
-        """그림 데이터를 JPEG(품질 90) 바이트로. 없거나 못 바꾸면 None."""
+    def _mime_image(mime) -> QImage | None:
+        """읽을 수 있는 그림 데이터가 있으면 그것."""
         if not mime.hasImage():
             return None
         img = mime.imageData()
-        if not isinstance(img, QImage) or img.isNull():
+        return img if isinstance(img, QImage) and not img.isNull() else None
+
+    @classmethod
+    def _mime_image_bytes(cls, mime) -> bytes | None:
+        """그림 데이터를 JPEG(품질 90) 바이트로. 없거나 못 바꾸면 None."""
+        img = cls._mime_image(mime)
+        if img is None:
             return None
         if img.hasAlphaChannel():
             img = img.convertToFormat(QImage.Format_RGB32)   # JPEG에는 투명이 없다
@@ -881,12 +892,15 @@ class TrackInfoDialog(QDialog):
             return True
         return False
 
-    def _paste_picture(self) -> bool:
+    def _paste_picture(self, in_text_field: bool = False) -> bool:
         mime = QApplication.clipboard().mimeData()
-        return mime is not None and self._picture_from_mime(mime)
+        if mime is None or (in_text_field and mime.hasText() and not mime.hasUrls()):
+            return False   # 글자 칸 안에서는 글자가 먼저
+        return self._picture_from_mime(mime)
 
     def _fetch_dropped(self, url: str) -> None:
         token = self._token()
+        self.clear_undo()
         self._transient = ("그림 받는 중…", INFO_COLOR)
         self._refresh_state()
         fetch = self._fetch_image
@@ -905,7 +919,8 @@ class TrackInfoDialog(QDialog):
 
     def dragEnterEvent(self, event) -> None:
         mime = event.mimeData()
-        if self._editable and (mime.hasImage() or self._mime_file(mime) or self._can_fetch(mime)):
+        if self._editable and (self._mime_image(mime) is not None or self._mime_file(mime)
+                               or self._can_fetch(mime)):
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)

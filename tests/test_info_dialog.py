@@ -755,3 +755,60 @@ def test_drop_url_late_reply_ignored(qapp, tmp_path):
     d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)
     w, dn = pending[0]; dn(w(), None)
     assert d._picture is KEEP
+
+
+# ---- 5-C 수정 1차 ----
+def renamed_editor(qapp, tmp_path, **kw):
+    d, f, opened = web_editor(qapp, tmp_path, **kw)
+    d.saved(TrackInfo(str(tmp_path / "n.mp3"), title="I Miss You", artist="서지원"), None, renamed_from=str(f))
+    assert d.undo_link.isVisible()
+    return d, f
+
+
+def test_undo_link_hidden_after_edit(qapp, tmp_path):
+    d, f = renamed_editor(qapp, tmp_path)
+    set_text(d.edits["album"], "X")
+    assert not d.undo_link.isVisible() and d._undo_pair is None
+
+
+def test_undo_link_hidden_after_picture_changes(qapp, tmp_path):
+    d, f = renamed_editor(qapp, tmp_path)
+    d.set_picture_bytes(PNG)
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d.set_picture_bytes(b"bad")   # 오류 문구도 사용자 변경
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d._remove_picture()
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d.rename_box.click()
+    assert not d.undo_link.isVisible()
+
+
+def test_ctrl_v_text_wins_in_text_field(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    m = QMimeData(); m.setImageData(png_image()); m.setText("abc")
+    QApplication.clipboard().setMimeData(m)
+    d.edits["title"].setCursorPosition(0)
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert d._picture is KEEP and d.edits["title"].text() == "abcI Miss You"
+    # 글자 칸이 아닌 곳이면 그림
+    QTest.keyClick(d.save_button, Qt.Key_V, Qt.ControlModifier)
+    assert isinstance(d._picture, bytes)
+
+
+def test_ctrl_v_image_with_html_only_sets_cover(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    m = QMimeData(); m.setImageData(png_image()); m.setHtml("<img src='x'>")
+    QApplication.clipboard().setMimeData(m)
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert isinstance(d._picture, bytes) and d.edits["title"].text() == "I Miss You"
+
+
+def test_drop_image_beats_url(qapp, tmp_path):
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = QMimeData(); m.setImageData(png_image()); m.setUrls([QUrl("http://x.example/a.png")])
+    drop_mime(d, m)
+    assert seen == [] and d._picture[:2] == b"\xff\xd8"
