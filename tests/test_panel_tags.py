@@ -6,9 +6,13 @@ import pytest
 from PyQt5.QtCore import QBuffer, QByteArray, QIODevice
 from PyQt5.QtGui import QColor, QImage, QPixmap
 from fakes import FakePlayer, FakeRunner, make_songs
+from funplayer.controller import (RENAME_EXISTS, RENAME_PARTIAL, UNDO_EXISTS, UNDO_FAILED,
+                                  UNDO_MISSING)
+from funplayer.core.renamer import RenameError
 from funplayer.core.settings import Settings
 from funplayer.core.taginfo import TrackInfo
 from funplayer.engine.tagwrite import KEEP, TagWriteError
+from funplayer.ui.colors import ERROR_COLOR, RENAME_OK_COLOR
 from funplayer.ui.player_panel import PlayerPanel
 
 
@@ -203,11 +207,12 @@ def test_conflict_shows_red_and_writes_nothing(rename_rig):
     d.edits["artist"].setText("가수"); d.edits["title"].setText("제목")
     d.rename_box.click()
     assert d.rename_preview.text() == "같은 이름의 파일이 이미 있습니다"
-    # 미리보기 뒤에 겹친 경우를 흉내 낸다: 저장 경로가 겹침 오류를 받아도 아무것도 쓰지 않는다
-    d.rename_target = lambda: str(other)
+    d.edits["album"].setText("앨범")   # 겹침이 보이는 채로 칸을 고쳐 저장
     d.save_button.click()
     assert path.read_bytes() == before and other.read_bytes() == b"x"
-    assert d.message_label.text().startswith("같은 이름의 파일이 이미 있습니다")
+    assert d.message_label.text() == RENAME_EXISTS.format(name="가수 - 제목.mp3")
+    assert ERROR_COLOR in d.message_label.styleSheet()
+    assert d.edits["album"].text() == "앨범" and d.is_dirty()   # 고친 칸은 그대로
     assert p.controller.last_rename() is None
 
 
@@ -256,3 +261,107 @@ def test_dialog_undo_stale_pair_ignored(rename_rig):
     assert new.exists() and not path.exists()
     assert p.controller.last_rename() == (str(path), str(new))
     assert d.undo_link.isHidden()
+
+
+# ---- 5-C 최종 검토 수정 ----
+def test_menu_undo_dirty_dialog_keeps_edits(rename_rig):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    d.edits["album"].setText("고치는 중")
+    p.undo_rename_from_menu()
+    assert path.exists() and not new.exists()
+    assert d.path == str(path) and d.path_label.text() == str(path)
+    assert d.edits["album"].text() == "고치는 중" and d.is_dirty()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다" and RENAME_OK_COLOR in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible()
+
+
+def test_menu_undo_clean_dialog_repopulates(rename_rig):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    p.undo_rename_from_menu()
+    assert d.path == str(path) and not d.is_dirty()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다"
+
+
+def test_menu_elides_long_names(rename_rig):
+    p, settings, path, log = rename_rig
+    _rename_save(p, "가" * 30, "나" * 30)
+    p._update_actions()
+    text = p.actions["undo_rename"].text()
+    new_part, old_part = text[len("이름 되돌리기: "):].split(" → ")
+    assert new_part == ("가" * 30 + " - " + "나" * 30 + ".mp3")[:39] + "…" and len(new_part) == 40
+    assert old_part == "곡.mp3"
+
+
+def _failing_undo(rename_rig, how, monkeypatch):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    if how == "missing":
+        new.unlink()
+        text = UNDO_MISSING.format(name="가수 - 제목.mp3")
+    elif how == "exists":
+        path.write_bytes(b"other")
+        text = UNDO_EXISTS.format(name="곡.mp3")
+    else:
+        def boom(old, new_):
+            raise RenameError("busy")
+        monkeypatch.setattr(p.controller, "_rename_file", boom)
+        text = UNDO_FAILED
+    return p, d, text
+
+
+@pytest.mark.parametrize("how", ["missing", "exists", "other"])
+def test_menu_undo_failure_shown_in_dialog(rename_rig, monkeypatch, how):
+    p, d, text = _failing_undo(rename_rig, how, monkeypatch)
+    p.undo_rename_from_menu()
+    assert d.message_label.text() == text and ERROR_COLOR in d.message_label.styleSheet()
+    assert text[:10] in p.status_label.text()   # 상태 줄은 길면 줄여 보인다
+
+
+def test_menu_undo_failure_not_shown_for_other_file(rename_rig, monkeypatch):
+    p, d, text = _failing_undo(rename_rig, "missing", monkeypatch)
+    f = rename_rig[2].parent / "다른.mp3"; f.write_bytes(b"1")
+    d.show_info(TrackInfo(str(f), title="다른"), None, editable=True)
+    p.undo_rename_from_menu()
+    assert text not in d.message_label.text()
+    assert text[:10] in p.status_label.text()   # 상태 줄은 길면 줄여 보인다
+
+
+def test_partial_rename_warning_red_via_panel(rename_rig, monkeypatch):
+    p, settings, path, log = rename_rig
+    def boom(old, new):
+        raise RenameError("busy")
+    monkeypatch.setattr(p.controller, "_rename_file", boom)
+    d = _rename_save(p)
+    assert d.message_label.text() == RENAME_PARTIAL and ERROR_COLOR in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible() and path.exists()
+
+
+def test_undo_playing_renamed_track(rename_rig):
+    p, settings, path, log = rename_rig
+    p.controller.play_index(0); p.refresh()
+    _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    assert p.controller.playlist.current.path == str(new)
+    p.undo_rename_from_menu()
+    c = p.controller
+    assert c.playlist.current.path == str(path) and c.playlist.index == 0
+    assert c.info.path == str(path)
+    assert p.playlist_view.item(0).text().endswith("곡")
+    assert p.title_label.text() == c.title and c.title
+    assert ("load", str(path)) in p._player.calls if hasattr(p, "_player") else True
+
+
+def test_undo_link_real_mouse_click(rename_rig):
+    p, settings, path, log = rename_rig
+    d = _rename_save(p)
+    new = path.with_name("가수 - 제목.mp3")
+    assert d.undo_link.isVisible()
+    from PyQt5.QtCore import QPoint, Qt
+    from PyQt5.QtTest import QTest
+    QTest.mouseClick(d.undo_link, Qt.LeftButton, Qt.NoModifier, QPoint(6, d.undo_link.height() // 2))
+    assert path.exists() and not new.exists()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다"

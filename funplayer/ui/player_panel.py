@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -902,23 +903,19 @@ class PlayerPanel(QWidget):
             return
         shown_new = last[1]
         dialog = self.info_dialog
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
+        with self._busy_cursor():
             old, text = self.controller.undo_rename()
-        finally:
-            QApplication.restoreOverrideCursor()
         if dialog is not None:
             showing = (dialog.isVisible()
                        and os.path.normcase(dialog.path) == os.path.normcase(shown_new))
             if old is not None and showing:
                 info = self._info_for_path(old)
-                dialog.renamed_back(info, load_cover(info))
-            elif old is None and dialog.isVisible():
+                dialog.renamed_back(info, load_cover(info))   # 고치던 칸이 있으면 renamed_back이 지킨다
+            elif old is None and showing:   # 다른 곡을 보고 있으면 상태 줄 알림만
                 dialog.failed(text)
             if from_menu:
                 dialog.clear_undo()
-        self._cover_key = object()
-        self.refresh()
+        self._after_file_edit()
 
     def _info_for_path(self, path: str) -> TrackInfo:
         for i, t in enumerate(self.controller.playlist.tracks):
@@ -931,18 +928,28 @@ class PlayerPanel(QWidget):
 
     def _edit_tags(self, write) -> None:
         dialog = self.info_dialog
-        QApplication.setOverrideCursor(Qt.WaitCursor)   # 큰 파일·느린 드라이브에서 멈춘 게 아님을 보인다
         try:
-            result = write()
+            with self._busy_cursor():
+                result = write()
         except (TagWriteError, RenameError) as e:
             dialog.failed(str(e))
             return
-        finally:
-            QApplication.restoreOverrideCursor()
         if isinstance(result, TrackInfo):
             dialog.saved(result, load_cover(result))
         else:   # 저장+이름 바꾸기 결과
             dialog.saved(result.info, load_cover(result.info), result.renamed_from, result.warning)
+        self._after_file_edit()
+
+    @staticmethod
+    @contextmanager
+    def _busy_cursor():
+        QApplication.setOverrideCursor(Qt.WaitCursor)   # 큰 파일·느린 드라이브에서 멈춘 게 아님을 보인다
+        try:
+            yield
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _after_file_edit(self) -> None:
         self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
         self.refresh()
 
