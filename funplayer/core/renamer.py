@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 MAX_NAME = 150   # 확장자 포함 이름 길이
 MAX_PATH = 259   # 전체 경로 길이
 MAX_LOG = 200    # 기록에 남기는 줄 수
 
-_BAD = re.compile(r'[\/:*?"<>|\x00-\x1f]')
-_SPACES = re.compile(r" {2,}")
+_BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+_SPACES = re.compile(r"\s+")
 _RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.IGNORECASE)
 
 
 def clean_part(s: str) -> str:
     s = _BAD.sub("_", s)
-    s = _SPACES.sub(" ", s).strip()
+    s = _SPACES.sub(" ", s).strip()   # 전각·NBSP 등 모든 공백 덩어리 -> 빈칸 하나
     return s.rstrip(". ")
 
 
@@ -30,15 +33,15 @@ def build_name(artist: str, title: str, ext: str, dir_len: int = 0) -> str:
         return ""
     limit = min(MAX_NAME, MAX_PATH - dir_len - 1)
     keep = limit - len(ext) - len(a) - 3   # 제목에 남길 수 있는 글자 수
-    for _ in range(2):
-        t = t[:max(keep, 0)].rstrip(". ")
+    t = t[:max(keep, 0)].rstrip(". ")
+    if not t:
+        return ""
+    stem = f"{a} - {t}"
+    if is_reserved(stem):   # 예약 이름 보호: 뒤에 _ (한 글자 더 줄여 길이를 지킨다)
+        t = t[:max(keep - 1, 0)].rstrip(". ")
         if not t:
             return ""
-        stem = f"{a} - {t}"
-        if not is_reserved(stem):
-            break
-        stem += "_"                         # 예약 이름이면 뒤에 _ (한 글자 더 줄여 다시 맞춘다)
-        keep -= 1
+        stem = f"{a} - {t}_"
     return stem + ext
 
 
@@ -112,8 +115,12 @@ class RenameLog:
             with open(tmp, "w", encoding="utf-8", newline="\n") as f:
                 f.write("".join("\t".join(r) + "\n" for r in self._rows))
             os.replace(tmp, self._path)
-        except OSError:
-            pass   # 기록을 못 써도 이름 바꾸기 자체는 막지 않는다
+        except OSError as e:
+            logger.warning("rename log save failed: %s", e)   # 기록 실패가 이름 바꾸기를 막지는 않는다
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     def add(self, old: str, new: str) -> None:
         stamp = datetime.fromtimestamp(self._clock()).isoformat(timespec="seconds")

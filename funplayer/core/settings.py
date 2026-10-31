@@ -237,6 +237,7 @@ class Settings:
     @fx_open.setter
     def fx_open(self, value: bool) -> None:
         self._set("player_fx_open", bool(value))
+
     @property
     def rename_on_save(self) -> bool:
         value = self._store.get("player_rename_on_save")

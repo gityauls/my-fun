@@ -34,10 +34,29 @@ def test_build_name_truncates():
     assert name and 200 + 1 + len(name) <= 259
 
 def test_build_name_truncation_strips_trailing_dot_and_space():
-    name = build_name("a", "x" * 10 + ". " + "y" * 300, ".mp3", dir_len=0)
-    assert not name[:-4].endswith((" ", "."))
-    name = build_name("a", "x" * 5 + ". " + "y" * 300, ".mp3", dir_len=240 - 9 - 8)
-    assert name and name[:-4].rstrip(". ") == name[:-4]
+    # 제목은 142자까지 남는데 140자 뒤가 ". " 이므로 자른 끝의 ". "를 다시 뗀다
+    name = build_name("a", "x" * 140 + ". " + "y" * 50, ".mp3")
+    assert name == "a - " + "x" * 140 + ".mp3"
+
+def test_clean_part_backslash():
+    assert clean_part("a\\b") == "a_b"
+
+def test_backslash_in_parts_stays_in_folder():
+    assert build_name("a\\b", "c\\d", ".mp3") == "a_b - c_d.mp3"
+    p = target_path(r"C:\m\x.mp3", "a\\b", "c\\d")
+    assert os.path.dirname(p) == r"C:\m" and os.path.basename(p) == "a_b - c_d.mp3"
+
+def test_clean_part_unicode_whitespace():
+    assert clean_part("a\u3000\xa0 b") == "a b"
+
+def test_log_save_failure_logged_and_tmp_removed(tmp_path, monkeypatch, caplog):
+    log = RenameLog(str(tmp_path / "log.txt"))
+    def boom(a, b): raise PermissionError("locked")
+    monkeypatch.setattr(os, "replace", boom)
+    with caplog.at_level("WARNING"):
+        log.add("o", "n")
+    assert "rename log save failed" in caplog.text
+    assert log.last() == ("o", "n") and os.listdir(tmp_path) == []
 
 def test_build_name_no_room_for_title():
     assert build_name("a" * 160, "t", ".mp3") == ""
