@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from funplayer.core.tagguess import guess_from_filename
+from funplayer.core.tagguess import clean_search_title, guess_from_filename
 
 
 @pytest.mark.parametrize("path, expected", [
@@ -15,3 +15,14 @@ from funplayer.core.tagguess import guess_from_filename
 ])
 def test_guess(path, expected):
     assert guess_from_filename(path) == expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("02. I Miss You.mp3", "I Miss You"),
+    ("I Miss You", "I Miss You"),
+    ("7 - 그대향기", "그대향기"),
+    ("1999", "1999"),
+    ("", ""),
+])
+def test_clean_search_title(raw, expected):
+    assert clean_search_title(raw) == expected

@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
-from funplayer.core.tagguess import guess_from_filename
+from funplayer.core.tagguess import clean_search_title, guess_from_filename
 from funplayer.core.taginfo import TrackInfo, format_line, format_size
 from funplayer.core.timefmt import format_time
 from funplayer.engine.tagwrite import KEEP, REMOVE, picture_mime
@@ -363,7 +363,7 @@ class TrackInfoDialog(QDialog):
             artist, title = info.artist, info.title
         else:
             artist, title = guess_from_filename(self._path)
-        self.search_title.setText(title)
+        self.search_title.setText(clean_search_title(title))
         self.search_artist.setText(artist)
 
     def _update_search_buttons(self) -> None:
