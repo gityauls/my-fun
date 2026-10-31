@@ -144,6 +144,18 @@ class Playlist:
             extra.extend(i for i in members if i != keep)
         return sorted(extra)
 
+    def rename_path(self, old: str, new: str) -> int:
+        """같은 파일(대소문자 무시)인 모든 줄의 경로를 새 경로로 바꾼다. 줄 수는 그대로."""
+        key = os.path.normcase(os.path.abspath(old))
+        n = 0
+        for t in self.tracks:
+            if os.path.normcase(os.path.abspath(t.path)) == key:
+                t.path = new
+                n += 1
+        if n:
+            self.version += 1
+        return n
+
     def unplayable_indices(self, exists: Callable[[str], bool] = os.path.exists) -> list[int]:
         return [i for i, t in enumerate(self.tracks) if t.failed or not exists(t.path)]
 

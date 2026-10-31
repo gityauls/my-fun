@@ -18,7 +18,8 @@ def test_defaults():
                         "player_last_source": "file", "player_last_station": "",
                         "player_tab": "playlist",
                         "player_radio_open": ["favorites", "kr:big3", "user"],
-                        "player_fx": {}, "player_fx_visible": False, "player_fx_open": True}
+                        "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
+                        "player_rename_on_save": False}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -150,3 +151,12 @@ def test_fx_keys_round_trip():
     assert store["player_fx"] == {"enabled": True} and store["player_fx_visible"] is True
     assert store["player_fx_open"] is False and len(saves) == 3
     assert s.fx == {"enabled": True} and s.fx_visible is True and s.fx_open is False
+
+def test_rename_on_save_default_and_bad_value():
+    s, store, saves = make()
+    assert s.rename_on_save is False and DEFAULTS["player_rename_on_save"] is False
+    for bad in ("yes", 1, None, []):
+        store["player_rename_on_save"] = bad
+        assert s.rename_on_save is False
+    s.rename_on_save = True
+    assert store["player_rename_on_save"] is True and s.rename_on_save is True and saves
