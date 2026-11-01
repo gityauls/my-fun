@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 DASH = "—"
 ART_SIZE = 120
 MAX_PICTURE = 10 * 1024 * 1024
+_IMG_SRC = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 FIELD_KEYS = {"제목": "title", "가수": "artist", "앨범": "album", "년도": "year", "장르": "genre", "트랙": "track"}
 GENRES = ["발라드", "댄스", "록", "팝", "힙합", "알앤비", "재즈", "클래식", "일렉트로닉", "트로트", "어쿠스틱",
           "블루스", "인디", "OST"]
@@ -877,6 +878,15 @@ class TrackInfoDialog(QDialog):
 
     @staticmethod
     def _mime_http_url(mime) -> str | None:
+        # 링크로 감싼 그림(멜론 검색 결과 등)을 끌면 URL은 링크 페이지라서 HTML 속 그림 주소를 먼저 본다
+        if mime.hasHtml():
+            m = _IMG_SRC.search(mime.html())
+            if m:
+                src = html.unescape(m.group(1)).strip()
+                if src.startswith("//"):
+                    src = "https:" + src
+                if src.lower().startswith(("http://", "https://")):
+                    return src
         urls = mime.urls()
         if len(urls) == 1 and urls[0].scheme().lower() in ("http", "https"):
             return urls[0].toString()

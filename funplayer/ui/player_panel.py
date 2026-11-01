@@ -9,7 +9,7 @@ import numpy as np
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
-    QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
+    QAbstractItemView, QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -115,6 +115,7 @@ class PlayerPanel(QWidget):
         self._dragging = False
         self._list_version = -1
         self._layout_version = -1
+        self._followed_index = None   # 목록이 마지막으로 따라가 보여 준 현재 곡 줄
         self.actions: dict[str, QAction] = {}
         self.info_dialog: TrackInfoDialog | None = None
         self._icon_key: tuple[str, bool] | None = None
@@ -1143,6 +1144,12 @@ class PlayerPanel(QWidget):
         elif pl.version != self._list_version:
             self._repaint_rows()
             self._list_version = pl.version
+        if pl.index != self._followed_index:
+            # 곡이 바뀌면(무작위 포함) 그 줄이 보이게 굴린다. 이미 보이면 움직이지 않는다
+            self._followed_index = pl.index
+            item = self.playlist_view.item(pl.index) if pl.index is not None else None
+            if item is not None:
+                self.playlist_view.scrollToItem(item, QAbstractItemView.EnsureVisible)
 
         self._refresh_modes()
         self.repeat_button.setEnabled(not on_radio)

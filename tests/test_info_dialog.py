@@ -735,6 +735,24 @@ def test_drop_http_url_fetches(qapp, tmp_path):
     assert d3.message_label.text() == "jpg·png 그림만 넣을 수 있습니다"
 
 
+def test_drop_linked_image_fetches_img_src(qapp, tmp_path):
+    # 멜론처럼 <a>로 감싼 그림: URL은 앨범 페이지, HTML에 진짜 그림 주소
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = url_mime("https://www.example.com/album/detail.htm?id=1")
+    m.setHtml('<a href="https://www.example.com/album"><img alt="x" src="//cdn.example.com/a.jpg?a=1&amp;b=2"></a>')
+    drop_mime(d, m)
+    assert seen == ["https://cdn.example.com/a.jpg?a=1&b=2"] and d._picture == PNG
+
+
+def test_drop_html_without_http_img_uses_url(qapp, tmp_path):
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = url_mime("https://x.example/a.png"); m.setHtml("<img src='data:image/png;base64,AAAA'>")
+    drop_mime(d, m)
+    assert seen == ["https://x.example/a.png"]
+
+
 def test_drop_url_shows_progress_and_ignored_without_run_async(qapp, tmp_path):
     pending = []
     d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
