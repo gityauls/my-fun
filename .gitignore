@@ -4,3 +4,14 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# 개인 자료 (올리지 않음)
+Test-mp3/
+*.mp3
+*.m3u8
+*.m3u
+*.pls
+*.exe
+*.zip
+radio.bsod.kr-main/
+통합 인터넷 라디오 프로그램 개발 참고자료.md
