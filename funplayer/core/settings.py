@@ -18,7 +18,8 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_geometry": None, "player_mini_geometry": None,
             "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
             "player_radio_open": ["favorites", "kr:big3", "user"],
-            "player_fx": {}, "player_fx_visible": False, "player_fx_open": True}
+            "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
+            "player_rename_on_save": False}
 
 LAST_SOURCES = ("file", "radio")
 TABS = ("playlist", "radio")
@@ -236,6 +237,15 @@ class Settings:
     @fx_open.setter
     def fx_open(self, value: bool) -> None:
         self._set("player_fx_open", bool(value))
+
+    @property
+    def rename_on_save(self) -> bool:
+        value = self._store.get("player_rename_on_save")
+        return value if isinstance(value, bool) else DEFAULTS["player_rename_on_save"]
+
+    @rename_on_save.setter
+    def rename_on_save(self, value: bool) -> None:
+        self._set("player_rename_on_save", bool(value))
 
 
 class JsonStore:

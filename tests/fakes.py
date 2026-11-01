@@ -11,6 +11,7 @@ class FakePlayer:
     def __init__(self, missing_fails: bool = False) -> None:
         self.missing_fails = missing_fails
         self.loaded: list[str] = []
+        self.calls: list[tuple] = []   # load/unload/seek/play/pause 순서 기록
         self.seeks: list[float] = []
         self.gain = 1.0
         self.effects = None
@@ -45,6 +46,7 @@ class FakePlayer:
         self.stream_lost = False
 
     def load(self, path: str) -> None:
+        self.calls.append(("load", path))
         self.loaded.append(path)
         self.is_live = False
         self.stream_lost = False
@@ -59,6 +61,7 @@ class FakePlayer:
         self.duration = 180.0
 
     def unload(self) -> None:
+        self.calls.append(("unload",))
         self.has_track = False
         self.is_live = False
         self.stream_lost = False
@@ -67,10 +70,12 @@ class FakePlayer:
         self.state = State.STOPPED
 
     def play(self) -> None:
+        self.calls.append(("play",))
         if self.has_track:
             self.state = State.PLAYING
 
     def pause(self) -> None:
+        self.calls.append(("pause",))
         if self.state is State.PLAYING:
             self.state = State.PAUSED
 
@@ -79,6 +84,7 @@ class FakePlayer:
         self.position = 0.0
 
     def seek(self, sec: float) -> None:
+        self.calls.append(("seek", sec))
         self.seeks.append(sec)
         self.position = sec
 

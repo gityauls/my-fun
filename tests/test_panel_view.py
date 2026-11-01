@@ -45,8 +45,20 @@ def test_scroll_kept_on_rebuild(panel, tmp_path):
     p, _ = panel; p.resize(380, 480); p.show()
     p.controller.open([str(make_songs(tmp_path, [f"{i:02} s.mp3" for i in range(50)]))]); p.refresh()
     bar = p.playlist_view.verticalScrollBar(); bar.setValue(10)
-    p.controller.next(); p.refresh()
+    p.controller.playlist.layout_version += 1; p.refresh()   # 같은 곡에서 목록만 다시 그림
     assert bar.value() == 10
+
+def test_list_follows_current_track(panel, tmp_path):
+    p, _ = panel; p.resize(380, 480); p.show()
+    p.controller.open([str(make_songs(tmp_path, [f"{i:02} s.mp3" for i in range(50)]))]); p.refresh()
+    v = p.playlist_view; bar = v.verticalScrollBar()
+    p.controller.play_index(45); p.refresh()   # 무작위로 먼 곡이 골라진 경우와 같다
+    assert v.visualItemRect(v.item(45)).intersects(v.viewport().rect())
+    shown = bar.value()
+    p.controller.play_index(44); p.refresh()   # 이미 보이는 줄이면 움직이지 않는다
+    assert bar.value() == shown
+    bar.setValue(0); p.refresh()                # 같은 곡에서 사용자가 굴린 위치는 그대로
+    assert bar.value() == 0
 
 def test_track_end_signal_advances(panel, tmp_path):
     p, fake = panel; p.controller.open([str(make_songs(tmp_path, ["01 a.mp3", "03 c.mp3"]))])

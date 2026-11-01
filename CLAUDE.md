@@ -15,6 +15,12 @@
 - `funplayer/core/genre.py`: 장르 말 → 프리셋 이름 (장르 자동 프리셋, 4-B) — 화면·소리 없음
 - `funplayer/core/spectrum.py`: 소리 조각 → 막대 높이·떨어지는 움직임 (스펙트럼, 4-B) — 화면 없음
 - `funplayer/ui/spectrum_view.py`: 스펙트럼 막대 그리기 (효과 칸 안, 펼침 24개 / 접힘 12개)
+- `funplayer/core/tagguess.py`: 파일 이름 → (가수, 제목) 짐작 (곡 정보 고치기, 5-A) — 화면 없음
+- `funplayer/engine/tagwrite.py`: MP3 태그·그림 쓰기·지우기 (mutagen, 5-A) — 화면 없음
+- `funplayer/musicbrainz.py`: MusicBrainz 곡 찾기·앨범 그림 받기 (5-A) — 화면 없음
+- `funplayer/core/renamer.py`: 파일 이름 짓기·겹침 검사·이름 바꾸기 기록 (5-C) — 화면 없음
+- `funplayer/websearch.py`: 지니·멜론 브라우저 검색 주소 (5-C) — 화면 없음
+- `funplayer/ui/info_dialog.py`: 곡 정보 창 (보기 + 고치기 + 인터넷에서 찾기)
 
 ## 원칙
 - 알송의 코드, 아이콘, 이미지, 문구, 이름을 쓰지 않는다. 기능 아이디어만 참고한다.

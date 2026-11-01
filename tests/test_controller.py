@@ -815,3 +815,247 @@ def test_set_effects_saves_user_settings_not_applied(tmp_path):
     c.open([str(make_songs(tmp_path, ["01 a.mp3"]))])
     assert c.effects.bands == PRESETS["발라드"] and c.effects.auto
     assert fake.effects.bands == PRESETS["록"]
+
+
+# --- 태그 저장/지우기 (5-A) ---
+from funplayer.engine.tagwrite import KEEP, TagWriteError
+
+def tag_ctl(tmp_path, genres=None, fail=False, names=("a.mp3", "b.mp3")):
+    genres = genres if genres is not None else {}
+    fake = FakePlayer()
+    def read(path):
+        return TrackInfo(path, genre=genres.get(os.path.basename(path), ""))
+    def writer(path, fields=None, picture=KEEP):
+        fake.calls.append(("write", path))
+        if fail:
+            raise TagWriteError("fail")
+        if fields and "genre" in fields:
+            genres[os.path.basename(path)] = fields["genre"]
+    def clearer(path):
+        fake.calls.append(("clear", path))
+    c = PlayerController(fake, Settings({}, lambda: None), read_info=read,
+                         write_tags=writer, clear_tags=clearer)
+    folder = make_songs(tmp_path, list(names))
+    c.open([str(folder)])
+    fake.calls.clear()
+    return c, fake, str(folder / names[0]), str(folder / names[-1])
+
+def test_save_playing_reloads_at_position(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 42.0
+    info = c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 42.0), ("play",)]
+    assert info.path == a
+
+def test_save_paused_stays_paused(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 10.0; fake.pause()
+    fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 10.0), ("play",), ("pause",)]
+    assert fake.state is State.PAUSED and fake.position == 10.0 and c.can_seek
+    fake.calls.clear()
+    c.toggle()
+    assert fake.state is State.PLAYING and fake.position == 10.0
+    assert fake.calls == [("play",)]
+
+def test_save_reload_failure_marks_failed(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path, names=("bad.mp3", "bad2.mp3"))
+    fake.has_track = True; fake.state = State.PLAYING; fake.position = 3.0
+    c.save_tags(a, {"title": "x"})
+    assert c.playlist.tracks[0].failed and c.status_error and not c._cued
+
+def test_save_other_file_no_reload(tmp_path):
+    c, fake, a, b = tag_ctl(tmp_path)
+    c.save_tags(b, {"title": "x"})
+    assert fake.calls == [("write", b)]
+
+def test_save_stopped_no_reload_when_unloaded(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.unload(); fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("write", a)]
+
+def test_save_cued_stays_cued_at_position(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.stop(); fake.position = 30.0; c._cued = True
+    fake.calls.clear()
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 30.0)]
+    assert fake.state is State.STOPPED and c._cued
+
+def test_failed_save_still_reloads(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path, fail=True)
+    fake.position = 5.0
+    with pytest.raises(TagWriteError):
+        c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("unload",), ("write", a), ("load", a), ("seek", 5.0), ("play",)]
+
+def test_save_resyncs_genre(tmp_path):
+    genres = {"a.mp3": "Rock"}
+    c, fake, a, _ = tag_ctl(tmp_path, genres=genres)
+    c.set_effects(FxSettings().with_preset("발라드").with_auto(True))
+    assert fake.effects.bands == PRESETS["록"]
+    c.save_tags(a, {"genre": "Ballad"})
+    assert fake.effects.bands == PRESETS["발라드"]
+
+def test_clear_tags_reloads(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    fake.position = 7.0
+    c.clear_tags(a)
+    assert fake.calls == [("unload",), ("clear", a), ("load", a), ("seek", 7.0), ("play",)]
+
+def test_save_radio_source_no_reload(tmp_path):
+    c, fake, a, _ = tag_ctl(tmp_path)
+    c.source = "radio"
+    c.save_tags(a, {"title": "x"})
+    assert fake.calls == [("write", a)]
+
+
+# --- 저장하며 이름 바꾸기 / 되돌리기 (5-C) ---
+from funplayer.controller import (RENAME_EXISTS, RENAME_FAILED, RENAME_PARTIAL, RENAME_PARTIAL_EXISTS, UNDO_DONE,
+                                  UNDO_EXISTS, UNDO_FAILED, UNDO_MISSING)
+from funplayer.core.renamer import RenameConflict, RenameError, RenameLog, rename_file
+
+def rn_ctl(tmp_path, rename_file_fn=None, fail_write=False, names=("a.mp3", "b.mp3")):
+    fake = FakePlayer()
+    writes = []
+    def writer(path, fields=None, picture=KEEP):
+        writes.append(path)
+        if fail_write:
+            raise TagWriteError("fail")
+    settings = Settings({}, lambda: None)
+    c = PlayerController(fake, settings, read_info=lambda p: TrackInfo(p),
+                         write_tags=writer, rename_log=RenameLog(None),
+                         rename_file=rename_file_fn)
+    folder = make_songs(tmp_path, list(names))
+    c.open([str(folder)])
+    fake.calls.clear()
+    return c, fake, writes, settings, str(folder / names[0]), str(folder / "가수 - 제목.mp3")
+
+def test_rename_playing_reloads_new_path(tmp_path):
+    c, fake, writes, settings, a, new = rn_ctl(tmp_path)
+    settings.last_track = a
+    fake.position = 12.0
+    out = c.save_and_rename(a, {"title": "제목"}, KEEP, new)
+    assert fake.calls == [("unload",), ("load", new), ("seek", 12.0), ("play",)]
+    assert fake.state is State.PLAYING and writes == [a]
+    assert os.path.exists(new) and not os.path.exists(a)
+    assert c.playlist.tracks[0].path == new and settings.last_track == new
+    assert c.info.path == new and out.info.path == new and out.renamed_from == a and out.warning == ""
+    assert c.last_rename() == (a, new)
+
+def test_rename_paused_stays_paused(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path)
+    fake.position = 10.0; fake.pause(); fake.calls.clear()
+    c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert fake.calls == [("unload",), ("load", new), ("seek", 10.0), ("play",), ("pause",)]
+    assert fake.state is State.PAUSED
+
+def test_rename_only_skips_tag_write(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path)
+    out = c.save_and_rename(a, {}, KEEP, new)
+    assert writes == [] and out.renamed_from == a and os.path.exists(new)
+
+def test_conflict_writes_nothing(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path)
+    open(new, "wb").write(b"other")
+    before = open(a, "rb").read()
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert str(e.value) == RENAME_EXISTS.format(name="가수 - 제목.mp3")
+    assert writes == [] and fake.calls == [] and open(a, "rb").read() == before
+    assert c.last_rename() is None
+
+def _boom(old, new):
+    raise RenameError("busy")
+
+def test_rename_failure_reloads_old_path(tmp_path):
+    c, fake, writes, settings, a, new = rn_ctl(tmp_path, _boom)
+    fake.position = 5.0
+    out = c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert out.warning == RENAME_PARTIAL and out.renamed_from is None and out.info.path == a
+    assert writes == [a] and fake.calls == [("unload",), ("load", a), ("seek", 5.0), ("play",)]
+    assert c.playlist.tracks[0].path == a and c.last_rename() is None
+
+def test_rename_only_failure_raises(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _boom)
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {}, KEEP, new)
+    assert str(e.value) == RENAME_FAILED and writes == []
+    assert fake.calls == [("unload",), ("load", a), ("play",)]
+    assert c.last_rename() is None
+
+def test_tag_failure_no_rename(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, fail_write=True)
+    with pytest.raises(TagWriteError):
+        c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert os.path.exists(a) and not os.path.exists(new)
+    assert ("load", a) in fake.calls and c.last_rename() is None
+
+def test_rename_updates_last_track(tmp_path):
+    c, fake, _, settings, a, new = rn_ctl(tmp_path)
+    c.playlist.add([os.path.join(os.path.dirname(a), "A.MP3")])   # 대소문자만 다른 중복 줄
+    settings.last_track = os.path.join(os.path.dirname(a), "A.MP3")
+    c.save_and_rename(a, {}, KEEP, new)
+    assert [t.path for t in c.playlist.tracks if t.path == new] == [new, new]
+    assert settings.last_track == new
+
+def test_undo_roundtrip(tmp_path):
+    c, fake, _, settings, a, new = rn_ctl(tmp_path)
+    settings.last_track = a
+    c.save_and_rename(a, {}, KEEP, new)
+    fake.position = 3.0; fake.calls.clear()
+    assert c.undo_rename() == (a, UNDO_DONE)
+    assert os.path.exists(a) and not os.path.exists(new)
+    assert fake.calls == [("unload",), ("load", a), ("seek", 3.0), ("play",)]
+    assert c.playlist.tracks[0].path == a and settings.last_track == a
+    assert c.last_rename() is None and c.status == UNDO_DONE and not c.status_error
+
+def test_undo_missing_pops(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path)
+    c.save_and_rename(a, {}, KEEP, new)
+    os.remove(new)
+    assert c.undo_rename() == (None, UNDO_MISSING.format(name="가수 - 제목.mp3"))
+    assert c.last_rename() is None and c.status_error
+
+def test_undo_conflict_keeps_entry(tmp_path):
+    c, fake, _, _, a, new = rn_ctl(tmp_path, rename_file)
+    c.save_and_rename(a, {}, KEEP, new)
+    open(a, "wb").write(b"other")
+    assert c.undo_rename() == (None, UNDO_EXISTS.format(name="a.mp3"))
+    assert c.last_rename() == (a, new) and c.status_error and os.path.exists(new)
+
+def test_undo_other_error_keeps_entry(tmp_path):
+    calls = []
+    def flaky(old, new):
+        calls.append(1)
+        if len(calls) > 1:
+            raise RenameError("busy")
+        rename_file(old, new)
+    c, fake, _, _, a, new = rn_ctl(tmp_path, flaky)
+    c.save_and_rename(a, {}, KEEP, new)
+    assert c.undo_rename() == (None, UNDO_FAILED)
+    assert c.last_rename() == (a, new) and c.playlist.tracks[0].path == new
+
+def test_undo_empty_log(tmp_path):
+    c, *_ = rn_ctl(tmp_path)
+    c._set_status("그대로", False)
+    assert c.undo_rename() == (None, "") and c.status == "그대로"
+
+
+def _toctou(old, new):
+    raise RenameConflict(new)
+
+def test_rename_toctou_conflict_after_tags_written(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _toctou)
+    out = c.save_and_rename(a, {"title": "x"}, KEEP, new)
+    assert out.warning == RENAME_PARTIAL_EXISTS and out.renamed_from is None and out.info.path == a
+    assert writes == [a] and c.last_rename() is None
+
+def test_rename_toctou_conflict_nothing_written(tmp_path):
+    c, fake, writes, _, a, new = rn_ctl(tmp_path, _toctou)
+    with pytest.raises(RenameError) as e:
+        c.save_and_rename(a, {}, KEEP, new)
+    assert str(e.value) == RENAME_EXISTS.format(name="가수 - 제목.mp3")
+    assert writes == [] and c.last_rename() is None

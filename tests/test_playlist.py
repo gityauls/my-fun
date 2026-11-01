@@ -128,3 +128,15 @@ def test_mark_ok_clears_flags_and_bumps_version_once():
     v = pl.version; pl.mark_ok(0)
     assert not pl.tracks[0].failed and not pl.tracks[0].missing and pl.version == v + 1
     pl.mark_ok(0); assert pl.version == v + 1
+
+def test_rename_path_all_rows_casefold():
+    pl = Playlist(); pl.replace([r"C:\a\x.mp3", r"c:\A\X.mp3", r"C:\a\y.mp3"])
+    v, lv = pl.version, pl.layout_version
+    assert pl.rename_path(r"C:\a\x.mp3", r"C:\a\new.mp3") == 2
+    assert [t.path for t in pl.tracks] == [r"C:\a\new.mp3", r"C:\a\new.mp3", r"C:\a\y.mp3"]
+    assert pl.version == v + 1 and pl.layout_version == lv
+
+def test_rename_path_no_match_changes_nothing():
+    pl = Playlist(); pl.replace(P)
+    v = pl.version
+    assert pl.rename_path(r"C:\zzz.mp3", r"C:\q.mp3") == 0 and pl.version == v

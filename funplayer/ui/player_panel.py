@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import os
 import time
+from contextlib import contextmanager
 
 import numpy as np
 
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
-    QAction, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
+    QAbstractItemView, QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidgetItem,
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
+from funplayer import musicbrainz
 from funplayer.controller import PlayerController
+from funplayer.core.renamer import RenameError, RenameLog
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
@@ -19,7 +23,9 @@ from funplayer.core.taginfo import TrackInfo
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
+from funplayer.engine import tags
 from funplayer.engine.player import AudioPlayer, State
+from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
@@ -85,11 +91,13 @@ class PlayerPanel(QWidget):
 
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
-                 stations_path: str | None = None, runner=None) -> None:
+                 stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
+                 rename_log_path: str | None = None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
-            self._player, settings, session_path=session_path, read_info=read_info)
+            self._player, settings, session_path=session_path, read_info=read_info,
+            write_tags=write_tags, clear_tags=clear_tags, rename_log=RenameLog(rename_log_path))
         # 라디오: 경로가 없으면(테스트) 저장하지 않는 메모리 목록이다
         self._stations_path = stations_path
         self.stations = load_stations(stations_path) if stations_path else StationList()
@@ -107,6 +115,7 @@ class PlayerPanel(QWidget):
         self._dragging = False
         self._list_version = -1
         self._layout_version = -1
+        self._followed_index = None   # 목록이 마지막으로 따라가 보여 준 현재 곡 줄
         self.actions: dict[str, QAction] = {}
         self.info_dialog: TrackInfoDialog | None = None
         self._icon_key: tuple[str, bool] | None = None
@@ -374,7 +383,8 @@ class PlayerPanel(QWidget):
     def _make_context_menu(self) -> None:
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
-                 ("info_row", "곡 정보…", self.show_row_info),
+                 ("info_row", "곡 정보 고치기…", self.show_row_info),
+                 ("undo_rename", "이름 되돌리기", self.undo_rename_from_menu),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
                  None,
                  ("select_all", "전체 선택\tCtrl+A", self.select_all)]
@@ -581,6 +591,16 @@ class PlayerPanel(QWidget):
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
+        # 이름 되돌리기는 방금 이름을 바꾼 그 곡을 우클릭했을 때만 보인다 (다른 곡에서 실수로 누르지 않게)
+        last = self.controller.last_rename()
+        tracks = self.controller.playlist.tracks
+        if last is not None and not (
+                0 <= row < len(tracks) and os.path.normcase(tracks[row].path) == os.path.normcase(last[1])):
+            last = None
+        self.actions["undo_rename"].setVisible(last is not None)
+        if last is not None:
+            old, new = (self._elide(os.path.basename(x)) for x in last)
+            self.actions["undo_rename"].setText(f"이름 되돌리기: {new} → {old}")
         self.actions["mini"].setChecked(self.is_mini)
         self.actions["fx_visible"].setChecked(self._settings.fx_visible)
         self.actions["mini_on_top"].setChecked(self._settings.mini_on_top)
@@ -830,7 +850,16 @@ class PlayerPanel(QWidget):
 
     def _show_info_for(self, i: int) -> None:
         info = self.controller.info_for(i)
-        self._show_info(info, load_cover(info))
+        editable, note = self._edit_state(info.path)
+        self._show_info(info, load_cover(info), editable, note)
+
+    @staticmethod
+    def _edit_state(path: str) -> tuple[bool, str]:
+        if not path.lower().endswith(".mp3"):
+            return False, "MP3만 고칠 수 있습니다"
+        if not os.path.isfile(path):
+            return False, "파일이 없습니다"
+        return True, ""
 
     def _station_info(self) -> TrackInfo:
         # 형식 칸(codec·sample_rate·channels)은 디코더가 밖으로 내주지 않아 비워 둔다
@@ -838,13 +867,97 @@ class PlayerPanel(QWidget):
         path = DOMESTIC_INFO_PATH if s.kind in ("kbs", "mbc", "sbs") else s.key
         return TrackInfo(path=path, title=s.name, artist=s.source)
 
-    def _show_info(self, info: TrackInfo, cover) -> None:
+    def _show_info(self, info: TrackInfo, cover, editable: bool = False, note: str = "") -> None:
         if self.info_dialog is None:
-            self.info_dialog = TrackInfoDialog(self)
-        self.info_dialog.show_info(info, cover)
+            dialog = TrackInfoDialog(self)
+            dialog.set_services(self.runner.run_async, musicbrainz.default_client)
+            dialog.set_rename_checked(self._settings.rename_on_save)
+            dialog.rename_toggled.connect(lambda on: setattr(self._settings, "rename_on_save", on))
+            dialog.undo_rename_requested.connect(self._undo_from_dialog)
+            dialog.save_requested.connect(self._save_tags)
+            dialog.clear_requested.connect(self._clear_tags)
+            self.info_dialog = dialog
+        if not self.info_dialog.show_info(info, cover, editable, note):
+            return
         self.info_dialog.show()
         self.info_dialog.raise_()
         self.info_dialog.activateWindow()
+
+    @staticmethod
+    def _elide(name: str, limit: int = 40) -> str:
+        return name if len(name) <= limit else name[:limit - 1] + "…"
+
+    def _save_tags(self, path: str, fields: dict, picture) -> None:
+        target = self.info_dialog.rename_target()
+        if target is None:
+            self._edit_tags(lambda: self.controller.save_tags(path, fields, picture))
+            return
+        self._edit_tags(lambda: self.controller.save_and_rename(path, fields, picture, target))
+
+    def undo_rename_from_menu(self) -> None:
+        self._undo_rename(from_menu=True)
+
+    def _undo_from_dialog(self, old: str, new: str) -> None:
+        if self.controller.last_rename() != (old, new):   # 그 사이 다른 이름 바꾸기가 있었다
+            self.info_dialog.clear_undo()
+            return
+        self._undo_rename()
+
+    def _undo_rename(self, from_menu: bool = False) -> None:
+        last = self.controller.last_rename()
+        if last is None:
+            return
+        shown_new = last[1]
+        dialog = self.info_dialog
+        with self._busy_cursor():
+            old, text = self.controller.undo_rename()
+        if dialog is not None:
+            showing = (dialog.isVisible()
+                       and os.path.normcase(dialog.path) == os.path.normcase(shown_new))
+            if old is not None and showing:
+                info = self._info_for_path(old)
+                dialog.renamed_back(info, load_cover(info))   # 고치던 칸이 있으면 renamed_back이 지킨다
+            elif old is None and showing:   # 다른 곡을 보고 있으면 상태 줄 알림만
+                dialog.failed(text)
+            if from_menu:
+                dialog.clear_undo()
+        self._after_file_edit()
+
+    def _info_for_path(self, path: str) -> TrackInfo:
+        for i, t in enumerate(self.controller.playlist.tracks):
+            if os.path.normcase(t.path) == os.path.normcase(path):
+                return self.controller.info_for(i)
+        return tags.read_info(path)
+
+    def _clear_tags(self, path: str) -> None:
+        self._edit_tags(lambda: self.controller.clear_tags(path))
+
+    def _edit_tags(self, write) -> None:
+        dialog = self.info_dialog
+        try:
+            with self._busy_cursor():
+                result = write()
+        except (TagWriteError, RenameError) as e:
+            dialog.failed(str(e))
+            return
+        if isinstance(result, TrackInfo):
+            dialog.saved(result, load_cover(result))
+        else:   # 저장+이름 바꾸기 결과
+            dialog.saved(result.info, load_cover(result.info), result.renamed_from, result.warning)
+        self._after_file_edit()
+
+    @staticmethod
+    @contextmanager
+    def _busy_cursor():
+        QApplication.setOverrideCursor(Qt.WaitCursor)   # 큰 파일·느린 드라이브에서 멈춘 게 아님을 보인다
+        try:
+            yield
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _after_file_edit(self) -> None:
+        self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
+        self.refresh()
 
     def select_all(self) -> None:
         if self._tab == "playlist":
@@ -1036,6 +1149,12 @@ class PlayerPanel(QWidget):
         elif pl.version != self._list_version:
             self._repaint_rows()
             self._list_version = pl.version
+        if pl.index != self._followed_index:
+            # 곡이 바뀌면(무작위 포함) 그 줄이 보이게 굴린다. 이미 보이면 움직이지 않는다
+            self._followed_index = pl.index
+            item = self.playlist_view.item(pl.index) if pl.index is not None else None
+            if item is not None:
+                self.playlist_view.scrollToItem(item, QAbstractItemView.EnsureVisible)
 
         self._refresh_modes()
         self.repeat_button.setEnabled(not on_radio)
@@ -1116,6 +1235,14 @@ class PlayerPanel(QWidget):
         item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed or track.missing else None)
 
     # ---- 끝내기 ----
+
+    def closeEvent(self, event) -> None:
+        # 곡 정보 창에 저장 안 한 내용이 있으면 끝내기 전에 묻는다 (아니라고 하면 창을 닫지 않는다)
+        dialog = self.info_dialog
+        if dialog is not None and dialog.is_dirty() and not dialog.confirm_discard():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def shutdown(self) -> None:
         self._closed = True

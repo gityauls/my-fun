@@ -77,3 +77,830 @@ def test_reveal_in_explorer_commands(tmp_path, monkeypatch):
     def boom(*a, **k): raise OSError("no explorer")
     monkeypatch.setattr(dlg.subprocess, "Popen", boom)
     dlg.reveal_in_explorer(str(f))   # 예외가 나오지 않는다
+
+
+# ---- 5-A: 고칠 수 있는 창 ----
+from PyQt5.QtWidgets import QComboBox, QMessageBox
+from funplayer.engine.tagwrite import KEEP, REMOVE
+
+JPG = b"\xff\xd8\xff\xe0" + b"0" * 20
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+YELLOW = "#FFF6D6"
+
+def editor(qapp, tmp_path, picture=None, **kw):
+    f = tmp_path / "x.mp3"; f.write_bytes(b"1")
+    info = TrackInfo(str(f), title="Old", artist="A", album="B", year="2019", genre="Pop", track="3",
+                     picture=picture, **kw)
+    d = TrackInfoDialog(); d.show_info(info, None, editable=True); d.show(); qapp.processEvents()
+    return d, info
+
+def set_text(edit, text):
+    if isinstance(edit, QComboBox): edit.setEditText(text)
+    else: edit.setText(text)
+
+def test_changed_field_yellow_and_save_enabled(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    assert list(d.edits) == ["title", "artist", "album", "year", "genre", "track"]
+    assert isinstance(d.edits["genre"], QComboBox) and d.edits["genre"].count() == 14
+    assert not d.save_button.isEnabled() and d.message_label.isHidden()
+    assert YELLOW not in d.edits["title"].styleSheet()
+    set_text(d.edits["title"], "New")
+    assert YELLOW in d.edits["title"].styleSheet() and YELLOW not in d.edits["artist"].styleSheet()
+    assert d.save_button.isEnabled() and d.is_dirty()
+    assert d.message_label.text() == "노란 칸 = 바뀐 값 (아직 저장 안 됨)" and "#8A6D00" in d.message_label.styleSheet()
+    set_text(d.edits["genre"], "Rock")
+    assert YELLOW in d.edits["genre"].lineEdit().styleSheet()
+
+def test_revert_disables_save(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "New"); set_text(d.edits["title"], "Old")
+    assert not d.save_button.isEnabled() and not d.is_dirty() and YELLOW not in d.edits["title"].styleSheet()
+    set_text(d.edits["title"], "  Old  ")   # 앞뒤 빈칸만 다르면 바뀐 게 아니다
+    assert not d.is_dirty()
+
+def test_save_emits_changed_only(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path); got = []
+    d.save_requested.connect(lambda *a: got.append(a))
+    set_text(d.edits["title"], "  New Title ")
+    set_text(d.edits["genre"], " 록 ")
+    d.save_button.click()
+    assert got == [(info.path, {"title": "New Title", "genre": "록"}, KEEP)]
+
+def test_bad_year_and_track_not_saved(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path); got = []
+    d.save_requested.connect(lambda *a: got.append(a))
+    set_text(d.edits["year"], "이천"); d.save_button.click()
+    assert got == [] and "년도" in d.message_label.text() and d.is_dirty()
+    set_text(d.edits["year"], "1999"); set_text(d.edits["track"], "A1"); d.save_button.click()
+    assert got == [] and "트랙" in d.message_label.text()
+    set_text(d.edits["track"], "3/12"); d.save_button.click()
+    assert len(got) == 1 and got[0][1] == {"year": "1999", "track": "3/12"}
+    set_text(d.edits["year"], ""); set_text(d.edits["track"], ""); d.save_button.click()
+    assert len(got) == 2   # 비우는 것은 된다
+
+
+def test_picture_bytes_checked(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    assert not d.set_picture_bytes(b"GIF89a" + b"0" * 20)
+    assert d.message_label.text() == "jpg·png 그림만 넣을 수 있습니다" and "#B3261E" in d.message_label.styleSheet()
+    assert not d.is_dirty()
+    assert not d.set_picture_bytes(JPG + b"0" * (10 * 1024 * 1024))
+    assert d.message_label.text() == "그림이 너무 큽니다 (10 MB까지)" and "#B3261E" in d.message_label.styleSheet()
+    assert d.set_picture_bytes(PNG) and d.is_dirty() and d.save_button.isEnabled()
+    assert "#E8B400" in d.art_label.styleSheet() and "2px" in d.art_label.styleSheet()
+    got = []; d.save_requested.connect(lambda *a: got.append(a)); d.save_button.click()
+    assert got[0][1] == {} and got[0][2] == PNG
+
+def test_pick_button_uses_file_dialog(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path)
+    img = tmp_path / "c.jpg"; img.write_bytes(JPG)
+    monkeypatch.setattr(dlg.QFileDialog, "getOpenFileName", lambda *a, **k: (str(img), ""))
+    d.pick_button.click()
+    assert d._picture == JPG
+    monkeypatch.setattr(dlg.QFileDialog, "getOpenFileName", lambda *a, **k: ("", ""))
+    d.pick_button.click(); assert d._picture == JPG   # 취소하면 그대로
+
+def test_remove_picture_marks_remove(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path, picture=PNG)
+    assert d.remove_pic_button.isEnabled()
+    d.remove_pic_button.click()
+    assert d._picture is REMOVE and d.is_dirty() and not d.remove_pic_button.isEnabled()
+    got = []; d.save_requested.connect(lambda *a: got.append(a)); d.save_button.click()
+    assert got[0][2] is REMOVE
+    d2, _ = editor(qapp, tmp_path)   # 곡에 그림이 없으면 꺼짐
+    assert not d2.remove_pic_button.isEnabled()
+
+def test_close_dirty_asks(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path); answers = [False, True]; asked = []
+    monkeypatch.setattr(d, "confirm_discard", lambda: asked.append(1) or answers.pop(0))
+    set_text(d.edits["title"], "New")
+    d.close_button.click(); assert d.isVisible() and d.edits["title"].text() == "New"
+    d.close_button.click(); assert not d.isVisible() and len(asked) == 2
+    assert not d.is_dirty()   # 버린 값은 처음대로
+
+def test_confirm_discard_asks_message(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path); seen = []
+    def fake(parent, title, text, *a, **k): seen.append(text); return QMessageBox.Yes
+    monkeypatch.setattr(dlg.QMessageBox, "question", fake)
+    assert d.confirm_discard() and seen == ["저장 안 한 내용이 있습니다. 버릴까요?"]
+
+def test_clean_close_does_not_ask(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path)
+    monkeypatch.setattr(d, "confirm_discard", lambda: (_ for _ in ()).throw(AssertionError))
+    d.close(); assert not d.isVisible()
+
+def test_switching_path_while_dirty_asks(qapp, tmp_path, monkeypatch):
+    d, info = editor(qapp, tmp_path); answers = [False, True]
+    monkeypatch.setattr(d, "confirm_discard", lambda: answers.pop(0))
+    set_text(d.edits["title"], "New")
+    other = TrackInfo(str(tmp_path / "y.mp3"), title="Other")
+    assert d.show_info(other, None, editable=True) is False
+    assert d.edits["title"].text() == "New" and d.path_label.text() == info.path
+    assert d.show_info(other, None, editable=True) is True
+    assert d.edits["title"].text() == "Other" and not d.is_dirty()
+
+def test_clear_confirm_bar(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path); got = []
+    d.clear_requested.connect(got.append)
+    assert d.confirm_bar.isHidden() and d.clear_button.text() == "태그 모두 지우기…"
+    d.clear_button.click(); assert d.confirm_bar.isVisible()
+    d.cancel_button.click(); assert d.confirm_bar.isHidden() and got == []
+    d.clear_button.click(); d.confirm_button.click()
+    assert got == [info.path] and d.confirm_bar.isHidden()
+    assert (d.confirm_button.text(), d.cancel_button.text()) == ("지우기", "그만두기")
+
+def test_readonly_modes(qapp, tmp_path):
+    for note in ("MP3만 고칠 수 있습니다", "파일이 없습니다", ""):
+        d = TrackInfoDialog(); d.show_info(TrackInfo(str(tmp_path / "y.mp3"), title="T"), None, False, note)
+        d.show(); qapp.processEvents()
+        for e in d.edits.values():
+            assert (e.lineEdit() if isinstance(e, QComboBox) else e).isReadOnly()
+        assert all(b.isHidden() for b in (d.pick_button, d.remove_pic_button, d.clear_button, d.save_button))
+        assert d.close_button.isVisible() and d.folder_button.isVisible()
+        assert d.message_label.text() == note and d.message_label.isVisible() == bool(note)
+        assert not d.is_dirty() and d.value_labels["제목"].text() == "T"
+
+def test_saved_resets_dirty(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "New"); d.set_picture_bytes(JPG)
+    d.saved(TrackInfo(info.path, title="New", artist="A", album="B", year="2019", genre="Pop", track="3"), None)
+    assert not d.is_dirty() and not d.save_button.isEnabled() and d._picture is KEEP
+    assert d.message_label.text() == "저장했습니다" and "#5F6368" in d.message_label.styleSheet()
+    assert YELLOW not in d.edits["title"].styleSheet() and d.art_label.styleSheet() == ""
+    set_text(d.edits["title"], "X"); assert d.message_label.text().startswith("노란 칸")
+
+def test_failed_keeps_edits_red(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "New"); d.failed("저장하지 못했습니다")
+    assert d.edits["title"].text() == "New" and d.is_dirty()
+    assert d.message_label.text() == "저장하지 못했습니다" and "#B3261E" in d.message_label.styleSheet()
+
+def test_drop_picture_file(qapp, tmp_path):
+    from PyQt5.QtCore import QMimeData, QUrl, QPoint
+    from PyQt5.QtGui import QDropEvent
+    d, _ = editor(qapp, tmp_path)
+    img = tmp_path / "c.png"; img.write_bytes(PNG)
+    def drop(*paths):
+        m = QMimeData(); m.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+        d.dropEvent(QDropEvent(QPoint(5, 5), Qt.CopyAction, m, Qt.LeftButton, Qt.NoModifier))
+    drop(img, img); assert d._picture is KEEP   # 한 개만
+    txt = tmp_path / "a.txt"; txt.write_bytes(b"1"); drop(txt); assert d._picture is KEEP
+    drop(img); assert d._picture == PNG
+
+
+def test_same_path_reshow_keeps_edits(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "New"); d.set_picture_bytes(PNG)
+    assert d.show_info(info, None, editable=True, note="n") is True
+    assert d.edits["title"].text() == "New" and d._picture == PNG and d.is_dirty()
+    assert d.save_button.isEnabled()
+
+def test_same_path_reshow_when_clean_reloads(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    import dataclasses
+    d.show_info(dataclasses.replace(info, title="Fresh"), None, editable=True)
+    assert d.edits["title"].text() == "Fresh" and not d.is_dirty()
+
+def test_esc_reject_dirty_asks(qapp, tmp_path, monkeypatch):
+    d, _ = editor(qapp, tmp_path); answers = [False, True]; asked = []
+    monkeypatch.setattr(d, "confirm_discard", lambda: asked.append(1) or answers.pop(0))
+    set_text(d.edits["title"], "New")
+    d.reject(); assert d.isVisible() and d.edits["title"].text() == "New"
+    d.reject(); assert not d.isVisible() and len(asked) == 2 and not d.is_dirty()
+
+def test_picture_add_then_remove(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)   # 곡에 그림 없음: 넣었다 빼면 처음으로
+    d.set_picture_bytes(PNG); assert d.remove_pic_button.isEnabled()
+    d.remove_pic_button.click()
+    assert d._picture is KEEP and not d.is_dirty() and d.art_label.styleSheet() == ""
+    d2, _ = editor(qapp, tmp_path, picture=JPG)   # 그림 있음: 넣은 뒤 빼기 = 그림 없음
+    d2.set_picture_bytes(PNG); d2.remove_pic_button.click()
+    assert d2._picture is REMOVE and d2.is_dirty()
+
+def test_drops_reach_dialog_not_fields(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    kids = [(e.lineEdit() if isinstance(e, QComboBox) else e) for e in d.edits.values()]
+    assert d.acceptDrops() and not any(w.acceptDrops() for w in [*kids, d.path_label, d.path_label.viewport()])
+
+def test_cursor_at_start_and_default_button(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    long = TrackInfo(info.path, title="T" * 200)
+    d.show_info(long, None, editable=True)
+    assert d.edits["title"].cursorPosition() == 0 and d.save_button.isDefault() and not d.close_button.isDefault()
+    d.show_info(long, None, editable=False)
+    assert d.close_button.isDefault() and not d.save_button.isDefault()
+
+def test_edit_clears_failed_text(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    set_text(d.edits["title"], "N"); d.failed("저장하지 못했습니다")
+    set_text(d.edits["title"], "NN"); assert d.message_label.text().startswith("노란 칸")
+    set_text(d.edits["genre"], "재즈"); assert d.is_dirty()
+
+
+# ---- 인터넷에서 찾기 ----
+from PyQt5.QtTest import QTest
+from funplayer.musicbrainz import Candidate, MusicBrainzError
+
+
+def inline(work, done):
+    try:
+        result = work()
+    except Exception as e:  # noqa: BLE001
+        done(None, e)
+    else:
+        done(result, None)
+
+
+class FakeClient:
+    def __init__(self, cands=(), cover=None, error=None):
+        self.cands, self.cover_bytes, self.error = list(cands), cover, error
+        self.searches, self.covers = [], []
+
+    def search(self, title, artist, limit=10):
+        self.searches.append((title, artist))
+        if self.error:
+            raise self.error
+        return self.cands
+
+    def cover(self, release_id):
+        self.covers.append(release_id)
+        if self.error:
+            raise self.error
+        return self.cover_bytes
+
+
+CAND = Candidate("Song", "Singer", "Album", "2001", "5", "록", "rel-1")
+
+
+def searcher(qapp, tmp_path, client, run=inline, info_kw=None, **kw):
+    d, info = editor(qapp, tmp_path, **kw)
+    if info_kw is not None:
+        info = TrackInfo(info.path, **info_kw)
+        d.show_info(info, None, editable=True)
+    d.set_services(run, lambda: client)
+    d.search_toggle.click()
+    return d, info
+
+
+def test_search_section_hidden_until_editable_with_services(qapp, tmp_path):
+    d, info = editor(qapp, tmp_path)
+    assert d.search_section.isHidden()   # 서비스 없음
+    d.set_services(inline, lambda: None)
+    assert not d.search_section.isHidden() and d.search_body.isHidden()   # 접힌 채
+    d.show_info(info, None, editable=False)
+    assert d.search_section.isHidden()
+
+
+def test_open_search_grows_dialog_not_squeezes_fields(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND] * 10))
+    d.search_button.click()
+    assert d.height() >= d.layout().totalHeightForWidth(d.width())
+    title = d.edits["title"]
+    assert title.height() >= title.sizeHint().height()
+
+
+def test_prefill_from_tags_then_filename(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient())
+    assert (d.search_title.text(), d.search_artist.text()) == ("Old", "A")
+    d2, _ = searcher(qapp, tmp_path, FakeClient())
+    f = tmp_path / "가수 - 노래.mp3"; f.write_bytes(b"1")
+    d2.show_info(TrackInfo(str(f)), None, editable=True)   # 태그가 없으면 파일 이름에서
+    assert (d2.search_title.text(), d2.search_artist.text()) == ("노래", "가수")
+    d2.search_toggle.click(); d2.search_toggle.click()   # 접었다 펴도 그대로
+    assert (d2.search_title.text(), d2.search_artist.text()) == ("노래", "가수")
+
+
+def test_search_lists_and_fills_empty_only(qapp, tmp_path):
+    c = FakeClient([CAND, Candidate("Other", "", "", "", "", "", "")])
+    d, _ = searcher(qapp, tmp_path, c, info_kw=dict(title="Mine"))
+    assert d.search_button.isEnabled()
+    d.search_button.click()
+    assert c.searches == [("Mine", "")] and d.search_status.text() == "2곡 찾음"
+    assert [d.result_list.item(i).text() for i in range(2)] == ["Song · Singer · Album · 2001", "Other"]
+    assert d.result_list.currentRow() == 0 and d.fill_button.isEnabled()
+    d.fill_button.click()
+    got = {k: (e.currentText() if isinstance(e, QComboBox) else e.text()) for k, e in d.edits.items()}
+    assert got == {"title": "Mine", "artist": "Singer", "album": "Album", "year": "2001", "genre": "록", "track": "5"}
+    assert d.is_dirty() and YELLOW.lower() in d.edits["artist"].styleSheet().lower()
+
+
+def test_fill_overwrites_when_box_off(qapp, tmp_path):
+    cand = Candidate("Song", "Singer", "", "2001", "", "", "")   # 앨범·트랙·장르는 없음 -> 비우지 않는다
+    d, _ = searcher(qapp, tmp_path, FakeClient([cand]))
+    d.only_empty_box.setChecked(False)
+    d.search_button.click(); d.fill_button.click()
+    assert d.edits["title"].text() == "Song" and d.edits["artist"].text() == "Singer"
+    assert d.edits["album"].text() == "B" and d.edits["track"].text() == "3" and d.edits["genre"].currentText() == "Pop"
+
+
+def test_cover_fetched_only_when_missing(qapp, tmp_path):
+    c = FakeClient([CAND], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c)   # 그림 없음 -> 받는다
+    d.search_button.click(); d.fill_button.click()
+    assert c.covers == ["rel-1"] and d._picture == PNG and d.search_status.text() == "앨범 그림 받음"
+    c2 = FakeClient([CAND], cover=PNG)
+    d2, _ = searcher(qapp, tmp_path, c2, picture=JPG)   # 그림 있음 + 켬 -> 안 받는다
+    d2.search_button.click(); d2.fill_button.click()
+    assert c2.covers == [] and d2._picture is KEEP
+    d2.only_empty_box.setChecked(False); d2.fill_button.click()   # 끄면 받는다
+    assert c2.covers == ["rel-1"] and d2._picture == PNG
+    c3 = FakeClient([CAND], cover=PNG)
+    d3, _ = searcher(qapp, tmp_path, c3)
+    d3.set_picture_bytes(JPG)   # 이미 넣은 그림이 있으면 켠 채로는 안 받는다
+    d3.search_button.click(); d3.fill_button.click()
+    assert c3.covers == [] and d3._picture == JPG
+    c4 = FakeClient([CAND], cover=None)
+    d4, _ = searcher(qapp, tmp_path, c4)
+    d4.search_button.click(); d4.fill_button.click()
+    assert d4.search_status.text() == "앨범 그림 없음" and d4._picture is KEEP
+
+
+def test_candidate_without_release_skips_cover(qapp, tmp_path):
+    c = FakeClient([Candidate("S", "", "", "", "", "", "")], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c)
+    d.search_button.click(); d.fill_button.click()
+    assert c.covers == []
+
+
+def test_late_reply_ignored(qapp, tmp_path):
+    pending = []
+    c = FakeClient([CAND], cover=PNG)
+    d, info = searcher(qapp, tmp_path, c, run=lambda work, done: pending.append((work, done)))
+    d.search_button.click()
+    (w1, d1), = pending
+    d1(w1(), None)
+    assert d.result_list.count() == 1 and d.result_list.item(0).text().startswith("Song")
+    d.fill_button.click()   # 그림 요청 대기
+    other = tmp_path / "y.mp3"; other.write_bytes(b"1")
+    assert d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)   # 다른 곡으로
+    assert d.result_list.count() == 0 and d.search_title.text() == "Y"
+    work, done = pending[-1]
+    done(work(), None)
+    assert d._picture is KEEP and not d.search_status.isVisible()
+
+
+def test_late_search_reply_after_track_change_ignored(qapp, tmp_path):
+    pending = []
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]), run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    other = tmp_path / "y.mp3"; other.write_bytes(b"1")
+    d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)
+    work, done = pending[0]; done(work(), None)
+    assert d.result_list.count() == 0
+
+
+def test_buttons_disabled_while_request_runs(qapp, tmp_path):
+    pending = []
+    c = FakeClient([CAND], cover=PNG)
+    d, _ = searcher(qapp, tmp_path, c, run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    assert not d.search_button.isEnabled() and d.search_status.text() == "찾는 중…"
+    d.search_button.click(); QTest.keyClick(d.search_title, Qt.Key_Return)   # 두 번째 요청은 가지 않는다
+    assert len(pending) == 1
+    w, dn = pending[0]; dn(w(), None)
+    assert d.search_button.isEnabled() and d.fill_button.isEnabled()
+    d.fill_button.click()   # 그림 요청이 가는 동안은 둘 다 잠긴다
+    assert len(pending) == 2 and not d.fill_button.isEnabled() and not d.search_button.isEnabled()
+    w, dn = pending[1]; dn(w(), None)
+    assert d.search_button.isEnabled() and d.fill_button.isEnabled() and d._picture == PNG
+
+
+def test_buttons_reenabled_after_error(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient(error=OSError("x")))
+    d.search_button.click()
+    assert d.search_button.isEnabled()
+
+
+def test_saved_drops_late_cover(qapp, tmp_path):
+    pending = []
+    d, info = searcher(qapp, tmp_path, FakeClient([CAND], cover=PNG),
+                       run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click(); w, dn = pending[0]; dn(w(), None)
+    d.fill_button.click()   # 그림 요청 대기
+    d.saved(TrackInfo(info.path, title="Song"), None)
+    assert d.search_button.isEnabled() and not d.search_status.isVisible()
+    w, dn = pending[1]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_failed_drops_late_search(qapp, tmp_path):
+    pending = []
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]), run=lambda w, dn: pending.append((w, dn)))
+    d.search_button.click()
+    d.failed("저장하지 못했습니다")
+    assert d.search_button.isEnabled()
+    w, dn = pending[0]; dn(w(), None)
+    assert d.result_list.count() == 0
+
+
+def test_client_factory_error_shows_red_text(qapp, tmp_path):
+    d, _ = searcher(qapp, tmp_path, FakeClient([CAND]))
+    d.set_services(inline, lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    d.search_button.click()
+    assert d.search_status.text() == "인터넷에 연결하지 못했습니다"
+    assert "#b3261e" in d.search_status.styleSheet().lower() and d.search_button.isEnabled()
+    d._candidates = [CAND]; d.result_list.addItem("x"); d.result_list.setCurrentRow(0)
+    d.fill_button.click()
+    assert d.search_status.text() == "인터넷에 연결하지 못했습니다" and d.fill_button.isEnabled()
+
+
+def test_search_error_text(qapp, tmp_path):
+    busy = "MusicBrainz가 바쁩니다. 잠시 뒤 다시 눌러 보세요"
+    d, _ = searcher(qapp, tmp_path, FakeClient(error=MusicBrainzError(busy)))
+    d.search_button.click()
+    assert d.search_status.text() == busy
+    assert "#b3261e" in d.search_status.styleSheet().lower() and not d.fill_button.isEnabled()
+    d2, _ = searcher(qapp, tmp_path, FakeClient(error=OSError("x")))
+    d2.search_button.click(); assert d2.search_status.text() == "인터넷에 연결하지 못했습니다"
+    d3, _ = searcher(qapp, tmp_path, FakeClient([]))
+    d3.search_button.click(); assert d3.search_status.text() == "찾은 곡이 없습니다"
+
+
+def test_empty_title_disables_search_and_enter_searches(qapp, tmp_path):
+    c = FakeClient([CAND])
+    d, _ = searcher(qapp, tmp_path, c)
+    saves = []
+    d.save_requested.connect(lambda *a: saves.append(a))
+    d.search_title.setText("  ")
+    assert not d.search_button.isEnabled()
+    QTest.keyClick(d.search_title, Qt.Key_Return); assert c.searches == []
+    d.search_title.setText("abc")
+    QTest.keyClick(d.search_artist, Qt.Key_Return)
+    assert c.searches == [("abc", "A")] and saves == []   # Enter가 저장으로 새지 않는다
+
+
+def test_genre_pick_marks_changed(qapp, tmp_path):
+    d, _ = editor(qapp, tmp_path)
+    combo = d.edits["genre"]; combo.setCurrentIndex(combo.findText("재즈"))
+    assert combo.currentText() == "재즈" and d.is_dirty() and d._changed_fields() == {"genre": "재즈"}
+    assert YELLOW.lower() in combo.lineEdit().styleSheet().lower()
+
+
+# ---- 5-C: 브라우저 찾기 · 붙여 넣기 · 이름 바꾸기 ----
+from PyQt5.QtCore import QMimeData, QPoint, QUrl
+from PyQt5.QtGui import QDropEvent, QImage
+from PyQt5.QtWidgets import QApplication
+from funplayer.ui.colors import RENAME_OK_COLOR
+
+
+def web_editor(qapp, tmp_path, title="I Miss You", artist="서지원", **kw):
+    f = tmp_path / "x.mp3"; f.write_bytes(b"1")
+    d = TrackInfoDialog()
+    opened = []
+    d.set_services(kw.pop("run", None), None, open_url=opened.append, **kw)
+    d.show_info(TrackInfo(str(f), title=title, artist=artist), None, editable=True)
+    d.show(); qapp.processEvents()
+    return d, f, opened
+
+
+def test_web_buttons_open_urls(qapp, tmp_path):
+    d, f, opened = web_editor(qapp, tmp_path)
+    assert (d.genie_button.text(), d.melon_button.text()) == ("지니에서 찾기", "멜론에서 찾기")
+    d.genie_button.click(); d.melon_button.click()
+    assert [bytes(u.toEncoded()).decode() for u in opened] == [
+        "https://www.genie.co.kr/search/searchMain?query=%EC%84%9C%EC%A7%80%EC%9B%90%20I%20Miss%20You",
+        "https://www.melon.com/search/total/index.htm?q=%EC%84%9C%EC%A7%80%EC%9B%90%20I%20Miss%20You"]
+    set_text(d.edits["title"], "Other")   # 칸을 고치면 검색어도 따라간다
+    d.genie_button.click()
+    assert bytes(opened[-1].toEncoded()).decode().endswith("%EC%84%9C%EC%A7%80%EC%9B%90%20Other")
+
+
+def test_web_buttons_disabled_without_terms(qapp, tmp_path):
+    g = tmp_path / ".mp3"; g.write_bytes(b"1")   # 파일 이름에서도 짐작할 수 없는 이름
+    d = TrackInfoDialog(); d.show_info(TrackInfo(str(g)), None, editable=True)
+    assert not d.genie_button.isEnabled() and not d.melon_button.isEnabled()
+    d.edits["title"].setText("a")
+    assert d.genie_button.isEnabled() and d.melon_button.isEnabled()
+
+
+def test_web_rows_hidden_readonly(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    assert d.web_row.isVisible() and d.rename_row.isVisible() and d.paste_hint.isVisible()
+    assert d.paste_hint.text() == "끌어다 놓기 · Ctrl+V"
+    d.show_info(TrackInfo(str(f), title="T"), None, editable=False, note="n")
+    assert not d.web_row.isVisible() and not d.rename_row.isVisible() and not d.paste_hint.isVisible()
+
+
+def test_rename_preview_texts(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    assert not d.rename_preview.isVisible() and d.rename_box.text() == "저장할 때 파일 이름도 바꾸기"
+    d.set_rename_checked(True)
+    assert d.rename_preview.isVisible()
+    assert "서지원 - I Miss You.mp3" in d.rename_preview.text() and "→" in d.rename_preview.text()
+    assert "#8A6D00" in d.rename_preview.styleSheet()
+    set_text(d.edits["artist"], "")
+    assert d.rename_preview.text() == "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다."
+    assert "#5F6368" in d.rename_preview.styleSheet()
+    set_text(d.edits["artist"], "서지원")
+    (tmp_path / "서지원 - I Miss You.mp3").write_bytes(b"2")
+    set_text(d.edits["title"], "I Miss You ")   # 다시 계산: 겹침
+    assert d.rename_preview.text() == "같은 이름의 파일이 이미 있습니다"
+    assert "#B3261E" in d.rename_preview.styleSheet()
+    g = tmp_path / "서지원 - Same.mp3"; g.write_bytes(b"1")
+    d.show_info(TrackInfo(str(g), title="Same", artist="서지원"), None, editable=True)
+    assert d.rename_preview.text() == "(지금 이름과 같음)" and "#5F6368" in d.rename_preview.styleSheet()
+    d.set_rename_checked(False)
+    assert not d.rename_preview.isVisible()
+
+
+def test_rename_toggled_signal_only_on_click(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    got = []; d.rename_toggled.connect(got.append)
+    d.set_rename_checked(True)
+    assert got == [] and d.rename_box.isChecked()
+    d.rename_box.click()
+    assert got == [False] and not d.rename_box.isChecked()
+    d.rename_box.click()
+    assert got == [False, True]
+
+
+def test_pending_rename_not_dirty(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    assert not d.save_button.isEnabled() and not d.has_pending_rename() and d.rename_target() is None
+    d.set_rename_checked(True)
+    assert d.save_button.isEnabled() and not d.is_dirty() and d.has_pending_rename()
+    assert d.rename_target() == str(tmp_path / "서지원 - I Miss You.mp3")
+    assert d.message_label.text() == ""   # 노란 안내 줄은 칸·그림이 바뀔 때만
+
+
+def test_save_emits_for_rename_only(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    got = []; d.save_requested.connect(lambda *a: got.append(a))
+    d.set_rename_checked(True)
+    d.save_button.click()
+    assert got == [(str(f), {}, KEEP)]
+
+
+def test_saved_with_rename_shows_link(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    new = tmp_path / "서지원 - I Miss You.mp3"
+    got = []; d.undo_rename_requested.connect(lambda a, b: got.append((a, b)))
+    d.set_rename_checked(True)
+    d.saved(TrackInfo(str(new), title="I Miss You", artist="서지원"), None, renamed_from=str(f))
+    assert d.message_label.text() == "파일 이름을 바꿨습니다" and RENAME_OK_COLOR in d.message_label.styleSheet()
+    assert d.undo_link.isVisible() and d.undo_link.text() == '<a href="#">되돌리기</a>'
+    d.undo_link.linkActivated.emit("#")
+    assert got == [(str(f), str(new))]
+    d.clear_undo(); assert not d.undo_link.isVisible()
+
+
+def test_saved_with_rename_and_tag_change_text(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    got = []; d.save_requested.connect(lambda *a: got.append(a))
+    d.set_rename_checked(True); set_text(d.edits["album"], "New")
+    d.save_button.click()
+    new = tmp_path / "n.mp3"
+    d.saved(TrackInfo(str(new), title="I Miss You", artist="서지원", album="New"), None, renamed_from=str(f))
+    assert d.message_label.text() == "저장했습니다 · 파일 이름을 바꿨습니다"
+    d.show_info(TrackInfo(str(f), title="Z"), None, editable=True)   # 다른 곡: 링크가 사라진다
+    assert not d.undo_link.isVisible()
+
+
+def test_saved_warning_red_no_link(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.saved(TrackInfo(str(f), title="T"), None, warning="이름을 바꾸지 못했습니다")
+    assert d.message_label.text() == "이름을 바꾸지 못했습니다" and "#B3261E" in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible()
+    d.saved(TrackInfo(str(f), title="T"), None)
+    assert d.message_label.text() == "저장했습니다" and "#5F6368" in d.message_label.styleSheet()
+
+
+def test_renamed_back_text(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.saved(TrackInfo(str(f), title="T"), None, renamed_from="old")
+    d.renamed_back(TrackInfo(str(f), title="T"), None)
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다" and RENAME_OK_COLOR in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible()
+
+
+def png_image(color=0xFF336699):
+    img = QImage(20, 20, QImage.Format_ARGB32); img.fill(color)
+    return img
+
+
+def test_ctrl_v_image_in_field_sets_cover(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    QApplication.clipboard().setImage(png_image())
+    d.edits["title"].setFocus()
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert isinstance(d._picture, bytes) and d._picture[:2] == b"\xff\xd8"
+    assert d.edits["title"].text() == "I Miss You"
+
+
+def test_ctrl_v_text_in_field_pastes_text(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    QApplication.clipboard().setText("abc")
+    d.edits["title"].setFocus(); d.edits["title"].setCursorPosition(0)
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert d.edits["title"].text() == "abcI Miss You" and d._picture is KEEP
+
+
+def test_ctrl_v_png_file(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    img = tmp_path / "c.png"; img.write_bytes(PNG)
+    m = QMimeData(); m.setUrls([QUrl.fromLocalFile(str(img))])
+    QApplication.clipboard().setMimeData(m)
+    QTest.keyClick(d.edits["genre"].lineEdit(), Qt.Key_V, Qt.ControlModifier)
+    assert d._picture == PNG
+
+
+def drop_mime(d, mime):
+    d.dropEvent(QDropEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+
+
+def test_drop_image_data(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    m = QMimeData(); m.setImageData(png_image())
+    drop_mime(d, m)
+    assert isinstance(d._picture, bytes) and d._picture[:2] == b"\xff\xd8"
+
+
+def url_mime(url):
+    m = QMimeData(); m.setUrls([QUrl(url)]); return m
+
+
+def test_drop_http_url_fetches(qapp, tmp_path):
+    seen = []
+    def fetch(url): seen.append(url); return PNG
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=fetch)
+    drop_mime(d, url_mime("https://x.example/a.png"))
+    assert seen == ["https://x.example/a.png"] and d._picture == PNG
+    from funplayer.websearch import ImageFetchError
+    def bad(url): raise ImageFetchError("x")
+    d2, _, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=bad)
+    drop_mime(d2, url_mime("http://x.example/a.png"))
+    assert d2.message_label.text() == "그림을 받지 못했습니다" and "#B3261E" in d2.message_label.styleSheet()
+    d3, _, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: b"<html>")
+    drop_mime(d3, url_mime("http://x.example/a"))
+    assert d3.message_label.text() == "jpg·png 그림만 넣을 수 있습니다"
+
+
+def test_drop_linked_image_fetches_img_src(qapp, tmp_path):
+    # 멜론처럼 <a>로 감싼 그림: URL은 앨범 페이지, HTML에 진짜 그림 주소
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = url_mime("https://www.example.com/album/detail.htm?id=1")
+    m.setHtml('<a href="https://www.example.com/album"><img alt="x" src="//cdn.example.com/a.jpg?a=1&amp;b=2"></a>')
+    drop_mime(d, m)
+    assert seen == ["https://cdn.example.com/a.jpg?a=1&b=2"] and d._picture == PNG
+
+
+def test_drop_html_without_http_img_uses_url(qapp, tmp_path):
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = url_mime("https://x.example/a.png"); m.setHtml("<img src='data:image/png;base64,AAAA'>")
+    drop_mime(d, m)
+    assert seen == ["https://x.example/a.png"]
+
+
+def test_drop_url_shows_progress_and_ignored_without_run_async(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    assert d.message_label.text() == "그림 받는 중…" and "#5F6368" in d.message_label.styleSheet()
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture == PNG
+    d2, _, _ = web_editor(qapp, tmp_path, fetch_image=lambda u: PNG)
+    drop_mime(d2, url_mime("http://x.example/a.png"))
+    assert d2._picture is KEEP and d2.message_label.text() == ""
+
+
+def test_drop_url_late_reply_ignored(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    other = tmp_path / "y.mp3"; other.write_bytes(b"1")
+    d.show_info(TrackInfo(str(other), title="Y"), None, editable=True)
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture is KEEP
+
+
+# ---- 5-C 수정 1차 ----
+def renamed_editor(qapp, tmp_path, **kw):
+    d, f, opened = web_editor(qapp, tmp_path, **kw)
+    d.saved(TrackInfo(str(tmp_path / "n.mp3"), title="I Miss You", artist="서지원"), None, renamed_from=str(f))
+    assert d.undo_link.isVisible()
+    return d, f
+
+
+def test_undo_link_hidden_after_edit(qapp, tmp_path):
+    d, f = renamed_editor(qapp, tmp_path)
+    set_text(d.edits["album"], "X")
+    assert not d.undo_link.isVisible() and d._undo_pair is None
+
+
+def test_undo_link_hidden_after_picture_changes(qapp, tmp_path):
+    d, f = renamed_editor(qapp, tmp_path)
+    d.set_picture_bytes(PNG)
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d.set_picture_bytes(b"bad")   # 오류 문구도 사용자 변경
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d._remove_picture()
+    assert not d.undo_link.isVisible()
+    d, f = renamed_editor(qapp, tmp_path)
+    d.rename_box.click()
+    assert not d.undo_link.isVisible()
+
+
+def test_ctrl_v_text_wins_in_text_field(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    m = QMimeData(); m.setImageData(png_image()); m.setText("abc")
+    QApplication.clipboard().setMimeData(m)
+    d.edits["title"].setCursorPosition(0)
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert d._picture is KEEP and d.edits["title"].text() == "abcI Miss You"
+    # 글자 칸이 아닌 곳이면 그림
+    QTest.keyClick(d.save_button, Qt.Key_V, Qt.ControlModifier)
+    assert isinstance(d._picture, bytes)
+
+
+def test_ctrl_v_image_with_html_only_sets_cover(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    m = QMimeData(); m.setImageData(png_image()); m.setHtml("<img src='x'>")
+    QApplication.clipboard().setMimeData(m)
+    QTest.keyClick(d.edits["title"], Qt.Key_V, Qt.ControlModifier)
+    assert isinstance(d._picture, bytes) and d.edits["title"].text() == "I Miss You"
+
+
+def test_drop_image_beats_url(qapp, tmp_path):
+    seen = []
+    d, f, _ = web_editor(qapp, tmp_path, run=inline, fetch_image=lambda u: seen.append(u) or PNG)
+    m = QMimeData(); m.setImageData(png_image()); m.setUrls([QUrl("http://x.example/a.png")])
+    drop_mime(d, m)
+    assert seen == [] and d._picture[:2] == b"\xff\xd8"
+
+
+# ---- 5-C 최종 검토 수정 ----
+def test_conflict_target_kept_but_not_pending(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    other = tmp_path / "서지원 - I Miss You.mp3"; other.write_bytes(b"2")
+    d.set_rename_checked(True)
+    assert d.rename_target() == str(other)   # 겹쳐도 후보를 돌려줘야 저장 쪽이 겹침 오류를 낸다
+    assert not d.has_pending_rename() and not d.save_button.isEnabled()
+    set_text(d.edits["album"], "X")
+    assert d.save_button.isEnabled() and d.rename_target() == str(other)
+
+
+def test_rename_preview_too_long(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.set_rename_checked(True)
+    set_text(d.edits["artist"], "가" * 160)
+    assert d.rename_preview.text() == "이름이 너무 길어 바꿀 수 없습니다."
+    assert "#5F6368" in d.rename_preview.styleSheet() and d.rename_target() is None
+    set_text(d.edits["artist"], "")
+    assert d.rename_preview.text() == "가수와 제목이 있어야 파일 이름을 바꿀 수 있습니다."
+
+
+def test_refresh_checks_conflict_once(qapp, tmp_path, monkeypatch):
+    from funplayer.core import renamer
+    d, f, _ = web_editor(qapp, tmp_path)
+    d.set_rename_checked(True)
+    calls = []
+    real = renamer.conflict
+    monkeypatch.setattr(renamer, "conflict", lambda a, b: calls.append(1) or real(a, b))
+    set_text(d.edits["album"], "X")
+    assert len(calls) == 1
+    d.rename_target(); d.has_pending_rename()
+    assert len(calls) == 1
+
+
+def test_close_drops_late_dropped_image(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    d.close()
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_reject_drops_late_dropped_image(qapp, tmp_path):
+    pending = []
+    d, f, _ = web_editor(qapp, tmp_path, run=lambda w, dn: pending.append((w, dn)), fetch_image=lambda u: PNG)
+    drop_mime(d, url_mime("http://x.example/a.png"))
+    d.reject()
+    w, dn = pending[0]; dn(w(), None)
+    assert d._picture is KEEP and not d.is_dirty()
+
+
+def test_renamed_back_dirty_keeps_edits(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    new = tmp_path / "n.mp3"
+    d.show_info(TrackInfo(str(new), title="I Miss You", artist="서지원"), None, editable=True)
+    set_text(d.edits["album"], "Edited")
+    d.renamed_back(TrackInfo(str(f), title="I Miss You", artist="서지원"), None)
+    assert d.path == str(f) and d.path_label.text() == str(f)
+    assert d.edits["album"].text() == "Edited" and d.is_dirty()
+    assert d.message_label.text() == "파일 이름을 되돌렸습니다" and RENAME_OK_COLOR in d.message_label.styleSheet()
+    assert not d.undo_link.isVisible()
+
+
+def test_transparent_image_becomes_white(qapp, tmp_path):
+    d, f, _ = web_editor(qapp, tmp_path)
+    img = QImage(8, 8, QImage.Format_ARGB32); img.fill(0x00000000)
+    m = QMimeData(); m.setImageData(img)
+    drop_mime(d, m)
+    out = QImage.fromData(d._picture)
+    c = out.pixelColor(4, 4)
+    assert min(c.red(), c.green(), c.blue()) > 240

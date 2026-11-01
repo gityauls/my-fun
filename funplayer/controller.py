@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
-from funplayer.core import taginfo
+from funplayer.core import renamer, taginfo
 from funplayer.core.effects import FxSettings
 from funplayer.core.genre import preset_for_genre
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
@@ -11,7 +12,7 @@ from funplayer.core.playlist import Playlist
 from funplayer.core.settings import REPEAT_MODES, Settings
 from funplayer.core.timefmt import format_time
 from funplayer.core.tracks import expand_paths
-from funplayer.engine import tags
+from funplayer.engine import tags, tagwrite
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
 from funplayer.radio import RESUME_RADIO_MSG, RadioState
@@ -29,17 +30,37 @@ REMOVED_MSG = "{n}곡을 지웠습니다"
 NOTHING_REMOVED_MSG = "지울 곡이 없습니다"
 RESUME_MSG = "이어 듣기: {time}부터"
 RESUME_TAIL = 5.0
+RENAME_EXISTS = "같은 이름의 파일이 이미 있습니다 ({name}). 아무것도 저장하지 않았습니다."
+RENAME_PARTIAL = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
+RENAME_PARTIAL_EXISTS = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (같은 이름의 파일이 이미 있습니다)."
+RENAME_FAILED = "파일 이름을 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
+UNDO_DONE = "파일 이름을 되돌렸습니다"
+UNDO_MISSING = "되돌릴 파일이 없습니다 ({name})"
+UNDO_EXISTS = "원래 이름의 파일이 이미 있습니다 ({name})"
+UNDO_FAILED = "파일 이름을 되돌리지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SaveOutcome:
+    info: taginfo.TrackInfo
+    renamed_from: str | None = None   # 이름을 바꿨으면 옛 경로
+    warning: str = ""                 # 태그만 저장되고 이름은 못 바꾼 경우의 안내
 
 
 class PlayerController:
     _UNSET = object()
 
-    def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None) -> None:
+    def __init__(self, player, settings: Settings, rng=None, session_path=None, read_info=None,
+                 write_tags=None, clear_tags=None, rename_log=None, rename_file=None) -> None:
         self._player = player
         self._settings = settings
         self._read_info = read_info or tags.read_info
+        self._write_tags = write_tags or tagwrite.write_tags
+        self._clear_tags = clear_tags or tagwrite.clear_tags
+        self._rename_log = rename_log if rename_log is not None else renamer.RenameLog(None)
+        self._rename_file = rename_file or renamer.rename_file
         self._session_path = session_path
         self._info_cache: taginfo.TrackInfo | None = None
         self._cued = False
@@ -116,6 +137,133 @@ class PlayerController:
         if self._info_cache is None or self._info_cache.path != track.path:
             self._info_cache = self._read_info(track.path)
         return self._info_cache
+
+    def save_tags(self, path: str, fields: dict[str, str], picture=tagwrite.KEEP) -> taginfo.TrackInfo:
+        """태그를 쓴다. 지금 플레이어에 올라간 파일이면 내렸다가 같은 자리로 다시 올린다."""
+        return self._edit_tags(path, lambda: self._write_tags(path, fields, picture))
+
+    def clear_tags(self, path: str) -> taginfo.TrackInfo:
+        return self._edit_tags(path, lambda: self._clear_tags(path))
+
+    def _is_loaded(self, path: str) -> bool:
+        track = self.playlist.current
+        return (self.source == "file" and self._player.has_track
+                and not getattr(self._player, "is_live", False)
+                and track is not None and os.path.normcase(track.path) == os.path.normcase(path))
+
+    def _edit_tags(self, path: str, write) -> taginfo.TrackInfo:
+        def action() -> str:
+            write()
+            return path
+        self._edit_file(path, action)
+        return self._read_info(path)
+
+    def _edit_file(self, path: str, action) -> str:
+        """파일을 내리고 action()을 실행한 뒤 최종 경로(action의 반환값)로 같은 자리에 다시 올린다.
+        예외가 나면 옛 경로로 올리고 다시 던진다."""
+        loaded = self._is_loaded(path)
+        state = self._player.state if loaded else None
+        position = self._player.position if loaded else 0.0
+        cued = self._cued
+        if loaded:
+            self._player.unload()
+        final = path
+        try:
+            final = action()
+        finally:
+            if loaded:
+                self._reload(final, state, position, cued)
+        if final != path:
+            self._rename_everywhere(path, final)
+        self._info_cache = None
+        self._synced_key = None   # 어떤 곡 키와도 달라 sync_effects()가 다시 보낸다
+        self.sync_effects()
+        return final
+
+    def _rename_everywhere(self, old: str, new: str) -> None:
+        """이름이 바뀐 파일을 가리키는 곳을 함께 고친다 (5-B가 즐겨찾기를 여기에 더한다)."""
+        self.playlist.rename_path(old, new)
+        if os.path.normcase(self._settings.last_track) == os.path.normcase(old):
+            self._settings.last_track = new
+
+    def save_and_rename(self, path: str, fields: dict[str, str], picture,
+                        new_path: str) -> SaveOutcome:
+        """태그를 쓰고 파일 이름을 바꾼다. 겹치면 아무것도 쓰지 않는다."""
+        if renamer.conflict(path, new_path):
+            raise renamer.RenameError(RENAME_EXISTS.format(name=os.path.basename(new_path)))
+        need_write = bool(fields) or picture is not tagwrite.KEEP
+        partial = ""
+
+        def action() -> str:
+            nonlocal partial
+            if need_write:
+                self._write_tags(path, fields, picture)
+            try:
+                self._rename_file(path, new_path)
+            except renamer.RenameError as e:
+                # 미리 확인한 뒤에 같은 이름이 생긴 경우(RenameConflict)는 문구가 다르다
+                exists = isinstance(e, renamer.RenameConflict)
+                if not need_write:
+                    text = RENAME_EXISTS.format(name=os.path.basename(new_path)) if exists else RENAME_FAILED
+                    raise renamer.RenameError(text) from None
+                partial = RENAME_PARTIAL_EXISTS if exists else RENAME_PARTIAL
+                return path
+            return new_path
+
+        final = self._edit_file(path, action)
+        if partial:
+            return SaveOutcome(self._read_info(path), None, partial)
+        self._rename_log.add(path, final)
+        return SaveOutcome(self._read_info(final), path)
+
+    def last_rename(self) -> tuple[str, str] | None:
+        return self._rename_log.last()
+
+    def undo_rename(self) -> tuple[str | None, str]:
+        """마지막 이름 바꾸기를 되돌린다. 성공하면 (옛 경로, 문구), 아니면 (None, 오류 문구)."""
+        last = self._rename_log.last()
+        if last is None:
+            return None, ""
+        old, new = last
+        if not os.path.exists(new):
+            self._rename_log.pop()
+            return self._undo_failed(UNDO_MISSING.format(name=os.path.basename(new)))
+
+        def action() -> str:
+            self._rename_file(new, old)
+            return old
+
+        try:
+            self._edit_file(new, action)
+        except renamer.RenameConflict:
+            return self._undo_failed(UNDO_EXISTS.format(name=os.path.basename(old)))
+        except renamer.RenameError:
+            return self._undo_failed(UNDO_FAILED)
+        self._rename_log.pop()
+        self._set_status(UNDO_DONE, False)
+        return old, UNDO_DONE
+
+    def _undo_failed(self, msg: str) -> tuple[None, str]:
+        self._error(msg)
+        return None, msg
+
+    def _reload(self, path: str, state, position: float, cued: bool) -> None:
+        try:
+            self._player.load(path)
+        except DecodeError:
+            i = self.playlist.index
+            if i is not None:
+                self.playlist.mark_failed(i)
+            self._cued = False
+            self._error(FAIL_MSG.format(name=os.path.basename(path)))
+            return
+        if position > 0 and (state is not State.STOPPED or cued):
+            self._player.seek(position)
+        if state is State.PLAYING:
+            self._player.play()
+        elif state is State.PAUSED:
+            self._player.play()   # load()는 멈춤 상태로 올리니, 재생했다가 바로 일시정지로 되돌린다
+            self._player.pause()
 
     def info_for(self, index: int) -> taginfo.TrackInfo:
         path = self.playlist.tracks[index].path
