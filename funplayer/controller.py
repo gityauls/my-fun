@@ -8,7 +8,7 @@ from funplayer.core import renamer, taginfo
 from funplayer.core.effects import FxSettings
 from funplayer.core.genre import preset_for_genre
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
-from funplayer.core.playlist import Playlist
+from funplayer.core.playlist import Playlist, path_key
 from funplayer.core.settings import REPEAT_MODES, Settings
 from funplayer.core.timefmt import format_time
 from funplayer.core.tracks import expand_paths
@@ -29,6 +29,8 @@ NO_DUP_MSG = "중복 곡이 없습니다"
 REMOVED_MSG = "{n}곡을 지웠습니다"
 NOTHING_REMOVED_MSG = "지울 곡이 없습니다"
 RESUME_MSG = "이어 듣기: {time}부터"
+NO_FAVORITES_MSG = "즐겨찾기한 곡이 없습니다"
+FAV_LOADED_MSG = "즐겨찾기 {n}곡을 불러왔습니다"
 RESUME_TAIL = 5.0
 RENAME_EXISTS = "같은 이름의 파일이 이미 있습니다 ({name}). 아무것도 저장하지 않았습니다."
 RENAME_PARTIAL = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
@@ -181,8 +183,11 @@ class PlayerController:
         return final
 
     def _rename_everywhere(self, old: str, new: str) -> None:
-        """이름이 바뀐 파일을 가리키는 곳을 함께 고친다 (5-B가 즐겨찾기를 여기에 더한다)."""
+        """이름이 바뀐 파일을 가리키는 곳(재생목록, 지난 곡, 즐겨찾기)을 함께 고친다."""
         self.playlist.rename_path(old, new)
+        favs = self._settings.favorites
+        if any(path_key(p) == path_key(old) for p in favs):
+            self._settings.favorites = [new if path_key(p) == path_key(old) else p for p in favs]
         if os.path.normcase(self._settings.last_track) == os.path.normcase(old):
             self._settings.last_track = new
 
@@ -408,6 +413,7 @@ class PlayerController:
         self._cued = False
         self._player.stop()
         self.playlist.replace(found)
+        self._arrange()
         missing = self._mark_missing(0)
         self.play_index(self.playlist.index)
         self._report_load(error, missing)
@@ -424,6 +430,8 @@ class PlayerController:
         start = len(self.playlist)
         first = self.playlist.add(found)
         missing = self._mark_missing(start)
+        if first is not None:
+            first = self._keep_rows([first], self._arrange)[0]
         if was_stopped and first is not None:
             self.play_index(first)
         self._report_load(error, missing)
@@ -491,12 +499,107 @@ class PlayerController:
 
     def sort(self, by: str) -> None:
         self.playlist.sort(by)
+        self._arrange()   # 즐겨찾기 묶음은 맨 위에 그대로, 나머지만 정렬된 순서
         self._remember(self._resume_position())
 
     def move(self, rows: list[int], before: int) -> list[int]:
-        moved = self.playlist.move(rows, before)
+        moved = self._keep_rows(self.playlist.move(rows, before), self._arrange)
         self._remember(self._resume_position())
         return moved
+
+    # ---- 즐겨찾기 ----
+    def is_favorite(self, path: str) -> bool:
+        return path_key(path) in self.favorite_keys()
+
+    def favorite_keys(self) -> set[str]:
+        return {path_key(p) for p in self._settings.favorites}
+
+    def _arrange(self, dropped=()) -> None:
+        self.playlist.arrange(self._settings.favorites, dropped)
+
+    def _keep_rows(self, rows: list[int], change) -> list[int]:
+        """change()로 줄 순서가 바뀐 뒤 같은 곡들의 새 줄 번호."""
+        picked = [self.playlist.tracks[r] for r in rows]
+        change()
+        where = {id(t): i for i, t in enumerate(self.playlist.tracks)}
+        return [where[id(t)] for t in picked]
+
+    def set_favorite(self, rows: list[int], on: bool) -> list[int]:
+        """고른 줄을 즐겨찾기에 넣거나(맨 위 묶음 끝으로) 뺀다(이름순 자리로). 곡의 새 줄 번호를 돌려준다.
+        목록 순서만 바뀌고 재생은 건드리지 않는다."""
+        rows = [r for r in rows if 0 <= r < len(self.playlist)]
+        if not rows:
+            return []
+        paths = [self.playlist.tracks[r].path for r in rows]
+        favs = self._settings.favorites
+        have = {path_key(p) for p in favs}
+        if on:
+            for p in paths:
+                if path_key(p) not in have:
+                    favs.append(p)
+                    have.add(path_key(p))
+        else:
+            gone = {path_key(p) for p in paths}
+            favs = [p for p in favs if path_key(p) not in gone]
+        self._settings.favorites = favs
+        new = self._keep_rows(rows, lambda: self._arrange(() if on else paths))
+        self._remember(self._resume_position())
+        return new
+
+    def toggle_favorite(self, rows: list[int]) -> list[int]:
+        """고른 곡이 모두 즐겨찾기면 빼고, 아니면 넣는다."""
+        keys = self.favorite_keys()
+        on = not all(path_key(self.playlist.tracks[r].path) in keys
+                     for r in rows if 0 <= r < len(self.playlist))
+        return self.set_favorite(rows, on)
+
+    def save_favorites(self, path: str) -> None:
+        favs = self._settings.favorites
+        if not favs:
+            self._error(NO_FAVORITES_MSG)
+            return
+        if os.path.splitext(path)[1].lower() not in PLAYLIST_EXTS:
+            path += ".m3u8"
+        name = os.path.basename(path)
+        try:
+            write_playlist(path, favs)
+        except (OSError, ValueError):
+            logger.warning("favorites save failed: %s", path, exc_info=True)
+            self._error(SAVE_FAIL_MSG.format(name=name))
+            return
+        self._info(SAVED_MSG.format(name=name))
+
+    def load_favorites(self, path: str) -> None:
+        """목록 파일의 곡을 즐겨찾기에 더하고, 재생목록에 없는 곡은 덧붙인다 (모두 맨 위 묶음으로)."""
+        self._set_status("")
+        try:
+            paths = read_playlist(path)
+        except (OSError, ValueError):
+            logger.warning("favorites read failed: %s", path, exc_info=True)
+            self._error(LOAD_FAIL_MSG.format(name=os.path.basename(path)))
+            return
+        if not paths:
+            self._error(NO_FILES_MSG)
+            return
+        favs = self._settings.favorites
+        have = {path_key(p) for p in favs}
+        for p in paths:
+            if path_key(p) not in have:
+                favs.append(p)
+                have.add(path_key(p))
+        self._settings.favorites = favs
+        in_list = {path_key(t.path) for t in self.playlist.tracks}
+        extra = []
+        for p in paths:
+            if path_key(p) not in in_list:
+                extra.append(p)
+                in_list.add(path_key(p))
+        start = len(self.playlist)
+        self.playlist.add(extra)
+        self._mark_missing(start)
+        self._arrange()
+        self._info(FAV_LOADED_MSG.format(n=len(paths)))
+        self._remember(self._resume_position())
 
     def play_index(self, i: int) -> None:
         self._play_index(i)
@@ -784,6 +887,7 @@ class PlayerController:
         if not paths:
             return None
         self.playlist.replace(paths)
+        self._arrange()
         self._mark_missing(0)
         position = self._settings.last_position
         i = self.playlist.index

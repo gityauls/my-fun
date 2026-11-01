@@ -19,7 +19,7 @@ def test_defaults():
                         "player_tab": "playlist",
                         "player_radio_open": ["favorites", "kr:big3", "user"],
                         "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
-                        "player_rename_on_save": False}
+                        "player_rename_on_save": False, "player_favorites": []}
 
 def test_repeat_and_shuffle():
     s, store, saves = make()
@@ -151,6 +151,17 @@ def test_fx_keys_round_trip():
     assert store["player_fx"] == {"enabled": True} and store["player_fx_visible"] is True
     assert store["player_fx_open"] is False and len(saves) == 3
     assert s.fx == {"enabled": True} and s.fx_visible is True and s.fx_open is False
+
+def test_favorites_default_bad_values_and_set():
+    s, store, saves = make()
+    assert s.favorites == []
+    store["player_favorites"] = "a.mp3"
+    assert s.favorites == []
+    store["player_favorites"] = ["a.mp3", 3, "", None, "b.mp3"]
+    assert s.favorites == ["a.mp3", "b.mp3"]
+    s.favorites = ["c.mp3", 1]
+    assert store["player_favorites"] == ["c.mp3"] and saves
+
 
 def test_rename_on_save_default_and_bad_value():
     s, store, saves = make()

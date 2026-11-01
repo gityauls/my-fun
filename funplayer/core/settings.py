@@ -19,7 +19,7 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
             "player_radio_open": ["favorites", "kr:big3", "user"],
             "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
-            "player_rename_on_save": False}
+            "player_rename_on_save": False, "player_favorites": []}
 
 LAST_SOURCES = ("file", "radio")
 TABS = ("playlist", "radio")
@@ -246,6 +246,18 @@ class Settings:
     @rename_on_save.setter
     def rename_on_save(self, value: bool) -> None:
         self._set("player_rename_on_save", bool(value))
+
+    @property
+    def favorites(self) -> list[str]:
+        """즐겨찾기한 파일 경로, 즐겨찾기한 순서대로."""
+        value = self._store.get("player_favorites")
+        if not isinstance(value, list):
+            return []
+        return [v for v in value if isinstance(v, str) and v]
+
+    @favorites.setter
+    def favorites(self, value: list[str]) -> None:
+        self._set("player_favorites", [v for v in value if isinstance(v, str) and v])
 
 
 class JsonStore:

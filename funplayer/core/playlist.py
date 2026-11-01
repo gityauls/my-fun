@@ -10,6 +10,11 @@ from funplayer.core.tracks import name_sort_key, path_sort_key
 PREV_THRESHOLD = 3.0
 
 
+def path_key(path: str) -> str:
+    """같은 파일이면 같은 값 (대소문자·상대 경로 무시)."""
+    return os.path.normcase(os.path.abspath(path))
+
+
 @dataclass
 class Track:
     path: str
@@ -167,6 +172,20 @@ class Playlist:
         else:
             raise ValueError(by)
         self._apply(sorted(range(len(self.tracks)), key=lambda i: key(self.tracks[i].path)), self.index)
+
+    def arrange(self, favorites: list[str], dropped: Iterable[str] = ()) -> None:
+        """즐겨찾기 곡을 즐겨찾기 순서대로 맨 위에 모은다. 나머지는 지금 순서를 지킨다.
+        dropped(방금 해제한 경로)는 나머지 곡 사이 이름순 자리로 보낸다. 지금 곡은 그대로 지금 곡이다."""
+        rank = {path_key(p): i for i, p in reversed(list(enumerate(favorites)))}
+        keys = [path_key(t.path) for t in self.tracks]
+        favs = sorted((i for i, k in enumerate(keys) if k in rank), key=lambda i: rank[keys[i]])
+        dropped_keys = {path_key(p) for p in dropped} - rank.keys()
+        rest = [i for i, k in enumerate(keys) if k not in rank and k not in dropped_keys]
+        for i in (i for i, k in enumerate(keys) if k in dropped_keys):
+            name = name_sort_key(self.tracks[i].path)
+            at = next((n for n, j in enumerate(rest) if name_sort_key(self.tracks[j].path) > name), len(rest))
+            rest.insert(at, i)
+        self._apply(favs + rest, self.index)
 
     def move(self, rows: Iterable[int], before: int) -> list[int]:
         n = len(self.tracks)

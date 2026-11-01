@@ -1059,3 +1059,77 @@ def test_rename_toctou_conflict_nothing_written(tmp_path):
         c.save_and_rename(a, {}, KEEP, new)
     assert str(e.value) == RENAME_EXISTS.format(name="가수 - 제목.mp3")
     assert writes == [] and c.last_rename() is None
+
+
+# ---- 즐겨찾기 (5-B) ----
+def ctitles(c):
+    return [t.title for t in c.playlist.tracks]
+
+
+def test_favorite_moves_to_top_without_touching_playback(ctl, tmp_path):
+    c, fake, store = ctl
+    c.open([str(make_songs(tmp_path, ABC + ["04 d.mp3"]))]); c.play_index(1)
+    calls = len(fake.calls)
+    assert c.set_favorite([2], True) == [0]
+    assert c.set_favorite([3], True) == [1]                  # 다음 즐겨찾기는 앞 즐겨찾기 아래
+    assert ctitles(c) == ["03 c", "04 d", "01 a", "02 b"]
+    assert c.playlist.current.title == "02 b" and len(fake.calls) == calls   # 재생은 그대로
+    assert [os.path.basename(p) for p in store["player_favorites"]] == ["03 c.mp3", "04 d.mp3"]
+
+
+def test_unfavorite_returns_to_name_position(ctl, tmp_path):
+    c, _, _ = ctl
+    c.open([str(make_songs(tmp_path, ABC + ["04 d.mp3"]))])
+    c.set_favorite([1], True); c.set_favorite([3], True)     # b, d, a, c
+    assert c.set_favorite([0], False) == [2]                 # b 해제 -> a 다음
+    assert ctitles(c) == ["04 d", "01 a", "02 b", "03 c"]
+
+
+def test_toggle_favorite_all_or_nothing(ctl, tmp_path):
+    c, _, _ = ctl
+    c.open([str(make_songs(tmp_path, ABC))])
+    c.toggle_favorite([0])
+    assert c.is_favorite(c.playlist.tracks[0].path)
+    c.toggle_favorite([0, 1])          # 하나라도 아니면 모두 넣기
+    assert all(c.is_favorite(t.path) for t in c.playlist.tracks[:2])
+    c.toggle_favorite([0, 1])          # 모두 즐겨찾기면 모두 빼기
+    assert not any(c.is_favorite(t.path) for t in c.playlist.tracks)
+
+
+def test_favorites_stay_on_top_after_open_sort_and_move(ctl, tmp_path):
+    c, _, store = ctl
+    folder = make_songs(tmp_path, ABC)
+    store["player_favorites"] = [str(folder / "03 c.mp3")]
+    c.open([str(folder)])
+    assert ctitles(c)[0] == "03 c"
+    c.sort("name")
+    assert ctitles(c) == ["03 c", "01 a", "02 b"]
+    new = c.move([0], 3)               # 즐겨찾기를 묶음 밖으로 끌어도 맨 위로 돌아온다
+    assert ctitles(c)[0] == "03 c" and new == [0]
+
+
+def test_rename_updates_favorites(ctl, tmp_path):
+    c, _, store = ctl
+    folder = make_songs(tmp_path, ABC)
+    c.open([str(folder)]); c.set_favorite([0], True)
+    c._rename_everywhere(str(folder / "01 a.mp3"), str(folder / "가수 - a.mp3"))
+    assert store["player_favorites"] == [str(folder / "가수 - a.mp3")]
+
+
+def test_save_and_load_favorites(ctl, tmp_path):
+    c, _, store = ctl
+    folder = make_songs(tmp_path, ABC)
+    c.open([str(folder)]); c.set_favorite([2], True); c.set_favorite([1], True)   # c, a 차례
+    out = tmp_path / "fav"
+    c.save_favorites(str(out))
+    assert (tmp_path / "fav.m3u8").exists() and c.status.startswith("저장했습니다")
+    store["player_favorites"] = []
+    c.open([str(folder / "02 b.mp3")])
+    c.load_favorites(str(tmp_path / "fav.m3u8"))
+    assert ctitles(c) == ["03 c", "01 a", "02 b"] and c.status == "즐겨찾기 2곡을 불러왔습니다"
+
+
+def test_save_favorites_empty_is_error(ctl, tmp_path):
+    c, _, _ = ctl
+    c.save_favorites(str(tmp_path / "x.m3u8"))
+    assert c.status == "즐겨찾기한 곡이 없습니다" and not (tmp_path / "x.m3u8").exists()

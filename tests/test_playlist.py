@@ -140,3 +140,33 @@ def test_rename_path_no_match_changes_nothing():
     pl = Playlist(); pl.replace(P)
     v = pl.version
     assert pl.rename_path(r"C:\zzz.mp3", r"C:\q.mp3") == 0 and pl.version == v
+
+
+# ---- 즐겨찾기 묶음 (5-B) ----
+def test_arrange_puts_favorites_on_top_in_favorite_order():
+    pl = Playlist(); pl.replace(P5); pl.set_current(2)
+    pl.arrange([P5[4], P5[1]])
+    assert titles(pl) == ["04 e", "01 b", "00 a", "02 c", "03 d"]
+    assert pl.current.title == "02 c"   # 지금 곡은 그대로
+
+
+def test_arrange_matches_case_and_ignores_unknown_favorites():
+    pl = Playlist(); pl.replace(P5)
+    pl.arrange(["c:/M/03 D.mp3", "C:/m/zz.mp3"])
+    assert titles(pl)[0] == "03 d"
+
+
+def test_arrange_dropped_goes_to_name_position():
+    pl = Playlist(); pl.replace(P5)
+    pl.arrange([P5[3], P5[0]])                 # d, a, b, c, e
+    pl.arrange([P5[0]], dropped=[P5[3]])       # d를 해제 -> 나머지 사이 이름순 자리
+    assert titles(pl) == ["00 a", "01 b", "02 c", "03 d", "04 e"]
+
+
+def test_arrange_dropped_korean_after_english_and_numbers():
+    paths = ["C:/m/가 노래.mp3", "C:/m/1 one.mp3", "C:/m/b song.mp3", "C:/m/나 노래.mp3"]
+    pl = Playlist(); pl.replace(paths); pl.sort("name")
+    order = titles(pl)
+    pl.arrange([paths[3]])
+    pl.arrange([], dropped=[paths[3]])
+    assert titles(pl) == order
