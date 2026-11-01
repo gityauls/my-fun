@@ -28,7 +28,8 @@ from funplayer.engine.player import AudioPlayer, State
 from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
-from funplayer.ui.colors import ERROR_COLOR, INFO_COLOR
+from funplayer.core.playlist import path_key
+from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.fx_strip import FxStrip
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
@@ -57,6 +58,9 @@ LIVE_COLOR = "#C5221F"
 LISTENED_PREFIX = "들은 시간 "
 DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
 
+FAV_ON_TEXT = "즐겨찾기 (맨 위로)\tCtrl+D"
+FAV_OFF_TEXT = "즐겨찾기 해제\tCtrl+D"
+
 SHORTCUTS: list[tuple[str, str]] = [
     ("Space", "toggle"), ("X", "toggle"), ("V", "stop"), ("Z", "prev"), ("B", "next"),
     ("Left", "seek_back"), ("Right", "seek_forward"), ("Up", "volume_up"),
@@ -66,6 +70,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
     ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"), ("Ctrl+Tab", "next_tab"),
     ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"), ("Ctrl+E", "toggle_fx_visible"),
+    ("Ctrl+D", "toggle_favorite"),
 ]
 
 # 작게 볼 때 숨기는 위젯 (이름). 탭·라디오에 따라 바뀌는 위젯은 _apply_visibility가 맡는다
@@ -384,6 +389,7 @@ class PlayerPanel(QWidget):
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
                  ("info_row", "곡 정보 고치기…", self.show_row_info),
+                 ("favorite", FAV_ON_TEXT, self.toggle_favorite),
                  ("undo_rename", "이름 되돌리기", self.undo_rename_from_menu),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
                  None,
@@ -414,6 +420,8 @@ class PlayerPanel(QWidget):
     def _make_list_menu(self) -> None:
         menu = self.list_menu = QMenu(self.list_button)
         self._add_action(menu, "save", "재생목록 저장…\tCtrl+S", self.save_playlist)
+        self._add_action(menu, "save_favorites", "즐겨찾기 저장…", self.save_favorites)
+        self._add_action(menu, "load_favorites", "즐겨찾기 불러오기…", self.load_favorites)
         menu.addSeparator()
         menu.addAction(self.actions["remove"])
         self._add_action(menu, "dedupe", "중복 곡 지우기", self.remove_duplicates)
@@ -591,6 +599,12 @@ class PlayerPanel(QWidget):
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
+        fav_rows = self._favorite_rows()
+        tracks = self.controller.playlist.tracks
+        all_fav = bool(fav_rows) and all(self.controller.is_favorite(tracks[r].path) for r in fav_rows)
+        self.actions["favorite"].setEnabled(bool(fav_rows))
+        self.actions["favorite"].setText(FAV_OFF_TEXT if all_fav else FAV_ON_TEXT)
+        self.actions["save_favorites"].setEnabled(bool(self._settings.favorites))
         # 이름 되돌리기는 방금 이름을 바꾼 그 곡을 우클릭했을 때만 보인다 (다른 곡에서 실수로 누르지 않게)
         last = self.controller.last_rename()
         tracks = self.controller.playlist.tracks
@@ -741,6 +755,38 @@ class PlayerPanel(QWidget):
     def sort_by(self, by: str) -> None:
         self.controller.sort(by)
         self.refresh()
+
+    def _favorite_rows(self) -> list[int]:
+        """즐겨찾기 넣기·빼기 대상: 고른 줄들, 없으면 커서 줄."""
+        rows = self.selected_rows()
+        if not rows:
+            row = self.playlist_view.currentRow()
+            rows = [row] if 0 <= row < len(self.controller.playlist) else []
+        return rows
+
+    def toggle_favorite(self) -> None:
+        if self._tab != "playlist":
+            return   # 라디오 탭에서 Ctrl+D는 재생목록을 건드리지 않는다
+        rows = self._favorite_rows()
+        if not rows:
+            return
+        new = self.controller.toggle_favorite(rows)
+        self.refresh()
+        self.select_rows(new)
+
+    def save_favorites(self) -> None:
+        if not self._settings.favorites:
+            return
+        path = QFileDialog.getSaveFileName(self, "즐겨찾기 저장", "즐겨찾기.m3u8", "재생목록 (*.m3u8)")[0]
+        if path:
+            self.controller.save_favorites(path)
+            self.refresh()
+
+    def load_favorites(self) -> None:
+        path = QFileDialog.getOpenFileName(self, "즐겨찾기 불러오기", "", "재생목록 (*.m3u8 *.m3u)")[0]
+        if path:
+            self.controller.load_favorites(path)
+            self.refresh()
 
     def ask_playlist_open(self) -> str:
         return QFileDialog.getOpenFileName(
@@ -1210,9 +1256,10 @@ class PlayerPanel(QWidget):
         scroll = bar.value()
         view.setUpdatesEnabled(False)
         view.clear()
+        favs = self.controller.favorite_keys()
         for i, track in enumerate(pl.tracks):
             item = QListWidgetItem()
-            self._style_item(item, i, track, i == pl.index)
+            self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs)
             view.addItem(item)
         view.doItemsLayout()
         bar.setValue(scroll)
@@ -1220,19 +1267,24 @@ class PlayerPanel(QWidget):
 
     def _repaint_rows(self) -> None:
         pl = self.controller.playlist
+        favs = self.controller.favorite_keys()
         for i, track in enumerate(pl.tracks):
             item = self.playlist_view.item(i)
             if item is not None:
-                self._style_item(item, i, track, i == pl.index)
+                self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs)
 
     @staticmethod
-    def _style_item(item: QListWidgetItem, i: int, track, current: bool) -> None:
+    def _style_item(item: QListWidgetItem, i: int, track, current: bool, favorite: bool = False) -> None:
         mark = "▶" if current else "  "
         item.setText(f"{mark} {i + 1:>2}   {track.title}")
         font = item.font()
         font.setBold(current)
         item.setFont(font)
-        item.setData(Qt.ForegroundRole, QColor(Qt.gray) if track.failed or track.missing else None)
+        if track.failed or track.missing:
+            color = QColor(Qt.gray)
+        else:
+            color = QColor(FAVORITE_COLOR) if favorite else None
+        item.setData(Qt.ForegroundRole, color)
 
     # ---- 끝내기 ----
 

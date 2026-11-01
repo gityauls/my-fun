@@ -56,7 +56,7 @@ def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
                                 "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M", "Ctrl+Tab",
-                                "Ctrl+Left", "Ctrl+Right", "Ctrl+E"}
+                                "Ctrl+Left", "Ctrl+Right", "Ctrl+E", "Ctrl+D"}
     assert dict(SHORTCUTS)["Ctrl+E"] == "toggle_fx_visible"
     assert dict(SHORTCUTS)["Ctrl+Left"] == "prev" and dict(SHORTCUTS)["Ctrl+Right"] == "next"
     assert dict(SHORTCUTS)["Space"] == "toggle"
@@ -154,7 +154,7 @@ def test_enter_and_select_all(rig):
 def test_context_menu(rig):
     p, fake, *_ = rig
     assert [a.text() for a in p.context_menu.actions()] == [
-        "재생\tEnter", "곡 정보 고치기…", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
+        "재생\tEnter", "곡 정보 고치기…", "즐겨찾기 (맨 위로)\tCtrl+D", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
     assert not p.actions["remove"].isEnabled()
     p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()
@@ -182,8 +182,8 @@ def test_bottom_row_and_menus(rig):
     assert [a.text() for a in p.open_button.menu().actions()] == ["파일…\tL", "폴더…", "재생목록…\tCtrl+O"]
     assert [a.text() for a in p.add_button.menu().actions()] == ["파일…", "폴더…", "재생목록…"]
     assert [a.text() for a in p.list_menu.actions()] == [
-        "재생목록 저장…\tCtrl+S", "", "선택한 곡 지우기\tDel", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
-    assert [a.text() for a in p.list_menu.actions()[5].menu().actions()] == ["이름순", "폴더·이름순"]
+        "재생목록 저장…\tCtrl+S", "즐겨찾기 저장…", "즐겨찾기 불러오기…", "", "선택한 곡 지우기\tDel", "중복 곡 지우기", "없는·깨진 파일 지우기", "정렬", "", "목록 비우기"]
+    assert [a.text() for a in p.list_menu.actions()[7].menu().actions()] == ["이름순", "폴더·이름순"]
 
 def test_save_and_open_playlist_with_keys(rig, monkeypatch):
     p, fake, _, tmp = rig

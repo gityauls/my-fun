@@ -251,7 +251,7 @@ def test_menu_undo_hidden_without_log(rename_rig):
     p._update_actions()
     assert not p.actions["undo_rename"].isVisible()
     keys = list(p.actions)
-    assert keys.index("undo_rename") == keys.index("info_row") + 1
+    assert keys.index("undo_rename") == keys.index("favorite") + 1 == keys.index("info_row") + 2
 
 
 def test_dialog_undo_link_restores(rename_rig):
