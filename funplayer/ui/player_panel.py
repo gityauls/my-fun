@@ -591,7 +591,12 @@ class PlayerPanel(QWidget):
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
+        # 이름 되돌리기는 방금 이름을 바꾼 그 곡을 우클릭했을 때만 보인다 (다른 곡에서 실수로 누르지 않게)
         last = self.controller.last_rename()
+        tracks = self.controller.playlist.tracks
+        if last is not None and not (
+                0 <= row < len(tracks) and os.path.normcase(tracks[row].path) == os.path.normcase(last[1])):
+            last = None
         self.actions["undo_rename"].setVisible(last is not None)
         if last is not None:
             old, new = (self._elide(os.path.basename(x)) for x in last)

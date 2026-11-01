@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 import pytest
 from PyQt5.QtCore import QBuffer, QByteArray, QIODevice
@@ -232,6 +233,17 @@ def test_menu_undo_visible_and_text(rename_rig):
     assert not act.isVisible()
     assert "파일 이름을 되돌렸습니다" in p.status_label.text()
     assert "되돌렸습니다" in p.info_dialog.message_label.text()
+
+
+def test_menu_undo_only_on_renamed_row(rename_rig):
+    p, settings, path, log = rename_rig
+    other = path.with_name("다른.mp3"); shutil.copy(path, other)
+    p.controller.add([str(other)]); p.refresh()
+    _rename_save(p)                     # 0번 줄(A)의 이름을 바꿈
+    p.playlist_view.setCurrentRow(1); p._update_actions()
+    assert not p.actions["undo_rename"].isVisible()   # 다른 곡(B)에서는 안 보임
+    p.playlist_view.setCurrentRow(0); p._update_actions()
+    assert p.actions["undo_rename"].isVisible()
 
 
 def test_menu_undo_hidden_without_log(rename_rig):
