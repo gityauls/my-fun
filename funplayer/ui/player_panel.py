@@ -23,7 +23,7 @@ from funplayer.core.taginfo import TrackInfo
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
-from funplayer.engine import tags
+from funplayer.engine import tags, tagwrite
 from funplayer.engine.player import AudioPlayer, State
 from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
@@ -33,7 +33,7 @@ from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.fx_strip import FxStrip
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
-from funplayer.ui.bulk_dialog import BulkTagDialog
+from funplayer.ui.bulk_dialog import TAB_COMMON, TAB_NAMES, BulkTagDialog
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
@@ -60,6 +60,10 @@ LISTENED_PREFIX = "들은 시간 "
 DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
 
 BULK_TEXT = "여러 곡 태그 고치기…\tCtrl+T"
+COVER_SCAN_MSG = "그림 없는 곡 찾는 중… ({n}곡)"
+COVER_FOUND_MSG = "그림 없는 곡 {n}곡 (붉은 글) · 목록 → 그림 없는 곡 → 붉은 곡에 한 번에 그림 넣기"
+COVER_NONE_MSG = "그림 없는 곡이 없습니다"
+COVER_SCAN_FAIL_MSG = "그림 없는 곡을 찾지 못했습니다"
 FAV_ON_TEXT = "즐겨찾기 (맨 위로)\tCtrl+D"
 FAV_OFF_TEXT = "즐겨찾기 해제\tCtrl+D"
 
@@ -99,7 +103,7 @@ class PlayerPanel(QWidget):
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
                  stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
-                 rename_log_path: str | None = None) -> None:
+                 rename_log_path: str | None = None, has_cover=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
@@ -126,6 +130,9 @@ class PlayerPanel(QWidget):
         self.actions: dict[str, QAction] = {}
         self.info_dialog: TrackInfoDialog | None = None
         self.bulk_dialog: BulkTagDialog | None = None
+        self._no_cover: dict[int, object] = {}   # 그림 없는 곡: id(Track) -> Track (줄이 옮겨지거나 이름이 바뀌어도 따라감)
+        self._cover_scan = False
+        self._has_cover = has_cover or tagwrite.has_cover
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
         self._settings = settings
@@ -427,6 +434,12 @@ class PlayerPanel(QWidget):
         self._add_action(menu, "save_favorites", "즐겨찾기 저장…", self.save_favorites)
         self._add_action(menu, "load_favorites", "즐겨찾기 불러오기…", self.load_favorites)
         menu.addSeparator()
+        cover = menu.addMenu("그림 없는 곡")
+        self._add_action(cover, "find_covers", "찾아서 붉은 글로 표시", self.find_missing_covers)
+        self._add_action(cover, "select_covers", "붉은 곡만 고르기", self.select_missing_covers)
+        self._add_action(cover, "add_covers", "붉은 곡에 한 번에 그림 넣기…", self.add_missing_covers)
+        self._add_action(cover, "clear_covers", "붉은 표시 지우기", self.clear_cover_marks)
+        menu.addSeparator()
         menu.addAction(self.actions["remove"])
         self._add_action(menu, "dedupe", "중복 곡 지우기", self.remove_duplicates)
         self._add_action(menu, "remove_unplayable", "없는·깨진 파일 지우기", self.remove_unplayable)
@@ -613,6 +626,10 @@ class PlayerPanel(QWidget):
         self.actions["favorite"].setEnabled(bool(fav_rows))
         self.actions["favorite"].setText(FAV_OFF_TEXT if all_fav else FAV_ON_TEXT)
         self.actions["save_favorites"].setEnabled(bool(self._settings.favorites))
+        self.actions["find_covers"].setEnabled(len(self.controller.playlist) > 0 and not self._cover_scan)
+        marked = bool(self.no_cover_rows())
+        for key in ("select_covers", "add_covers", "clear_covers"):
+            self.actions[key].setEnabled(marked)
         # 이름 되돌리기는 방금 이름을 바꾼 그 곡을 우클릭했을 때만 보인다 (다른 곡에서 실수로 누르지 않게)
         last = self.controller.last_rename()
         tracks = self.controller.playlist.tracks
@@ -782,21 +799,75 @@ class PlayerPanel(QWidget):
         self.refresh()
         self.select_rows(new)
 
-    def show_bulk_tags(self) -> None:
+    def show_bulk_tags(self, rows: list[int] | None = None, tab: int = TAB_NAMES) -> None:
         """고른 곡(없으면 커서 줄)으로 여러 곡 태그 창을 연다. 창이 떠 있는 동안 목록은 막는다(창 모달)."""
         if self._tab != "playlist":
             return
-        rows = self._favorite_rows()
+        rows = rows if rows is not None else self._favorite_rows()
         if not rows:
             return
         c = self.controller
         with self._busy_cursor():
             infos = [c.info_for(r) for r in rows]
-        dialog = self.bulk_dialog = BulkTagDialog(
-            infos, self, save_many=c.save_many, rename_many=c.rename_many, undo_many=c.undo_many,
-            read_info=tags.read_info, after_change=self._after_file_edit)
+            dialog = self.bulk_dialog = BulkTagDialog(
+                infos, self, save_many=c.save_many, rename_many=c.rename_many, undo_many=c.undo_many,
+                read_info=tags.read_info, has_cover=tagwrite.has_cover, after_change=self._after_file_edit,
+                start_tab=tab)
         dialog.setWindowModality(Qt.WindowModal)
         dialog.show()
+
+    # ---- 커버 없는 곡 ----
+    def find_missing_covers(self) -> None:
+        """재생목록에서 그림이 없는 곡을 찾아 붉은 글로 표시한다 (뒤에서 찾고, 끝나면 알린다)."""
+        tracks = list(self.controller.playlist.tracks)
+        if not tracks or self._cover_scan:
+            return
+        self._cover_scan = True
+        self.controller.notify(COVER_SCAN_MSG.format(n=len(tracks)))
+        self.refresh()
+        check = self._has_cover
+
+        def work():
+            return [t for t in tracks if not check(t.path)]
+
+        def done(result, error) -> None:
+            self._cover_scan = False
+            if error is not None:
+                self.controller.notify(COVER_SCAN_FAIL_MSG)
+            else:
+                self._no_cover = {id(t): t for t in result}
+                self.controller.notify(COVER_FOUND_MSG.format(n=len(result)) if result else COVER_NONE_MSG)
+            self._list_version = -1   # 줄 색을 다시 칠한다
+            self.refresh()
+
+        self.runner.run_async(work, done)
+
+    def no_cover_rows(self) -> list[int]:
+        return [i for i, t in enumerate(self.controller.playlist.tracks) if id(t) in self._no_cover]
+
+    def select_missing_covers(self) -> None:
+        rows = self.no_cover_rows()
+        if rows:
+            self.select_rows(rows)
+
+    def add_missing_covers(self) -> None:
+        rows = self.no_cover_rows()
+        if rows:
+            self.select_rows(rows)
+            self.show_bulk_tags(rows, TAB_COMMON)
+
+    def clear_cover_marks(self) -> None:
+        self._no_cover = {}
+        self._list_version = -1
+        self.refresh()
+
+    def _recheck_covers(self) -> None:
+        """그림을 넣었을 수 있으니 붉은 곡만 다시 본다. 목록에서 빠진 곡은 표시도 뺀다."""
+        if not self._no_cover:
+            return
+        alive = {id(t) for t in self.controller.playlist.tracks}
+        self._no_cover = {k: t for k, t in self._no_cover.items() if k in alive and not self._has_cover(t.path)}
+        self._list_version = -1
 
     def save_favorites(self) -> None:
         if not self._settings.favorites:
@@ -1027,6 +1098,7 @@ class PlayerPanel(QWidget):
 
     def _after_file_edit(self) -> None:
         self._cover_key = object()   # 큰 앨범 그림을 다시 읽게 한다
+        self._recheck_covers()
         self.refresh()
 
     def select_all(self) -> None:
@@ -1283,7 +1355,8 @@ class PlayerPanel(QWidget):
         favs = self.controller.favorite_keys()
         for i, track in enumerate(pl.tracks):
             item = QListWidgetItem()
-            self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs)
+            self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs,
+                             id(track) in self._no_cover)
             view.addItem(item)
         view.doItemsLayout()
         bar.setValue(scroll)
@@ -1295,10 +1368,12 @@ class PlayerPanel(QWidget):
         for i, track in enumerate(pl.tracks):
             item = self.playlist_view.item(i)
             if item is not None:
-                self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs)
+                self._style_item(item, i, track, i == pl.index, path_key(track.path) in favs,
+                                 id(track) in self._no_cover)
 
     @staticmethod
-    def _style_item(item: QListWidgetItem, i: int, track, current: bool, favorite: bool = False) -> None:
+    def _style_item(item: QListWidgetItem, i: int, track, current: bool, favorite: bool = False,
+                    no_cover: bool = False) -> None:
         mark = "▶" if current else "  "
         item.setText(f"{mark} {i + 1:>2}   {track.title}")
         font = item.font()
@@ -1306,6 +1381,8 @@ class PlayerPanel(QWidget):
         item.setFont(font)
         if track.failed or track.missing:
             color = QColor(Qt.gray)
+        elif no_cover:
+            color = QColor(ERROR_COLOR)   # '그림 없는 곡 찾기'로 표시한 곡 (임시)
         else:
             color = QColor(FAVORITE_COLOR) if favorite else None
         item.setData(Qt.ForegroundRole, color)

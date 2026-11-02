@@ -1,4 +1,4 @@
-"""여러 곡 태그 창 (5-D): 탭에서 채우는 방법을 고르고, 미리 보기 표에서 확인한 뒤 한 번에 저장한다."""
+"""여러 곡 태그 창 (5-D): '이름 정리'로 가수 - 제목 통일, '공통 칸'으로 앨범·장르·년도·그림을 한 번에."""
 from __future__ import annotations
 
 import os
@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QSpinBox, QTableWidget,
+    QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -17,46 +17,59 @@ from funplayer.engine.tagwrite import KEEP, picture_mime
 from funplayer.ui.colors import CHANGED_BG, ERROR_COLOR, INFO_COLOR, RENAME_OK_COLOR
 from funplayer.ui.info_dialog import GENRES, MAX_PICTURE, TrackInfoDialog
 
-COLUMNS = [("파일 이름", None), ("가수", "artist"), ("제목", "title"), ("앨범", "album"), ("트랙", "track"),
-           ("새 파일 이름", None)]
-NEW_NAME_COL = 5
+TAB_NAMES, TAB_COMMON = range(2)
+COL_FILE, COL_ARTIST, COL_TITLE, COL_ALBUM, COL_COVER, COL_NEW, COL_NOTE = range(7)
+HEADERS = ["지금 파일 이름", "가수", "제목", "앨범", "그림", "새 파일 이름", "알림"]
 COMMON = [("가수", "artist"), ("앨범", "album"), ("년도", "year"), ("장르", "genre")]
-NAME_PATTERNS = [("자동 짐작  ([가수]제목 · 가수 - 제목 · 앞 번호는 트랙)", bulktag.AUTO),
-                 ("%가수% - %제목%", None), ("[%가수%]%제목%", None), ("[%가수%]%트랙%.%제목%", None),
-                 ("%트랙%. %제목%", None), ("%트랙% %가수% - %제목%", None)]
-LINE_PATTERNS = [("자동  (앞 번호는 트랙, 나머지는 제목)", bulktag.AUTO), ("%제목%", None),
-                 ("%트랙%. %제목%", None), ("%가수% - %제목%", None)]
-TAB_COMMON, TAB_NAME, TAB_PASTE, TAB_TRACK, TAB_RENAME = range(5)
 MANY = "(여러 값 · 그대로 둠)"
+UNSURE_BG = "#FFE2C2"
+UNSURE_FG = "#8A4B00"
 
 
 class _Row:
-    def __init__(self, info: TrackInfo) -> None:
+    def __init__(self, info: TrackInfo, has_cover: bool | None) -> None:
         self.path = info.path
         self.orig = {k: getattr(info, k) or "" for k in bulktag.FIELDS}
+        self.has_cover = has_cover
+        self.guess = bulktag.Tidy("", "", bulktag.SURE)
+        self.swapped = False
+        self.confirmed = False   # 사용자가 앞뒤 바꾸기·맞음·직접 고침으로 확인함
+        self.edits: dict[str, str] = {}
+
+    def names(self) -> tuple[str, str]:
+        artist, title = self.guess.artist, self.guess.title
+        if self.swapped:
+            artist, title = title, artist
+        return self.edits.get("artist", artist), self.edits.get("title", title)
+
+    @property
+    def unsure(self) -> bool:
+        return self.guess.unsure and not self.confirmed
 
 
 class BulkTagDialog(QDialog):
     def __init__(self, infos: list[TrackInfo], parent=None, save_many=None, rename_many=None,
-                 undo_many=None, read_info=None, after_change=None) -> None:
+                 undo_many=None, read_info=None, has_cover=None, after_change=None,
+                 start_tab: int = TAB_NAMES) -> None:
         super().__init__(parent)
         self.setWindowTitle("여러 곡 태그")
         mp3 = [i for i in infos if i.path.lower().endswith(".mp3")]
         self.skipped = len(infos) - len(mp3)
-        self.rows = [_Row(i) for i in mp3]
+        self._has_cover = has_cover
+        self.rows = [_Row(i, has_cover(i.path) if has_cover else None) for i in mp3]
         self._save_many = save_many
         self._rename_many = rename_many
         self._undo_many = undo_many
         self._read_info = read_info
         self._after_change = after_change or (lambda: None)
-        self.manual: dict[tuple[int, str], str] = {}
         self.picture: bytes | None = None
         self.last_renames: list[tuple[str, str]] = []
-        self._visited: set[int] = set()
         self._message = ("", INFO_COLOR)
         self._filling = True   # 만드는 동안 칸들이 보내는 신호로 refresh가 돌지 않게
+        self._guess_all()
         self._build()
         self._filling = False
+        self.tabs.setCurrentIndex(start_tab)
         self.refresh()
 
     # ---- 만들기 ----
@@ -66,57 +79,65 @@ class BulkTagDialog(QDialog):
         self.head = QLabel()
         v.addWidget(self.head)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._common_tab(), "공통 칸")
-        self.tabs.addTab(self._name_tab(), "파일 이름 → 태그")
-        self.tabs.addTab(self._paste_tab(), "붙여 넣기 → 태그")
-        self.tabs.addTab(self._track_tab(), "트랙 번호")
-        self.tabs.addTab(self._rename_tab(), "파일 이름 바꾸기")
-        self.tabs.currentChanged.connect(self._tab_changed)
-        self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)   # 남는 높이는 미리 보기 표로
+        self.tabs.addTab(self._names_tab(), "이름 정리 (가수 - 제목)")
+        self.tabs.addTab(self._common_tab(), "공통 칸 (앨범·장르·그림)")
+        self.tabs.currentChanged.connect(self.refresh)
+        self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)   # 남는 높이는 표로
         v.addWidget(self.tabs)
-        v.addWidget(QLabel(f"<b>미리 보기</b> <span style='color:{INFO_COLOR};'>· 노란 칸 = 저장하면 바뀔 값 · "
-                           "칸을 두 번 눌러 직접 고칠 수 있습니다</span>"))
-        t = self.table = QTableWidget(len(self.rows), len(COLUMNS))
-        t.setHorizontalHeaderLabels([c for c, _ in COLUMNS])
+        t = self.table = QTableWidget(len(self.rows), len(HEADERS))
+        t.setHorizontalHeaderLabels(HEADERS)
         t.verticalHeader().setVisible(False)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
-        t.setSelectionMode(QAbstractItemView.SingleSelection)
+        t.setSelectionMode(QAbstractItemView.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        h = t.horizontalHeader()
-        h.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col, width in ((1, 110), (2, 150), (3, 110), (4, 44), (5, 220)):
+        for col, width in ((COL_FILE, 210), (COL_ARTIST, 110), (COL_TITLE, 150), (COL_ALBUM, 110),
+                           (COL_COVER, 44), (COL_NEW, 230)):
             t.setColumnWidth(col, width)
+        t.horizontalHeader().setSectionResizeMode(COL_NOTE, QHeaderView.Stretch)
         t.itemChanged.connect(self._cell_edited)
-        t.setMinimumHeight(180)
+        t.setMinimumHeight(200)
         v.addWidget(t, 1)
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
         v.addWidget(self.message_label)
         b = QHBoxLayout()
+        self.swap_button = QPushButton("↔ 앞뒤 바꾸기")
+        self.swap_button.clicked.connect(self.swap_selected)
+        self.ok_button = QPushButton("이대로 맞음")
+        self.ok_button.clicked.connect(self.confirm_selected)
+        self.undo_button = QPushButton("이름 한 번에 되돌리기")
+        self.undo_button.clicked.connect(self.undo_renames)
+        b.addWidget(self.swap_button)
+        b.addWidget(self.ok_button)
+        b.addWidget(self.undo_button)
         b.addStretch(1)
-        self.save_button = QPushButton()
-        self.save_button.setDefault(True)
-        self.save_button.clicked.connect(self.save)
+        self.go_button = QPushButton()
+        self.go_button.setDefault(True)
+        self.go_button.clicked.connect(self.go)
         close = QPushButton("닫기")
         close.clicked.connect(self.close)
-        b.addWidget(self.save_button)
+        b.addWidget(self.go_button)
         b.addWidget(close)
         v.addLayout(b)
         paste = QShortcut(QKeySequence.Paste, self)
         paste.setContext(Qt.WidgetWithChildrenShortcut)
         paste.activated.connect(self._paste)
-        self.resize(760, 560)
+        self.resize(980, 600)
 
-    def _tab_page(self) -> tuple[QWidget, QVBoxLayout]:
+    def _names_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(10, 8, 10, 8)
-        return w, lay
-
-    def _use_box(self, text: str) -> QCheckBox:
-        box = QCheckBox(text)
-        box.toggled.connect(self.refresh)
-        return box
+        info = QLabel("파일 이름에서 가수와 제목을 찾아 <b>태그에 넣고, 파일 이름을 '가수 - 제목'으로</b> 한 번에 바꿉니다. "
+                      "앞 번호(02.)와 괄호 군말은 뺍니다. 트랙 번호는 건드리지 않습니다.")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        hint = QLabel("주황 줄은 가수·제목 순서를 모르는 곡입니다. 줄을 고르고(여러 줄 가능) [↔ 앞뒤 바꾸기] 또는 "
+                      "[이대로 맞음]을 누르세요. 칸을 두 번 눌러 직접 고쳐도 됩니다. 주황 줄은 확인해야 바뀝니다.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {UNSURE_FG};")
+        lay.addWidget(hint)
+        return w
 
     def _common_tab(self) -> QWidget:
         w = QWidget()
@@ -146,7 +167,7 @@ class BulkTagDialog(QDialog):
         self.picture_box.toggled.connect(self.refresh)
         pick = QPushButton("그림 넣기…")
         pick.clicked.connect(self._pick_picture)
-        self.picture_label = QLabel("Ctrl+V로 붙여 넣기도 됩니다")
+        self.picture_label = QLabel("그림을 복사한 뒤 Ctrl+V도 됩니다")
         self.picture_label.setStyleSheet(f"color: {INFO_COLOR};")
         g.addWidget(self.picture_box, 0, 2)
         g.addWidget(pick, 1, 2)
@@ -154,185 +175,48 @@ class BulkTagDialog(QDialog):
         g.setColumnStretch(1, 1)
         return w
 
-    def _name_tab(self) -> QWidget:
-        w, lay = self._tab_page()
-        self.name_on = self._use_box("이 방법으로 채우기")
-        lay.addWidget(self.name_on)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("이름 모양"))
-        self.name_pattern = QComboBox()
-        self.name_pattern.setEditable(True)
-        for text, _ in NAME_PATTERNS:
-            self.name_pattern.addItem(text)
-        self.name_pattern.setMinimumWidth(380)
-        self.name_pattern.currentTextChanged.connect(self.refresh)
-        row.addWidget(self.name_pattern)
-        row.addStretch(1)
-        lay.addLayout(row)
-        hint = QLabel("직접 쓸 수 있는 낱말: %가수% %제목% %앨범% %년도% %장르% %트랙%")
-        hint.setStyleSheet(f"color: {INFO_COLOR};")
-        lay.addWidget(hint)
-        opts = QHBoxLayout()
-        self.only_empty = QCheckBox("비어 있는 칸만 채우기")
-        self.underscores = QCheckBox("밑줄(_)을 빈칸으로")
-        self.underscores.setChecked(True)
-        for box in (self.only_empty, self.underscores):
-            box.toggled.connect(self.refresh)
-            opts.addWidget(box)
-        opts.addStretch(1)
-        lay.addLayout(opts)
-        lay.addStretch(1)
-        return w
-
-    def _paste_tab(self) -> QWidget:
-        w = QWidget()
-        h = QHBoxLayout(w)
-        h.setContentsMargins(10, 8, 10, 8)
-        self.paste_text = QPlainTextEdit()
-        self.paste_text.setPlaceholderText("1. 첫 곡 제목\n2. 둘째 곡 제목\n…")
-        self.paste_text.setFixedSize(260, 112)   # 탭 높이는 가장 큰 탭을 따르니 낮게 둔다
-        self.paste_text.textChanged.connect(self._paste_changed)
-        h.addWidget(self.paste_text)
-        side = QVBoxLayout()
-        self.paste_on = self._use_box("이 방법으로 채우기")
-        side.addWidget(self.paste_on)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("줄 모양"))
-        self.line_pattern = QComboBox()
-        self.line_pattern.setEditable(True)
-        for text, _ in LINE_PATTERNS:
-            self.line_pattern.addItem(text)
-        self.line_pattern.currentTextChanged.connect(self.refresh)
-        row.addWidget(self.line_pattern, 1)
-        side.addLayout(row)
-        hint = QLabel("지니·멜론 앨범 화면의 곡 목록을 복사해 붙여 넣으세요.\n윗줄부터 아래 표의 곡에 차례로 들어갑니다.")
-        hint.setStyleSheet(f"color: {INFO_COLOR};")
-        side.addWidget(hint)
-        moves = QHBoxLayout()
-        up, down = QPushButton("↑ 곡 순서 올리기"), QPushButton("↓ 내리기")
-        up.clicked.connect(lambda: self.move_row(-1))
-        down.clicked.connect(lambda: self.move_row(1))
-        moves.addWidget(up)
-        moves.addWidget(down)
-        moves.addStretch(1)
-        side.addLayout(moves)
-        side.addStretch(1)
-        h.addLayout(side, 1)
-        return w
-
-    def _track_tab(self) -> QWidget:
-        w, lay = self._tab_page()
-        self.track_on = self._use_box("표의 순서대로 트랙 번호 매기기")
-        lay.addWidget(self.track_on)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("시작 번호"))
-        self.track_start = QSpinBox()
-        self.track_start.setRange(1, 999)
-        self.track_start.valueChanged.connect(self.refresh)
-        row.addWidget(self.track_start)
-        self.track_total = QCheckBox("전체 곡 수 붙이기 (예: 3/12)")
-        self.track_total.toggled.connect(self.refresh)
-        row.addWidget(self.track_total)
-        row.addStretch(1)
-        lay.addLayout(row)
-        hint = QLabel("순서는 '붙여 넣기 → 태그' 탭의 올리기·내리기로 바꿀 수 있습니다.")
-        hint.setStyleSheet(f"color: {INFO_COLOR};")
-        lay.addWidget(hint)
-        lay.addStretch(1)
-        return w
-
-    def _rename_tab(self) -> QWidget:
-        w, lay = self._tab_page()
-        info = QLabel("저장된 태그로 고른 곡 모두를 <b>가수 - 제목.mp3</b>로 바꿉니다. 같은 폴더 안에서 이름만 바꾸고, "
-                      "같은 이름의 파일이 있으면 그 곡은 건너뜁니다. 새 이름은 아래 표 맨 오른쪽 칸에 보입니다.")
-        info.setWordWrap(True)
-        lay.addWidget(info)
-        row = QHBoxLayout()
-        self.rename_button = QPushButton()
-        self.rename_button.clicked.connect(self.rename)
-        self.undo_button = QPushButton("한 번에 되돌리기")
-        self.undo_button.clicked.connect(self.undo_renames)
-        row.addWidget(self.rename_button)
-        row.addWidget(self.undo_button)
-        row.addStretch(1)
-        lay.addLayout(row)
-        lay.addStretch(1)
-        return w
-
     def _shared(self, key: str) -> str:
         values = {r.orig[key] for r in self.rows}
         return values.pop() if len(values) == 1 else ""
 
+    def _guess_all(self) -> None:
+        stems = [os.path.splitext(os.path.basename(r.path))[0] for r in self.rows]
+        guesses = bulktag.tidy_names(stems, [r.orig["artist"] for r in self.rows], [r.orig["title"] for r in self.rows])
+        for row, guess in zip(self.rows, guesses):
+            row.guess, row.swapped, row.confirmed, row.edits = guess, False, False, {}
+
     # ---- 값 계산 ----
-    def _name_pattern_value(self) -> str:
-        text = self.name_pattern.currentText().strip()
-        return next((p for t, p in NAME_PATTERNS if t == text and p), text)
+    def _target(self, row: _Row) -> str | None:
+        artist, title = row.names()
+        return renamer.target_path(row.path, artist, title) if artist and title else None
 
-    def _line_pattern_value(self) -> str:
-        text = self.line_pattern.currentText().strip()
-        return next((p for t, p in LINE_PATTERNS if t == text and p), text)
+    def name_plan(self) -> list[tuple[_Row, dict[str, str], str | None, str]]:
+        """이름 정리 탭: 곡마다 (줄, 바뀔 태그, 새 경로 또는 None, 알림). 주황 줄·겹치는 이름은 빼 둔다."""
+        plan = []
+        for row in self.rows:
+            artist, title = row.names()
+            fields = {k: v for k, v in (("artist", artist), ("title", title)) if v != row.orig[k]}
+            target = self._target(row)
+            if row.unsure:
+                plan.append((row, {}, None, row.guess.note))
+                continue
+            if not artist or not title:
+                plan.append((row, {}, None, bulktag.NOTES[bulktag.NO_ARTIST]))
+                continue
+            note = row.guess.note if not row.confirmed else ""
+            if target == row.path:
+                target = None
+            elif target is not None and renamer.conflict(row.path, target):
+                plan.append((row, fields, None, "같은 이름의 파일이 있어 이름은 그대로 둡니다"))
+                continue
+            plan.append((row, fields, target, note))
+        return plan
 
-    def paste_values(self) -> list[dict[str, str]] | None:
-        """붙여 넣기 값. 쓰지 않으면 None, 모양이 틀리면 PatternError."""
-        if not self.paste_on.isChecked():
-            return None
-        return bulktag.from_lines(self.paste_text.toPlainText(), self._line_pattern_value())
-
-    def pending(self) -> list[dict[str, str]]:
-        """곡마다 저장하면 될 값 (원래 값 + 각 탭 + 직접 고친 칸)."""
-        name_on = self.name_on.isChecked()
-        pattern = self._name_pattern_value() if name_on else ""
-        try:
-            lines = self.paste_values()
-        except bulktag.PatternError:
-            lines = None
-        if lines is not None and len(lines) != len(self.rows):
-            lines = None
-        tracks = (bulktag.track_numbers(len(self.rows), self.track_start.value(), self.track_total.isChecked())
-                  if self.track_on.isChecked() else None)
-        common = {k: self.common_edits[k].text().strip() for k, box in self.common_boxes.items() if box.isChecked()}
-        out = []
-        for i, row in enumerate(self.rows):
-            values = dict(row.orig)
-            if name_on:
-                try:
-                    guessed = bulktag.from_filename(row.path, pattern, self.underscores.isChecked())
-                except bulktag.PatternError:
-                    guessed = {}
-                values = bulktag.merge(values, guessed, self.only_empty.isChecked())
-            if lines is not None:
-                values = bulktag.merge(values, lines[i])
-            if tracks is not None:
-                values["track"] = tracks[i]
-            values = bulktag.merge(values, common)
-            for (r, k), v in self.manual.items():
-                if r == i:
-                    values[k] = v
-            out.append(values)
-        return out
-
-    def changes(self) -> list[dict[str, str]]:
-        return [{k: v for k, v in p.items() if v != row.orig[k]} for p, row in zip(self.pending(), self.rows)]
+    def _common_values(self) -> dict[str, str]:
+        return {k: self.common_edits[k].text().strip() for k, box in self.common_boxes.items() if box.isChecked()}
 
     def _picture_on(self) -> bool:
         return self.picture_box.isChecked() and self.picture is not None
-
-    def _problem(self) -> str:
-        """저장을 막는 까닭 (없으면 "")."""
-        if self.name_on.isChecked():
-            try:
-                pattern = self._name_pattern_value()
-                if pattern != bulktag.AUTO:
-                    bulktag.compile_pattern(pattern)
-            except bulktag.PatternError as e:
-                return f"이름 모양: {e}"
-        try:
-            lines = self.paste_values()
-        except bulktag.PatternError as e:
-            return f"줄 모양: {e}"
-        if lines is not None and len(lines) != len(self.rows):
-            return f"{len(lines)}줄 · {len(self.rows)}곡: 줄 수와 곡 수가 같아야 저장할 수 있습니다"
-        return ""
 
     # ---- 화면 ----
     def refresh(self) -> None:
@@ -340,107 +224,103 @@ class BulkTagDialog(QDialog):
             return
         self._filling = True
         try:
-            pending = self.pending()
-            changes = [{k: v for k, v in p.items() if v != row.orig[k]} for p, row in zip(pending, self.rows)]
-            on_rename = self.tabs.currentIndex() == TAB_RENAME
-            self.table.setColumnHidden(NEW_NAME_COL, not on_rename)
-            for i, (row, values, changed) in enumerate(zip(self.rows, pending, changes)):
-                for col, (_, key) in enumerate(COLUMNS):
-                    if col == 0:
-                        self._set_cell(i, col, os.path.basename(row.path), False, QColor(INFO_COLOR))
-                    elif col == NEW_NAME_COL:
-                        self._set_cell(i, col, self._new_name_text(row), False)
-                    else:
-                        self._set_cell(i, col, values[key], key in changed, editable=True)
-            n = sum(1 for c in changes if c) if not self._picture_on() else len(self.rows)
-            problem = self._problem()
-            self.save_button.setText(f"저장 ({n}곡)")
-            self.save_button.setEnabled(n > 0 and not problem)
-            unsaved = n > 0
-            targets = len(self.rename_pairs())
-            self.rename_button.setText("먼저 [저장]을 누르세요" if unsaved else f"파일 이름 바꾸기 ({targets}곡)")
-            self.rename_button.setEnabled(not unsaved and targets > 0)
+            on_names = self.tabs.currentIndex() == TAB_NAMES
+            plan = self.name_plan()
+            common = self._common_values()
+            picture = self._picture_on()
+            for i, (row, fields, target, note) in enumerate(plan):
+                orange = on_names and row.unsure
+                if on_names:
+                    artist, title = row.names()
+                    album = row.orig["album"]
+                    changed = set(fields)
+                    new = (os.path.basename(target) if target else
+                           "(지금 이름과 같음)" if self._target(row) == row.path else "—")
+                else:
+                    artist = common.get("artist", row.orig["artist"])
+                    title, album = row.orig["title"], common.get("album", row.orig["album"])
+                    changed = {k for k, v in common.items() if v != row.orig[k]}
+                    new, note = "", ""
+                self._cell(i, COL_FILE, os.path.basename(row.path), QColor(INFO_COLOR), orange=orange)
+                self._cell(i, COL_ARTIST, artist, changed="artist" in changed, editable=on_names, orange=orange)
+                self._cell(i, COL_TITLE, title, changed="title" in changed, editable=on_names, orange=orange)
+                self._cell(i, COL_ALBUM, album, changed="album" in changed, orange=orange)
+                if picture and not on_names:
+                    self._cell(i, COL_COVER, "넣음", changed=True)
+                elif row.has_cover is None:
+                    self._cell(i, COL_COVER, "", orange=orange)
+                else:
+                    self._cell(i, COL_COVER, "있음" if row.has_cover else "없음",
+                               None if row.has_cover else QColor(ERROR_COLOR), orange=orange)
+                self._cell(i, COL_NEW, new, QColor(INFO_COLOR) if new.startswith("(") else None, orange=orange)
+                self._cell(i, COL_NOTE, note, QColor(UNSURE_FG) if row.unsure else QColor(INFO_COLOR),
+                           orange=orange)
+            self.table.setColumnHidden(COL_NEW, not on_names)
+            self.table.setColumnHidden(COL_NOTE, not on_names)
+            if on_names:
+                n = sum(1 for _, fields, target, _ in plan if fields or target)
+                self.go_button.setText(f"태그 저장 + 이름 바꾸기 ({n}곡)")
+            else:
+                n = len(self.rows) if picture else sum(
+                    1 for r in self.rows if any(v != r.orig[k] for k, v in common.items()))
+                self.go_button.setText(f"저장 ({n}곡)")
+            self.go_button.setEnabled(n > 0)
+            self.swap_button.setVisible(on_names)
+            self.ok_button.setVisible(on_names)
             self.undo_button.setVisible(bool(self.last_renames))
+            unsure = sum(1 for r in self.rows if r.unsure)
             head = f"<b>여러 곡 태그</b> <span style='color:{INFO_COLOR};'>· 고른 곡 {len(self.rows)}곡"
+            if on_names and unsure:
+                head += f" · <span style='color:{UNSURE_FG};'>확인할 곡 {unsure}곡</span>"
             if self.skipped:
-                head += f" (MP3가 아닌 {self.skipped}곡은 뺐습니다)"
+                head += f" · MP3가 아닌 {self.skipped}곡은 뺐습니다"
             self.head.setText(head + "</span>")
-            text, color = (problem, ERROR_COLOR) if problem else self._message
+            text, color = self._message
             self.message_label.setText(text)
             self.message_label.setStyleSheet(f"color: {color};")
         finally:
             self._filling = False
 
-    def _set_cell(self, r: int, c: int, text: str, changed: bool, color: QColor | None = None,
-                  editable: bool = False) -> None:
+    def _cell(self, r: int, c: int, text: str, color: QColor | None = None, changed: bool = False,
+              editable: bool = False, orange: bool = False) -> None:
         item = self.table.item(r, c)
         if item is None:
             item = QTableWidgetItem()
             self.table.setItem(r, c, item)
         item.setText(text)
+        item.setToolTip(text if len(text) > 12 else "")
         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
         item.setFlags(flags | Qt.ItemIsEditable if editable else flags)
-        item.setBackground(QColor(CHANGED_BG) if changed else QColor(0, 0, 0, 0))
+        bg = UNSURE_BG if orange else CHANGED_BG if changed else None
+        item.setBackground(QColor(bg) if bg else QColor(0, 0, 0, 0))
         item.setForeground(color if color is not None else self.palette().text().color())
 
-    def _new_name_text(self, row: _Row) -> str:
-        target = self._target(row)
-        if target is None:
-            return "(가수·제목이 있어야 합니다)"
-        if target == row.path:
-            return "(지금 이름과 같음)"
-        if renamer.conflict(row.path, target):
-            return f"{os.path.basename(target)}  (같은 이름 있음)"
-        return os.path.basename(target)
+    def selected_rows(self) -> list[int]:
+        return sorted({i.row() for i in self.table.selectedIndexes()})
 
-    @staticmethod
-    def _target(row: _Row) -> str | None:
-        return renamer.target_path(row.path, row.orig["artist"], row.orig["title"])
-
-    def rename_pairs(self) -> list[tuple[str, str]]:
-        pairs = []
-        for row in self.rows:
-            target = self._target(row)
-            if target is not None and target != row.path and not renamer.conflict(row.path, target):
-                pairs.append((row.path, target))
-        return pairs
-
-    def _tab_changed(self, index: int) -> None:
-        if index not in self._visited:
-            self._visited.add(index)
-            if index == TAB_NAME:
-                self.name_on.setChecked(True)
-            elif index == TAB_TRACK:
-                self.track_on.setChecked(True)
+    def swap_selected(self) -> None:
+        for i in self.selected_rows():
+            row = self.rows[i]
+            row.swapped = not row.swapped
+            row.edits.clear()
+            row.confirmed = True
         self.refresh()
 
-    def _paste_changed(self) -> None:
-        if self.paste_text.toPlainText().strip() and not self.paste_on.isChecked():
-            self.paste_on.setChecked(True)
-        else:
-            self.refresh()
+    def confirm_selected(self) -> None:
+        for i in self.selected_rows():
+            self.rows[i].confirmed = True
+        self.refresh()
 
     def _cell_edited(self, item: QTableWidgetItem) -> None:
         if self._filling:
             return
-        key = COLUMNS[item.column()][1]
-        if key is None or item.column() == NEW_NAME_COL:
+        key = {COL_ARTIST: "artist", COL_TITLE: "title"}.get(item.column())
+        if key is None:
             return
-        self.manual[(item.row(), key)] = item.text().strip()
+        row = self.rows[item.row()]
+        row.edits[key] = item.text().strip()
+        row.confirmed = True
         self.refresh()
-
-    def move_row(self, step: int) -> None:
-        i = self.table.currentRow()
-        j = i + step
-        if not (0 <= i < len(self.rows) and 0 <= j < len(self.rows)):
-            return
-        self.rows[i], self.rows[j] = self.rows[j], self.rows[i]
-        swapped = {}
-        for (r, k), v in self.manual.items():
-            swapped[(j if r == i else i if r == j else r, k)] = v
-        self.manual = swapped
-        self.refresh()
-        self.table.selectRow(j)
 
     # ---- 그림 ----
     def set_picture(self, data: bytes) -> bool:
@@ -449,7 +329,7 @@ class BulkTagDialog(QDialog):
         if len(data) > MAX_PICTURE:
             return self._say("그림이 너무 큽니다 (10 MB까지)", ERROR_COLOR)
         self.picture = data
-        self.picture_label.setText(f"고른 그림 ({len(data) // 1024} KB)")
+        self.picture_label.setText(f"고른 그림 ({max(1, len(data) // 1024)} KB)")
         self.picture_box.setChecked(True)
         self._message = ("", INFO_COLOR)
         self.refresh()
@@ -475,6 +355,7 @@ class BulkTagDialog(QDialog):
             return
         data = TrackInfoDialog._mime_image_bytes(mime) if mime is not None else None
         if data is not None:
+            self.tabs.setCurrentIndex(TAB_COMMON)
             self.set_picture(data)
 
     def _say(self, text: str, color: str) -> bool:
@@ -482,62 +363,82 @@ class BulkTagDialog(QDialog):
         self.refresh()
         return False
 
-    # ---- 저장·이름 바꾸기 ----
-    def save(self) -> None:
-        if self._problem() or self._save_many is None:
-            return
-        picture = self.picture if self._picture_on() else KEEP
-        changes = self.changes()
-        items = [(row.path, c) for row, c in zip(self.rows, changes) if c or picture is not KEEP]
-        if not items:
-            return
+    # ---- 실행 ----
+    def go(self) -> None:
+        if self.tabs.currentIndex() == TAB_NAMES:
+            self.apply_names()
+        else:
+            self.save_common()
+
+    def _busy(self, fn, *args):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            result = self._save_many(items, picture)
+            return fn(*args)
         finally:
             QApplication.restoreOverrideCursor()
-        failed = {p for p, _ in result.failed}
-        for row, change in zip(self.rows, changes):
-            if row.path in failed:
-                continue
-            if self._read_info is not None:
-                row.orig = _Row(self._read_info(row.path)).orig
-            else:
-                row.orig.update(change)
-        self.manual = {k: v for k, v in self.manual.items() if self.rows[k[0]].path in failed}
-        for box in (self.name_on, self.paste_on, self.track_on, self.picture_box, *self.common_boxes.values()):
-            box.blockSignals(True)
-            box.setChecked(False)
-            box.blockSignals(False)
-        self._visited = {self.tabs.currentIndex()}
-        self._message = self._result_text("저장했습니다", result)
+
+    def apply_names(self) -> None:
+        if self._save_many is None:
+            return
+        plan = [(row, fields, target) for row, fields, target, _ in self.name_plan() if fields or target]
+        if not plan:
+            return
+        saved = self._busy(self._save_many, [(row.path, fields) for row, fields, _ in plan if fields])
+        failed = {p for p, _ in saved.failed}
+        pairs = [(row.path, target) for row, _, target in plan if target and row.path not in failed]
+        renamed = self._busy(self._rename_many, pairs) if pairs and self._rename_many else None
+        done_renames = list(renamed.done) if renamed else []
+        self._move_paths(done_renames)
+        self.last_renames = done_renames
+        self._reread()
+        problems = list(saved.failed) + (list(renamed.failed) if renamed else [])
+        tagged = len(saved.done)
+        text = f"태그 {tagged}곡 저장, 파일 이름 {len(done_renames)}곡 바꿈"
+        self._message = self._with_problems(text, problems)
         self._after_change()
         self.refresh()
 
-    def rename(self) -> None:
-        pairs = self.rename_pairs()
-        if not pairs or self._rename_many is None:
+    def save_common(self) -> None:
+        if self._save_many is None:
             return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            result = self._rename_many(pairs)
-        finally:
-            QApplication.restoreOverrideCursor()
-        self._move_paths(result.done)
-        self.last_renames = list(result.done)
-        self._message = self._result_text("파일 이름을 바꿨습니다", result)
+        common = self._common_values()
+        picture = self.picture if self._picture_on() else KEEP
+        items = []
+        for row in self.rows:
+            fields = {k: v for k, v in common.items() if v != row.orig[k]}
+            if fields or picture is not KEEP:
+                items.append((row.path, fields))
+        if not items:
+            return
+        result = self._busy(self._save_many, items, picture)
+        for box in (self.picture_box, *self.common_boxes.values()):
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+        self._reread()
+        self._message = self._with_problems(f"{len(result.done)}곡 저장했습니다", list(result.failed))
         self._after_change()
         self.refresh()
 
     def undo_renames(self) -> None:
         if not self.last_renames or self._undo_many is None:
             return
-        result = self._undo_many(self.last_renames)
+        result = self._busy(self._undo_many, self.last_renames)
         self._move_paths(result.done)
         self.last_renames = []
-        self._message = self._result_text("파일 이름을 되돌렸습니다", result)
+        self._reread()
+        self._message = self._with_problems(f"파일 이름 {len(result.done)}곡을 되돌렸습니다", list(result.failed))
         self._after_change()
         self.refresh()
+
+    def _reread(self) -> None:
+        """파일에서 다시 읽어 원래 값으로 삼고, 이름 정리를 새로 짐작한다."""
+        for row in self.rows:
+            if self._read_info is not None:
+                row.orig = {k: getattr(self._read_info(row.path), k) or "" for k in bulktag.FIELDS}
+            if self._has_cover is not None:
+                row.has_cover = self._has_cover(row.path)
+        self._guess_all()
 
     def _move_paths(self, done: list[tuple[str, str]]) -> None:
         moved = {os.path.normcase(a): b for a, b in done}
@@ -545,11 +446,9 @@ class BulkTagDialog(QDialog):
             row.path = moved.get(os.path.normcase(row.path), row.path)
 
     @staticmethod
-    def _result_text(done_text: str, result) -> tuple[str, str]:
-        if not result.failed:
-            return f"{len(result.done)}곡 {done_text}", RENAME_OK_COLOR
-        names = ", ".join(os.path.basename(p) for p, _ in result.failed[:3])
-        more = " 등" if len(result.failed) > 3 else ""
-        reason = result.failed[0][1]
-        return (f"{len(result.done)}곡 {done_text}. {len(result.failed)}곡은 못 했습니다: {names}{more} ({reason})",
-                ERROR_COLOR)
+    def _with_problems(text: str, problems: list[tuple[str, str]]) -> tuple[str, str]:
+        if not problems:
+            return text, RENAME_OK_COLOR
+        names = ", ".join(os.path.basename(p) for p, _ in problems[:3])
+        more = " 등" if len(problems) > 3 else ""
+        return f"{text}. {len(problems)}곡은 못 했습니다: {names}{more} ({problems[0][1]})", ERROR_COLOR

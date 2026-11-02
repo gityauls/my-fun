@@ -230,3 +230,17 @@ def test_no_tag_file_gets_v23(tone_mp3, tmp_path):
     path = str(write_tagged(tmp_path / "d.mp3", tone_mp3))
     write_tags(path, {"title": "t"})
     assert _id3(path).version == (2, 3, 0)
+
+
+def test_has_cover(tmp_path, tone_mp3):
+    from funplayer.engine.tagwrite import has_cover, write_tags
+    folder = tmp_path / "a"; folder.mkdir()
+    song = folder / "s.mp3"; shutil.copy(tone_mp3, song)
+    assert not has_cover(str(song))
+    write_tags(str(song), {}, png_1x1())
+    assert has_cover(str(song))
+    other = tmp_path / "b"; other.mkdir()
+    plain = other / "t.mp3"; shutil.copy(tone_mp3, plain)
+    (other / "folder.jpg").write_bytes(b"x")
+    assert has_cover(str(plain))   # 폴더 그림도 커버로 친다
+    assert not has_cover(str(folder / "없음.mp3"))

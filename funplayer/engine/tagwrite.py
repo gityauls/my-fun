@@ -139,3 +139,34 @@ def clear_tags(path: str, verify: Callable[[str], bool] | None = None) -> None:
         delete(tmp, delete_v1=True, delete_v2=True)
 
     _safe_write(path, edit, verify or _default_verify(None))
+
+
+def has_cover(path: str, read=read_info) -> bool:
+    """곡 정보 창에 그림이 보이는 곡인가: 태그 속 그림, 없으면 같은 폴더의 그림 파일 (load_cover와 같은 기준).
+    MP3는 태그 머리만 읽어 빠르다."""
+    from funplayer.core.taginfo import pick_cover
+    album = ""
+    if path.lower().endswith(".mp3"):
+        try:
+            tags = ID3(path)
+        except ID3NoHeaderError:
+            tags = None
+        except Exception:   # 깨진 태그: 그림 없음으로 본다
+            tags = None
+        if tags is not None:
+            if tags.getall("APIC"):
+                return True
+            album = str(tags["TALB"].text[0]) if "TALB" in tags and tags["TALB"].text else ""
+    else:
+        try:
+            info = read(path)
+        except Exception:
+            return False
+        if info.picture:
+            return True
+        album = info.album
+    try:
+        names = os.listdir(os.path.dirname(path) or ".")
+    except OSError:
+        return False
+    return pick_cover(names, album) is not None

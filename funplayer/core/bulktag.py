@@ -1,141 +1,206 @@
-"""여러 곡 태그(5-D): 파일 이름·붙여 넣은 글에서 태그 값을 뽑고, 트랙 번호를 매긴다. Qt 없음."""
+"""여러 곡 태그(5-D) 이름 정리: 파일 이름에서 가수·제목을 찾아 '가수 - 제목'으로 통일한다. Qt 없음.
+
+가수 표기 규칙(사용자 지정 2026-11-02): 같은 가수면 '한글(영어)' > '한글' > '영어' 순으로 좋은 표기로 맞추고,
+한 칸에 같은 가수가 겹치면('이승철,이승철') 하나로 합친다."""
 from __future__ import annotations
 
-import os
 import re
 
 FIELDS = ("artist", "title", "album", "year", "genre", "track")
-AUTO = "auto"
 
-# 이름 모양에 쓰는 낱말: 한글과 영어 둘 다 받는다
-TOKENS = {"가수": "artist", "제목": "title", "앨범": "album", "년도": "year", "장르": "genre", "트랙": "track",
-          "artist": "artist", "title": "title", "album": "album", "year": "year", "genre": "genre",
-          "track": "track"}
-_TOKEN = re.compile(r"%([^%]+)%")
+SURE, BY_TAG, BY_KNOWN, UNSURE, NO_ARTIST, MISMATCH = "sure", "tag", "known", "unsure", "no_artist", "mismatch"
+NOTES = {SURE: "", BY_TAG: "기존 태그의 가수와 같음 → 앞뒤 바꿈", BY_KNOWN: "다른 곡에서 가수로 쓰임 → 앞뒤 바꿈",
+         UNSURE: "제목-가수로 봤습니다 · 확인", NO_ARTIST: "가수를 모름 · 직접 입력",
+         MISMATCH: "태그의 가수는 '{tag}' · 확인"}
+MERGED_NOTE = "가수 이름 겹침 → 하나로"
+UNIFIED_NOTE = "같은 가수 → {name}로 통일"
+
 _LEAD_BRACKET = re.compile(r"^\s*\[([^\]]*)\]\s*")
+_LEAD_PAREN = re.compile(r"^\s*\([^)]*\)\s*")
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
-_LEAD_NUMBER = re.compile(r"^\s*(\d{1,3})\s*(?:[.\-_)]\s*|\s+)(?=\S)")
+_TRAIL_PAREN = re.compile(r"^(.*?\S)\s*\(([^()]*)\)\s*$")
 _SPACES = re.compile(r"\s+")
-
-
-class PatternError(ValueError):
-    pass
+_SPACED_HYPHEN = re.compile(r"\s+-\s+")
+_BARE_HYPHEN = re.compile(r"(?<=\S)-(?=\S)")
+_LEAD_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.\-_)]\s*(?=\S)|^\s*\d{1,3}\s+(?=\S)")
+_ARTIST_SEP = re.compile(r"\s*[,;/&·]\s*")
+_HANGUL = re.compile(r"[가-힣ㄱ-ㅎ]")
 
 
 def _tidy(text: str) -> str:
     return _SPACES.sub(" ", text).strip().strip("_-").strip()
 
 
-def _track(text: str) -> str:
-    return str(int(text)) if text.isdigit() else text
+def _is_korean(text: str) -> bool:
+    return bool(_HANGUL.search(text))
 
 
-def compile_pattern(pattern: str) -> re.Pattern:
-    """'%가수% - %제목%' 같은 모양을 정규식으로. 낱말 사이 글자는 그대로, 빈칸은 있어도 없어도 된다."""
-    parts: list[str] = []
-    pos = 0
-    used: set[str] = set()
-    for m in _TOKEN.finditer(pattern):
-        field = TOKENS.get(m.group(1).strip().lower()) or TOKENS.get(m.group(1).strip())
-        if field is None:
-            raise PatternError(f"모르는 낱말: %{m.group(1)}%")
-        parts.append(_literal(pattern[pos:m.start()]))
-        if field in used:
-            parts.append(".+?")
-        else:
-            parts.append(rf"(?P<{field}>\d+)" if field == "track" else rf"(?P<{field}>.+?)")
-            used.add(field)
-        pos = m.end()
-    parts.append(_literal(pattern[pos:]))
-    if not used:
-        raise PatternError("%제목% 같은 낱말이 하나는 있어야 합니다")
-    return re.compile(r"^\s*" + "".join(parts) + r"\s*$")
-
-
-def _literal(text: str) -> str:
-    return r"\s*".join(re.escape(piece) for piece in text.split(" "))
-
-
-def match_pattern(text: str, pattern: str) -> dict[str, str]:
-    m = compile_pattern(pattern).match(text)
-    if not m:
-        return {}
-    out = {k: _tidy(v) for k, v in m.groupdict().items() if v is not None}
-    if "track" in out:
-        out["track"] = _track(out["track"])
-    return {k: v for k, v in out.items() if v}
-
-
-def guess_auto(stem: str) -> dict[str, str]:
-    """파일 이름(확장자 뺀 것)에서 짐작: [가수]제목, 가수 - 제목, 앞 번호는 트랙, 괄호 군말은 뺀다."""
-    name = stem
-    artist = ""
-    m = _LEAD_BRACKET.match(name)
+def split_alias(name: str) -> tuple[str, str]:
+    """'이승철(Lee Seung Chul)' → ('이승철', 'Lee Seung Chul'). 괄호 안팎이 같은 글자(한글/영어)면 별칭이 아니다."""
+    m = _TRAIL_PAREN.match(name or "")
     if m:
-        artist = m.group(1)
-        name = name[m.end():]
-    name = _PAREN.sub(" ", name)
-    out: dict[str, str] = {}
-    parts = [p for p in re.split(r"\s+-\s+", name) if p.strip()]
-    if len(parts) >= 2 and not artist:
-        artist, name = parts[0], parts[1]
-    elif len(parts) >= 2:
-        name = parts[0]   # [가수]제목 - 군말
-    elif parts:
-        name = parts[0]
-    for which in ("title", "artist"):
-        text = name if which == "title" else artist
-        n = _LEAD_NUMBER.match(text)
-        if n and "track" not in out:
-            out["track"] = _track(n.group(1))
-            text = text[n.end():]
-        if which == "title":
-            name = text
+        main, alias = _tidy(m.group(1)), _tidy(m.group(2))
+        if main and alias and _is_korean(main) != _is_korean(alias):
+            return (main, alias) if _is_korean(main) else (alias, main)
+    return _tidy(name or ""), ""
+
+
+def canon(name: str) -> str:
+    """'Lee(이승철)'도 '이승철(Lee)'로. 별칭이 없으면 그대로."""
+    ko, en = split_alias(name)
+    return f"{ko}({en})" if en else ko
+
+
+def _norm(text: str) -> str:
+    return text.casefold().replace(" ", "")
+
+
+def _keys(name: str) -> set[str]:
+    ko, en = split_alias(name)
+    return {_norm(x) for x in (ko, en) if x}
+
+
+def _rank(name: str) -> int:
+    """좋은 표기 순: 한글(영어)=2, 한글=1, 영어=0."""
+    ko, en = split_alias(name)
+    return 2 if en else 1 if _is_korean(ko) else 0
+
+
+def _same(a: str, b: str) -> bool:
+    return bool(a and b) and bool(_keys(a) & _keys(b))
+
+
+def clean_title(raw: str) -> str:
+    text = _PAREN.sub(" ", raw.replace("_", " "))
+    return _tidy(_LEAD_NUMBER.sub("", text))
+
+
+def clean_artist(raw: str) -> str:
+    """가수 조각: 앞 번호·밑줄·군말 괄호는 빼되, 끝의 다른 글자 괄호(한글(영어))는 별칭이라 남긴다."""
+    text = _LEAD_NUMBER.sub("", _LEAD_PAREN.sub("", raw.replace("_", " ")))
+    ko, en = split_alias(text)
+    if en:
+        return f"{clean_title(ko)}({_tidy(en)})"
+    return clean_title(text)
+
+
+def merge_artist(text: str) -> str:
+    """한 칸에 같은 가수가 겹치면 하나로('이승철,이승철' → '이승철'), 좋은 표기를 남긴다. 다른 가수들은 그대로."""
+    names = [n.strip() for n in _ARTIST_SEP.split(text or "") if n.strip()]
+    kept: list[str] = []
+    for n in names:
+        for i, k in enumerate(kept):
+            if _same(n, k):
+                if _rank(n) > _rank(k):
+                    kept[i] = n
+                break
         else:
-            artist = text
-    title, artist = _tidy(name), _tidy(artist)
-    if title:
-        out["title"] = title
-    if artist:
-        out["artist"] = artist
+            kept.append(n)
+    if len(kept) == len(names):
+        return text
+    return ", ".join(canon(n) for n in kept)
+
+
+class Tidy:
+    def __init__(self, artist: str, title: str, how: str) -> None:
+        self.artist, self.title, self.how = artist, title, how
+        self.merged = False
+        self.unified = ""   # 다른 표기에서 바꿔 맞췄으면 그 표기
+        self.tag = ""       # MISMATCH일 때 기존 태그의 가수
+
+    @property
+    def note(self) -> str:
+        notes = [NOTES[self.how].format(tag=self.tag), MERGED_NOTE if self.merged else "",
+                 UNIFIED_NOTE.format(name=self.unified) if self.unified else ""]
+        return " · ".join(n for n in notes if n)
+
+    @property
+    def unsure(self) -> bool:
+        return self.how in (UNSURE, NO_ARTIST, MISMATCH)
+
+    def __repr__(self) -> str:
+        return f"Tidy({self.artist!r}, {self.title!r}, {self.how!r})"
+
+
+def _split(stem: str) -> tuple[str, str, str]:
+    """(왼쪽, 오른쪽, 모양): 다듬기 전 조각. 모양: bracket=[가수]제목, spaced=가수 - 제목, bare=제목-가수, single."""
+    m = _LEAD_BRACKET.match(stem)
+    if m and _tidy(m.group(1)) and clean_title(stem[m.end():]):
+        return m.group(1), _SPACED_HYPHEN.split(stem[m.end():])[0], "bracket"
+    body = _LEAD_PAREN.sub("", stem)
+    parts = [p for p in _SPACED_HYPHEN.split(body) if clean_title(p)]
+    if len(parts) >= 2:
+        return parts[0], parts[1], "spaced"
+    bare = _BARE_HYPHEN.split(body)
+    if len(bare) == 2 and all(len(clean_title(p)) >= 2 for p in bare):
+        return bare[0], bare[1], "bare"
+    return "", body, "single"
+
+
+def tidy_names(stems: list[str], tag_artists: list[str], tag_titles: list[str] | None = None) -> list[Tidy]:
+    """파일 이름(확장자 뺀 것)들에서 가수·제목을 찾는다. 사용자 규칙: '가수 - 제목', '[가수] 제목', '제목-가수'.
+    어느 쪽이 가수인지는 기존 가수 태그 → 다른 곡에서 가수로 쓰인 이름 순으로 확인하고, 모르면 unsure.
+    기존 태그가 빈칸·대소문자·괄호만 다르면 태그 쪽 표기를 쓰고, 가수가 아예 다르면 확인을 받는다."""
+    tags = [merge_artist(a) for a in tag_artists]
+    out = _decide(stems, tags)
+    for t, tag, tag_title in zip(out, tags, tag_titles or [""] * len(out)):
+        if tag and t.artist and _same(tag, t.artist) and not _ARTIST_SEP.search(tag):
+            t.artist = canon(tag) if _rank(tag) >= _rank(t.artist) else t.artist
+        elif tag and t.artist and t.how in (SURE, UNSURE):
+            t.how, t.tag = MISMATCH, tag
+        if tag_title and t.title and _norm(clean_title(tag_title)) == _norm(t.title):
+            t.title = _tidy(tag_title)
+    for t, raw_tag, tag in zip(out, tag_artists, tags):
+        merged = merge_artist(t.artist)
+        if merged != t.artist or (tag != raw_tag and _same(merged, tag)):
+            t.artist, t.merged = merged, True
+    _unify(out, tags)
     return out
 
 
-def from_filename(path: str, pattern: str = AUTO, underscores: bool = True) -> dict[str, str]:
-    stem = os.path.splitext(os.path.basename(path))[0]
-    if underscores:
-        stem = stem.replace("_", " ")
-    return guess_auto(stem) if pattern == AUTO else match_pattern(stem, pattern)
-
-
-def from_lines(text: str, pattern: str = AUTO) -> list[dict[str, str]]:
-    """붙여 넣은 글을 줄마다 나눠 값을 뽑는다. 빈 줄은 건너뛴다. 맞지 않는 줄은 {}."""
+def _decide(stems: list[str], tags: list[str]) -> list[Tidy]:
+    splits = [_split(s) for s in stems]
+    sure_left = [clean_artist(left) if kind in ("bracket", "spaced") else "" for left, _, kind in splits]
     out = []
-    for line in text.splitlines():
-        if not line.strip():
+    for i, ((left, right, kind), tag) in enumerate(zip(splits, tags)):
+        if kind == "single":
+            out.append(Tidy(tag, clean_title(right), SURE if tag else NO_ARTIST))
             continue
-        if pattern == AUTO:
-            values: dict[str, str] = {}
-            n = _LEAD_NUMBER.match(line)
-            if n:
-                values["track"] = _track(n.group(1))
-                line = line[n.end():]
-            if _tidy(line):
-                values["title"] = _tidy(line)
-            out.append(values)
+        # 이 곡 자신의 조각은 빼고, 다른 곡의 가수 태그와 '가수 - 제목'·'[가수]'의 가수만 아는 가수로 친다
+        known = [a for j, a in enumerate(tags) if a and j != i]
+        known += [a for j, a in enumerate(sure_left) if a and j != i]
+        a_raw, t_raw = (right, left) if kind == "bare" else (left, right)
+        artist, title = clean_artist(a_raw), clean_title(t_raw)
+        swapped = Tidy(clean_artist(t_raw), clean_title(a_raw), SURE)
+        if _same(tag, artist) or kind == "bracket" and not _same(tag, swapped.artist):
+            out.append(Tidy(artist, title, SURE))
+        elif _same(tag, swapped.artist):
+            swapped.how = BY_TAG
+            out.append(swapped)
+        elif any(_same(k, swapped.artist) for k in known) and not any(_same(k, artist) for k in known):
+            swapped.how = BY_KNOWN
+            out.append(swapped)
+        elif kind == "bare" and not any(_same(k, artist) for k in known):
+            out.append(Tidy(artist, title, UNSURE))
         else:
-            out.append(match_pattern(line, pattern))
+            out.append(Tidy(artist, title, SURE))
     return out
 
 
-def track_numbers(count: int, start: int = 1, with_total: bool = False) -> list[str]:
-    last = start + count - 1
-    return [f"{n}/{last}" if with_total else str(n) for n in range(start, start + count)]
-
-
-def merge(base: dict[str, str], change: dict[str, str], only_empty: bool = False) -> dict[str, str]:
-    out = dict(base)
-    for k, v in change.items():
-        if k in FIELDS and (not only_empty or not out.get(k)):
-            out[k] = v
-    return out
+def _unify(out: list[Tidy], tags: list[str]) -> None:
+    """같은 가수의 여러 표기를 가장 좋은 표기로 맞춘다 (여러 가수가 든 칸은 건드리지 않는다)."""
+    best: dict[str, str] = {}
+    for name in [t.artist for t in out] + list(tags):
+        if not name or _ARTIST_SEP.search(name):
+            continue
+        name = canon(name)
+        for k in _keys(name):
+            if k not in best or _rank(name) > _rank(best[k]):
+                best[k] = name
+    for t in out:
+        if not t.artist or _ARTIST_SEP.search(t.artist):
+            continue
+        choices = [best[k] for k in _keys(t.artist) if k in best]
+        top = max(choices, key=_rank, default=t.artist)
+        if top != t.artist and _rank(top) >= _rank(t.artist):
+            t.artist = t.unified = top

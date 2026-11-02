@@ -1,63 +1,98 @@
-import pytest
-
 from funplayer.core.bulktag import (
-    AUTO, PatternError, compile_pattern, from_filename, from_lines, guess_auto, match_pattern, merge, track_numbers,
+    BY_KNOWN, BY_TAG, NO_ARTIST, SURE, UNSURE, canon, clean_artist, merge_artist, split_alias, tidy_names,
 )
 
 
-@pytest.mark.parametrize("name, want", [
-    ("[As_One]너만은모르길.mp3", {"artist": "As One", "title": "너만은모르길"}),
-    ("[As_ One]02.그녀의 게임.mp3", {"artist": "As One", "title": "그녀의 게임", "track": "2"}),
-    ("[015B] 텅빈 거리에서.mp3", {"artist": "015B", "title": "텅빈 거리에서"}),
-    ("DJDOC - remember.mp3", {"artist": "DJDOC", "title": "remember"}),
-    ("(홍대클럽)Benny Benassi - I Love My Sex(노래진짜좋음) - 클럽음악.mp3",
-     {"artist": "Benny Benassi", "title": "I Love My Sex"}),
-    ("03. 서지원 - I Miss You.mp3", {"artist": "서지원", "title": "I Miss You", "track": "3"}),
-    ("멜로망스 - 선물.mp3", {"artist": "멜로망스", "title": "선물"}),
-    ("그냥제목.mp3", {"title": "그냥제목"}),
-    ("2002년의 겨울.mp3", {"title": "2002년의 겨울"}),
-])
-def test_auto_guess(name, want):
-    assert from_filename("C:/m/" + name) == want
+def tidy(stems, tags=None):
+    return [(t.artist, t.title, t.how) for t in tidy_names(stems, tags or [""] * len(stems))]
 
 
-def test_underscores_kept_when_off():
-    assert from_filename("C:/m/[As_One]x.mp3", underscores=False)["artist"] == "As_One"
+def test_tidy_user_shapes():
+    got = tidy(["멜로망스 - 선물", "[015B] 텅빈 거리에서", "[Ami]천상천하", "사랑인가봐-멜로망스",
+                "벚꽃엔딩-버스커버스커", "(홍대클럽)Benny Benassi - I Love My Sex(노래진짜좋음) - 클럽음악",
+                "[As_ One]02.그녀의 게임"])
+    assert got == [("멜로망스", "선물", SURE), ("015B", "텅빈 거리에서", SURE), ("Ami", "천상천하", SURE),
+                   ("멜로망스", "사랑인가봐", SURE), ("버스커버스커", "벚꽃엔딩", UNSURE),
+                   ("Benny Benassi", "I Love My Sex", SURE), ("As One", "그녀의 게임", SURE)]
 
 
-@pytest.mark.parametrize("pattern, stem, want", [
-    ("%가수% - %제목%", "DJDOC - remember", {"artist": "DJDOC", "title": "remember"}),
-    ("[%가수%]%트랙%.%제목%", "[As One]05.Day By Day", {"artist": "As One", "track": "5", "title": "Day By Day"}),
-    ("%트랙%. %제목%", "07.노래", {"track": "7", "title": "노래"}),
-    ("%track% %artist% - %title%", "01 A - B", {"track": "1", "artist": "A", "title": "B"}),
-    ("%가수% - %제목%", "맞지않음", {}),
-])
-def test_patterns(pattern, stem, want):
-    assert match_pattern(stem, pattern) == want
+def test_tidy_reversed_spaced_fixed_by_known_artist():
+    got = tidy(["As One - Day By Day", "02.그녀의 게임 - As One"])
+    assert got[1] == ("As One", "그녀의 게임", BY_KNOWN)
 
 
-def test_bad_patterns():
-    with pytest.raises(PatternError):
-        compile_pattern("%모름%")
-    with pytest.raises(PatternError):
-        compile_pattern("그냥 글자")
+def test_tidy_uses_existing_artist_tag():
+    assert tidy(["As One-Day By Day"], ["As One"]) == [("As One", "Day By Day", BY_TAG)]
+    assert tidy(["Day By Day-As One"], ["As One"]) == [("As One", "Day By Day", SURE)]
 
 
-def test_from_lines_auto_and_pattern():
-    text = "1. Day By Day\n\n2. 그녀의 게임\n 3 너만은 모르길 \n"
-    assert from_lines(text) == [{"track": "1", "title": "Day By Day"}, {"track": "2", "title": "그녀의 게임"},
-                                {"track": "3", "title": "너만은 모르길"}]
-    assert from_lines("A - x\nzz", "%가수% - %제목%") == [{"artist": "A", "title": "x"}, {}]
-    assert from_lines("제목만", AUTO) == [{"title": "제목만"}]
+def test_tidy_single_name_uses_tag_or_asks():
+    assert tidy(["그냥제목"], ["가수"]) == [("가수", "그냥제목", SURE)]
+    assert tidy(["01. 그냥제목"]) == [("", "그냥제목", NO_ARTIST)]
+    assert tidy(["2002년의 겨울"], ["가수"]) == [("가수", "2002년의 겨울", SURE)]
 
 
-def test_track_numbers_and_merge():
-    assert track_numbers(3) == ["1", "2", "3"]
-    assert track_numbers(2, start=5, with_total=True) == ["5/6", "6/6"]
-    base = {"artist": "", "title": "옛", "album": "A"}
-    assert merge(base, {"artist": "새", "title": "새제목"}) == {"artist": "새", "title": "새제목", "album": "A"}
-    assert merge(base, {"artist": "새", "title": "새제목"}, only_empty=True)["title"] == "옛"
+def test_tidy_leading_number_never_becomes_track():
+    t = tidy_names(["03. 서지원 - I Miss You"], [""])[0]
+    assert (t.artist, t.title) == ("서지원", "I Miss You")
 
 
-def test_guess_keeps_number_only_title():
-    assert guess_auto("1999") == {"title": "1999"}
+# ---- 가수 이름 겹침 / 같은 가수 표기 통일 ----
+def test_alias_helpers():
+    assert split_alias("이승철(Lee Seung Chul)") == ("이승철", "Lee Seung Chul")
+    assert split_alias("Lee Seung Chul(이승철)") == ("이승철", "Lee Seung Chul")
+    assert split_alias("Song(Live)") == ("Song(Live)", "")      # 같은 글자끼리는 별칭이 아님
+    assert canon("Lee Seung Chul (이승철)") == "이승철(Lee Seung Chul)"
+    assert clean_artist("02.이승철 (Lee Seung Chul)") == "이승철(Lee Seung Chul)"
+    assert clean_artist("(홍대클럽)Benny Benassi") == "Benny Benassi"
+
+
+def test_merge_artist():
+    assert merge_artist("이승철,이승철") == "이승철"
+    assert merge_artist("이승철, 이승철 / 이승철") == "이승철"
+    assert merge_artist("A, B, a") == "A, B"
+    assert merge_artist("A, B") == "A, B"           # 겹치지 않으면 그대로
+    assert merge_artist("") == ""
+    assert merge_artist("Lee Seung Chul, 이승철(Lee Seung Chul)") == "이승철(Lee Seung Chul)"
+
+
+def test_tidy_merges_doubled_artist_from_tag_and_name():
+    t = tidy_names(["제목만"], ["이승철,이승철"])[0]
+    assert (t.artist, t.title, t.merged) == ("이승철", "제목만", True) and "하나로" in t.note
+    t2 = tidy_names(["이승철,이승철 - 희야"], [""])[0]
+    assert (t2.artist, t2.title, t2.merged) == ("이승철", "희야", True)
+    t3 = tidy_names(["이승철 - 희야"], ["이승철"])[0]
+    assert not t3.merged and t3.note == ""
+
+
+def test_same_artist_unified_to_best_form():
+    got = tidy_names(["이승철(Lee Seung Chul) - 희야", "이승철 - 소리쳐", "Lee Seung Chul - 그사람",
+                      "Lee Seung Chul(이승철) - 방황"], [""] * 4)
+    assert [t.artist for t in got] == ["이승철(Lee Seung Chul)"] * 4
+    assert got[0].note == "" and "통일" in got[1].note and "통일" in got[2].note
+
+
+def test_hangul_beats_english_only_when_linked():
+    # 한글과 영어 표기를 이어 줄 '한글(영어)'가 없으면 같은 가수인지 알 수 없어 그대로 둔다
+    got = tidy_names(["이승철 - 희야", "Lee Seung Chul - 그사람"], ["", ""])
+    assert [t.artist for t in got] == ["이승철", "Lee Seung Chul"]
+    # 기존 태그가 이어 주면 맞춘다
+    got = tidy_names(["Lee Seung Chul - 그사람"], ["이승철(Lee Seung Chul)"])
+    assert got[0].artist == "이승철(Lee Seung Chul)"
+
+
+def test_alias_artist_keeps_parens_but_title_drops_noise():
+    t = tidy_names(["아이유(IU) - 좋은 날(Live)"], [""])[0]
+    assert (t.artist, t.title) == ("아이유(IU)", "좋은 날")
+
+
+def test_tag_spelling_preferred_and_mismatch_asks():
+    from funplayer.core.bulktag import MISMATCH
+    got = tidy_names(["[As_One]너만은모르길", "(You Drive Me) Crazy - Britney Spears", "[22]그대눈물까지도",
+                      "[chuck]별땅"],
+                     ["애즈원(As One)", "Britney Spears", "투투", "Chuck"],
+                     ["너만은 모르길", "(You Drive Me) Crazy", "그대눈물까지도", "별땅"])
+    assert (got[0].artist, got[0].title) == ("애즈원(As One)", "너만은 모르길")
+    assert (got[1].artist, got[1].title) == ("Britney Spears", "(You Drive Me) Crazy")
+    assert got[2].how == MISMATCH and got[2].unsure and "투투" in got[2].note
+    assert got[3].artist == "Chuck" and got[3].note == ""
