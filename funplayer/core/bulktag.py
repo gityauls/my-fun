@@ -25,6 +25,7 @@ _SPACED_HYPHEN = re.compile(r"\s+-\s+")
 _BARE_HYPHEN = re.compile(r"(?<=\S)-(?=\S)")
 _LEAD_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.\-_)]\s*(?=\S)|^\s*\d{1,3}\s+(?=\S)")
 _ARTIST_SEP = re.compile(r"\s*[,;/&·]\s*")
+_NUMBER_PIECE = re.compile(r"^\s*\d{1,4}\s*[.)]?\s*$")
 _HANGUL = re.compile(r"[가-힣ㄱ-ㅎ]")
 
 
@@ -138,8 +139,11 @@ def _split(stem: str) -> tuple[str, str, str, list[list[str]]]:
     if m and _tidy(m.group(1)) and clean_title(stem[m.end():]):
         return m.group(1), _SPACED_HYPHEN.split(stem[m.end():])[0], "bracket", []
     body = _LEAD_PAREN.sub("", stem)
+    # 숫자만 있는 조각('가수 - 01 - 제목'의 01, 꼬리의 1995)은 트랙·연도라 버린다. 남는 조각이 하나뿐이면 둔다
     spaced = [p for p in _SPACED_HYPHEN.split(body) if clean_title(p)]
-    fine = [_fine(p) for p in spaced]
+    words = [p for p in spaced if not _NUMBER_PIECE.match(p)]
+    spaced = words if len(words) >= 2 or len(spaced) < 2 else spaced
+    fine = [[q for q in _fine(p) if not _NUMBER_PIECE.match(q)] or [p] for p in spaced]
     if sum(len(f) for f in fine) >= 3:
         return "", "", "multi", fine
     if len(spaced) == 2:

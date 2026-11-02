@@ -102,7 +102,8 @@ def test_many_hyphens_find_artist_piece_and_ask():
     names = ["김건모 - 잘못된 만남 - Remix", "Remix - 김건모 - 잘못된 만남", "김건모-잘못된 만남 - 1995",
              "잘못된 만남-김건모-1995", "김건모 - 핑계"]
     got = tidy(names)
-    assert got[:4] == [("김건모", "잘못된 만남", MULTI)] * 4
+    assert got[:3] == [("김건모", "잘못된 만남", MULTI)] * 3
+    assert got[3] == ("김건모", "잘못된 만남", SURE)     # 숫자 꼬리 1995를 버리면 제목-가수만 남는다
     assert got[4] == ("김건모", "핑계", SURE)
 
 
@@ -117,3 +118,10 @@ def test_wrong_tag_on_tail_piece_ignored():
     assert (t.artist, t.how) == ("Benny Benassi", MULTI)
     t2 = tidy_names(["Remix - 김건모 - 잘못된 만남"], ["김건모"])[0]
     assert (t2.artist, t2.title) == ("김건모", "잘못된 만남")
+
+
+def test_number_only_piece_is_dropped():
+    assert tidy(["김건모 - 01 - 잘못된 만남"]) == [("김건모", "잘못된 만남", SURE)]
+    assert tidy(["김건모 - 3. - 핑계"]) == [("김건모", "핑계", SURE)]
+    assert tidy(["김건모-02-잘못된 만남", "김건모 - 핑계"])[0][:2] == ("김건모", "잘못된 만남")
+    assert tidy(["김건모 - 1999"]) == [("김건모", "1999", SURE)]     # 조각이 둘뿐이면 숫자도 제목
