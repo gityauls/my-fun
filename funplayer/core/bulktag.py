@@ -153,12 +153,14 @@ def _multi(fine: list[list[str]], tag: str, known: list[str]) -> Tidy:
     """하이픈이 여럿인 이름: 기존 태그 → 다른 곡의 가수로 가수 조각을 찾고, 그 옆 조각을 제목으로. 늘 확인을 받는다."""
     spaced = ["-".join(f) for f in fine]
 
-    def is_artist(text: str) -> bool:
+    def is_artist(text: str, by_tag: bool = True) -> bool:
         name = clean_artist(text)
-        return _same(tag, name) or any(_same(k, name) for k in known)
+        return by_tag and _same(tag, name) or any(_same(k, name) for k in known)
 
     for si, piece in enumerate(spaced):   # 빈칸 하이픈 조각 하나가 통째로 가수
-        if len(spaced) >= 2 and is_artist(piece):
+        # 셋 이상일 때 마지막 조각은 '- 클럽음악'·'- Remix' 같은 꼬리가 흔해, 이 곡 태그만으로는 가수로 보지 않는다
+        tail = len(spaced) >= 3 and si == len(spaced) - 1
+        if len(spaced) >= 2 and is_artist(piece, by_tag=not tail):
             other = spaced[si + 1] if si + 1 < len(spaced) else spaced[si - 1]
             return Tidy(clean_artist(piece), clean_title(other), SURE if len(spaced) == 2 else MULTI)
     for f in fine:                         # 빈칸 없는 하이픈 조각 하나가 가수

@@ -111,3 +111,9 @@ def test_hyphen_inside_name_kept():
     got = tidy(["김건모 - 잘못된 만남-리믹스", "김건모 - 핑계"])
     assert got[0] == ("김건모", "잘못된 만남-리믹스", SURE)
     assert tidy(["김건모 - 잘못된 만남-리믹스"])[0][2] == MULTI      # 실마리가 없으면 확인
+
+def test_wrong_tag_on_tail_piece_ignored():
+    t = tidy_names(["(홍대클럽)Benny Benassi - I Love My Sex(노래진짜좋음) - 클럽음악"], ["클럽음악"])[0]
+    assert (t.artist, t.how) == ("Benny Benassi", MULTI)
+    t2 = tidy_names(["Remix - 김건모 - 잘못된 만남"], ["김건모"])[0]
+    assert (t2.artist, t2.title) == ("김건모", "잘못된 만남")
