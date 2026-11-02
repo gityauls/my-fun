@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import os
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QColor, QDesktopServices, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QStyledItemDelegate,
+    QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from funplayer import websearch
 from funplayer.core import bulktag, renamer
 from funplayer.core.taginfo import TrackInfo
 from funplayer.engine.tagwrite import KEEP, picture_mime
@@ -68,7 +69,7 @@ class _Row:
 class BulkTagDialog(QDialog):
     def __init__(self, infos: list[TrackInfo], parent=None, save_many=None, rename_many=None,
                  undo_many=None, read_info=None, has_cover=None, after_change=None,
-                 start_tab: int = TAB_NAMES) -> None:
+                 start_tab: int = TAB_NAMES, open_url=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("여러 곡 태그")
         mp3 = [i for i in infos if i.path.lower().endswith(".mp3")]
@@ -80,6 +81,7 @@ class BulkTagDialog(QDialog):
         self._undo_many = undo_many
         self._read_info = read_info
         self._after_change = after_change or (lambda: None)
+        self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
         self.picture: bytes | None = None
         self.last_renames: list[tuple[str, str]] = []
         self._message = ("", INFO_COLOR)
@@ -120,6 +122,8 @@ class BulkTagDialog(QDialog):
         copy.setContext(Qt.WidgetShortcut)
         copy.activated.connect(self.copy_cell)
         t.setMinimumHeight(200)
+        t.setContextMenuPolicy(Qt.CustomContextMenu)
+        t.customContextMenuRequested.connect(self._row_menu)
         v.addWidget(t, 1)
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
@@ -319,6 +323,70 @@ class BulkTagDialog(QDialog):
         bg = UNSURE_BG if orange else CHANGED_BG if changed else None
         item.setBackground(QColor(bg) if bg else QColor(0, 0, 0, 0))
         item.setForeground(color if color is not None else self.palette().text().color())
+
+    # ---- 줄 우클릭: 웹에서 찾기, 이 곡에만 그림 ----
+    def row_menu(self, row: int) -> QMenu:
+        menu = QMenu(self)
+        for site, label in websearch.SITE_LABELS:
+            menu.addAction(label, lambda s=site: self.search(row, s))
+        menu.addSeparator()
+        paste = menu.addAction("복사한 그림을 이 곡에 넣기", lambda: self.paste_picture_to(row))
+        mime = QApplication.clipboard().mimeData()
+        paste.setEnabled(mime is not None and TrackInfoDialog._mime_image_bytes(mime) is not None)
+        menu.addAction("그림 파일을 이 곡에 넣기…", lambda: self._pick_picture_for(row))
+        return menu
+
+    def _row_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if 0 <= row < len(self.rows):
+            self.row_menu(row).exec_(self.table.viewport().mapToGlobal(pos))
+
+    def search(self, row: int, site: str) -> None:
+        """그 곡의 가수·제목(이름 정리 탭에서 본 값)으로 브라우저에서 찾는다."""
+        r = self.rows[row]
+        artist, title = r.names() if self.tabs.currentIndex() == TAB_NAMES else (r.orig["artist"], r.orig["title"])
+        terms = websearch.search_terms(artist, title, r.path)
+        if terms:
+            self._open_url(websearch.search_url(site, terms))
+
+    def paste_picture_to(self, row: int) -> None:
+        mime = QApplication.clipboard().mimeData()
+        data = TrackInfoDialog._mime_image_bytes(mime) if mime is not None else None
+        if data is None:
+            self._say("복사한 그림이 없습니다 (브라우저에서 그림 우클릭 → 이미지 복사)", ERROR_COLOR)
+            return
+        self.save_picture_to(row, data)
+
+    def _pick_picture_for(self, row: int) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "그림 넣기", "", "그림 (*.jpg *.jpeg *.png)")
+        if not path:
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read(MAX_PICTURE + 1)
+        except OSError:
+            self._say("그림 파일을 읽지 못했습니다", ERROR_COLOR)
+            return
+        self.save_picture_to(row, data)
+
+    def save_picture_to(self, row: int, data: bytes) -> None:
+        """그 곡 하나에만 그림을 바로 저장한다 (다른 곡·고친 칸은 그대로)."""
+        if picture_mime(data) is None:
+            self._say("jpg·png 그림만 넣을 수 있습니다", ERROR_COLOR)
+            return
+        if len(data) > MAX_PICTURE:
+            self._say("그림이 너무 큽니다 (10 MB까지)", ERROR_COLOR)
+            return
+        if self._save_many is None:
+            return
+        r = self.rows[row]
+        result = self._busy(self._save_many, [(r.path, {})], data)
+        if self._has_cover is not None:
+            r.has_cover = self._has_cover(r.path)
+        name = os.path.basename(r.path)
+        self._message = self._with_problems(f"그림을 넣었습니다: {name}", list(result.failed))
+        self._after_change()
+        self.refresh()
 
     def copy_cell(self) -> None:
         item = self.table.currentItem()

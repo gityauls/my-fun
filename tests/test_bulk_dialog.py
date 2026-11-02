@@ -225,3 +225,35 @@ def test_file_name_can_be_selected_and_copied(rig):
     assert cell(d, 1, COL_FILE) == "[015B] 텅빈 거리에서.mp3"
     d.copy_cell()
     assert QApplication.clipboard().text() == "[015B] 텅빈 거리에서.mp3"
+
+
+def test_row_menu_searches_sites(qapp, tmp_path):
+    folder = make_songs(tmp_path, ["멜로망스 - 선물.mp3"])
+    opened = []
+    d = BulkTagDialog([TrackInfo(str(folder / "멜로망스 - 선물.mp3"))], open_url=opened.append)
+    labels = [a.text() for a in d.row_menu(0).actions() if a.text()]
+    assert labels[:4] == ["지니에서 찾기", "멜론에서 찾기", "해외: 구글 이미지에서 찾기", "해외: 애플 뮤직에서 찾기"]
+    for site in ("genie", "melon", "google_images", "apple"):
+        d.search(0, site)
+    assert opened[0].startswith("https://www.genie.co.kr/") and "%EB%A9%9C%EB%A1%9C%EB%A7%9D%EC%8A%A4" in opened[0]
+    assert opened[2].startswith("https://www.google.com/search?tbm=isch&q=")
+    assert opened[3].startswith("https://music.apple.com/kr/search?term=")
+
+
+def test_picture_to_one_row_only(rig):
+    d, files, _ = rig
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+    d.save_picture_to(1, png)
+    items, picture = files.calls[-1]
+    assert picture == png and [os.path.basename(p) for p, _ in items] == ["[015B] 텅빈 거리에서.mp3"]
+    assert "그림을 넣었습니다" in d.message_label.text()
+    d.save_picture_to(1, b"nope")
+    assert "jpg·png" in d.message_label.text()
+
+
+def test_paste_picture_to_row_needs_image(rig):
+    from PyQt5.QtWidgets import QApplication
+    d, files, _ = rig
+    QApplication.clipboard().setText("글자")
+    d.paste_picture_to(0)
+    assert "복사한 그림이 없습니다" in d.message_label.text() and not files.calls

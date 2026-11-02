@@ -13,7 +13,12 @@ from funplayer.core import tagguess
 
 GENIE_URL = "https://www.genie.co.kr/search/searchMain?query={q}"
 MELON_URL = "https://www.melon.com/search/total/index.htm?q={q}"
-SITES = {"genie": GENIE_URL, "melon": MELON_URL}
+GOOGLE_IMAGES_URL = "https://www.google.com/search?tbm=isch&q={q}"
+APPLE_MUSIC_URL = "https://music.apple.com/kr/search?term={q}"
+SITES = {"genie": GENIE_URL, "melon": MELON_URL, "google_images": GOOGLE_IMAGES_URL, "apple": APPLE_MUSIC_URL}
+# 여러 곡 태그 표의 우클릭 메뉴 (차례대로)
+SITE_LABELS = [("genie", "지니에서 찾기"), ("melon", "멜론에서 찾기"),
+               ("google_images", "해외: 구글 이미지에서 찾기"), ("apple", "해외: 애플 뮤직에서 찾기")]
 MAX_IMAGE = 10 * 1024 * 1024
 TIMEOUT = 10
 CHUNK = 64 * 1024
