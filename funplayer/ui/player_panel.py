@@ -33,6 +33,7 @@ from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.fx_strip import FxStrip
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
+from funplayer.ui.bulk_dialog import BulkTagDialog
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
@@ -58,6 +59,7 @@ LIVE_COLOR = "#C5221F"
 LISTENED_PREFIX = "들은 시간 "
 DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
 
+BULK_TEXT = "여러 곡 태그 고치기…\tCtrl+T"
 FAV_ON_TEXT = "즐겨찾기 (맨 위로)\tCtrl+D"
 FAV_OFF_TEXT = "즐겨찾기 해제\tCtrl+D"
 
@@ -70,7 +72,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Ctrl+A", "select_all"), ("Ctrl+S", "save_playlist"), ("Ctrl+O", "open_playlist"),
     ("Ctrl+I", "show_track_info"), ("Ctrl+M", "toggle_mini"), ("Ctrl+Tab", "next_tab"),
     ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"), ("Ctrl+E", "toggle_fx_visible"),
-    ("Ctrl+D", "toggle_favorite"),
+    ("Ctrl+D", "toggle_favorite"), ("Ctrl+T", "show_bulk_tags"),
 ]
 
 # 작게 볼 때 숨기는 위젯 (이름). 탭·라디오에 따라 바뀌는 위젯은 _apply_visibility가 맡는다
@@ -123,6 +125,7 @@ class PlayerPanel(QWidget):
         self._followed_index = None   # 목록이 마지막으로 따라가 보여 준 현재 곡 줄
         self.actions: dict[str, QAction] = {}
         self.info_dialog: TrackInfoDialog | None = None
+        self.bulk_dialog: BulkTagDialog | None = None
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
         self._settings = settings
@@ -389,6 +392,7 @@ class PlayerPanel(QWidget):
         menu = QMenu(self)
         specs = [("play_selected", "재생\tEnter", self.play_selected),
                  ("info_row", "곡 정보 고치기…", self.show_row_info),
+                 ("bulk_tags", BULK_TEXT, self.show_bulk_tags),
                  ("favorite", FAV_ON_TEXT, self.toggle_favorite),
                  ("undo_rename", "이름 되돌리기", self.undo_rename_from_menu),
                  ("remove", "선택한 곡 지우기\tDel", self.remove_selected),
@@ -599,7 +603,11 @@ class PlayerPanel(QWidget):
         row = self.playlist_view.currentRow()
         self.actions["play_selected"].setEnabled(row >= 0)
         self.actions["info_row"].setEnabled(row >= 0)
-        fav_rows = self._favorite_rows()
+        bulk_rows = self._favorite_rows()
+        self.actions["bulk_tags"].setEnabled(bool(bulk_rows))
+        self.actions["bulk_tags"].setText(
+            BULK_TEXT.replace("…", f"… ({len(bulk_rows)}곡)") if len(bulk_rows) > 1 else BULK_TEXT)
+        fav_rows = bulk_rows
         tracks = self.controller.playlist.tracks
         all_fav = bool(fav_rows) and all(self.controller.is_favorite(tracks[r].path) for r in fav_rows)
         self.actions["favorite"].setEnabled(bool(fav_rows))
@@ -773,6 +781,22 @@ class PlayerPanel(QWidget):
         new = self.controller.toggle_favorite(rows)
         self.refresh()
         self.select_rows(new)
+
+    def show_bulk_tags(self) -> None:
+        """고른 곡(없으면 커서 줄)으로 여러 곡 태그 창을 연다. 창이 떠 있는 동안 목록은 막는다(창 모달)."""
+        if self._tab != "playlist":
+            return
+        rows = self._favorite_rows()
+        if not rows:
+            return
+        c = self.controller
+        with self._busy_cursor():
+            infos = [c.info_for(r) for r in rows]
+        dialog = self.bulk_dialog = BulkTagDialog(
+            infos, self, save_many=c.save_many, rename_many=c.rename_many, undo_many=c.undo_many,
+            read_info=tags.read_info, after_change=self._after_file_edit)
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.show()
 
     def save_favorites(self) -> None:
         if not self._settings.favorites:

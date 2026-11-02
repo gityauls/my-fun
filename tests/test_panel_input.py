@@ -56,7 +56,7 @@ def test_shortcut_table(rig):
     p, *_ = rig
     assert set(p.shortcuts) == {"Space", "X", "V", "Z", "B", "Left", "Right", "Up", "Down", "M", "L",
                                 "R", "S", "Ctrl+S", "Ctrl+O", "Delete", "Return", "Enter", "Ctrl+A", "Ctrl+I", "Ctrl+M", "Ctrl+Tab",
-                                "Ctrl+Left", "Ctrl+Right", "Ctrl+E", "Ctrl+D"}
+                                "Ctrl+Left", "Ctrl+Right", "Ctrl+E", "Ctrl+D", "Ctrl+T"}
     assert dict(SHORTCUTS)["Ctrl+E"] == "toggle_fx_visible"
     assert dict(SHORTCUTS)["Ctrl+Left"] == "prev" and dict(SHORTCUTS)["Ctrl+Right"] == "next"
     assert dict(SHORTCUTS)["Space"] == "toggle"
@@ -154,7 +154,7 @@ def test_enter_and_select_all(rig):
 def test_context_menu(rig):
     p, fake, *_ = rig
     assert [a.text() for a in p.context_menu.actions()] == [
-        "재생\tEnter", "곡 정보 고치기…", "즐겨찾기 (맨 위로)\tCtrl+D", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
+        "재생\tEnter", "곡 정보 고치기…", "여러 곡 태그 고치기…\tCtrl+T", "즐겨찾기 (맨 위로)\tCtrl+D", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
     assert not p.actions["remove"].isEnabled()
     p.playlist_view.setCurrentRow(1); p.context_menu.aboutToShow.emit()
