@@ -7,7 +7,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QTableWidget,
+    QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QShortcut, QSizePolicy, QStyledItemDelegate,
+    QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -24,6 +25,23 @@ COMMON = [("가수", "artist"), ("앨범", "album"), ("년도", "year"), ("장�
 MANY = "(여러 값 · 그대로 둠)"
 UNSURE_BG = "#FFE2C2"
 UNSURE_FG = "#8A4B00"
+COPY_ONLY = (COL_FILE, COL_NEW, COL_NOTE)   # 고칠 수는 없고 긁어 복사만
+
+
+class _CopyOnlyDelegate(QStyledItemDelegate):
+    """두 번 누르면 읽기 전용 글자 칸을 띄워 마우스로 긁어 복사할 수 있게 한다. 값은 바뀌지 않는다."""
+
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        editor.setReadOnly(True)
+        return editor
+
+    def setEditorData(self, editor, index) -> None:
+        editor.setText(index.data() or "")
+        editor.selectAll()
+
+    def setModelData(self, editor, model, index) -> None:
+        pass
 
 
 class _Row:
@@ -95,6 +113,12 @@ class BulkTagDialog(QDialog):
             t.setColumnWidth(col, width)
         t.horizontalHeader().setSectionResizeMode(COL_NOTE, QHeaderView.Stretch)
         t.itemChanged.connect(self._cell_edited)
+        self._copy_delegate = _CopyOnlyDelegate(t)
+        for col in COPY_ONLY:
+            t.setItemDelegateForColumn(col, self._copy_delegate)
+        copy = QShortcut(QKeySequence.Copy, t)
+        copy.setContext(Qt.WidgetShortcut)
+        copy.activated.connect(self.copy_cell)
         t.setMinimumHeight(200)
         v.addWidget(t, 1)
         self.message_label = QLabel()
@@ -133,7 +157,8 @@ class BulkTagDialog(QDialog):
         info.setWordWrap(True)
         lay.addWidget(info)
         hint = QLabel("주황 줄은 가수·제목 순서를 모르는 곡입니다. 줄을 고르고(여러 줄 가능) [↔ 앞뒤 바꾸기] 또는 "
-                      "[이대로 맞음]을 누르세요. 칸을 두 번 눌러 직접 고쳐도 됩니다. 주황 줄은 확인해야 바뀝니다.")
+                      "[이대로 맞음]을 누르세요. 칸을 두 번 눌러 직접 고쳐도 됩니다. 주황 줄은 확인해야 바뀝니다.<br>"
+                      "지금 파일 이름 칸을 두 번 누르면 글자를 긁어 복사할 수 있습니다 (칸을 고르고 Ctrl+C도 됨).")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {UNSURE_FG};")
         lay.addWidget(hint)
@@ -290,10 +315,15 @@ class BulkTagDialog(QDialog):
         item.setText(text)
         item.setToolTip(text if len(text) > 12 else "")
         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
-        item.setFlags(flags | Qt.ItemIsEditable if editable else flags)
+        item.setFlags(flags | Qt.ItemIsEditable if editable or c in COPY_ONLY else flags)
         bg = UNSURE_BG if orange else CHANGED_BG if changed else None
         item.setBackground(QColor(bg) if bg else QColor(0, 0, 0, 0))
         item.setForeground(color if color is not None else self.palette().text().color())
+
+    def copy_cell(self) -> None:
+        item = self.table.currentItem()
+        if item is not None and item.text():
+            QApplication.clipboard().setText(item.text())
 
     def selected_rows(self) -> list[int]:
         return sorted({i.row() for i in self.table.selectedIndexes()})

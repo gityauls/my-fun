@@ -208,3 +208,20 @@ def test_red_mark_follows_rename(panel):
     p.refresh()
     row = [t.title for t in p.controller.playlist.tracks].index("가수 - a")
     assert red(p, row)
+
+
+def test_file_name_can_be_selected_and_copied(rig):
+    from PyQt5.QtWidgets import QApplication, QLineEdit
+    from funplayer.ui.bulk_dialog import COL_FILE
+    d, _, _ = rig
+    item = d.table.item(1, COL_FILE)
+    d.table.setCurrentItem(item)
+    d.table.editItem(item)
+    editor = d.table.findChild(QLineEdit)
+    assert editor is not None and editor.isReadOnly() and editor.text() == "[015B] 텅빈 거리에서.mp3"
+    editor.setText("바꿔 봄")          # 읽기 전용이라 실제로는 못 치지만, 넣어도 값은 그대로
+    d.table.closePersistentEditor(item)
+    d.table.setFocus()
+    assert cell(d, 1, COL_FILE) == "[015B] 텅빈 거리에서.mp3"
+    d.copy_cell()
+    assert QApplication.clipboard().text() == "[015B] 텅빈 거리에서.mp3"

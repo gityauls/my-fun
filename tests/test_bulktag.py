@@ -1,5 +1,5 @@
 from funplayer.core.bulktag import (
-    BY_KNOWN, BY_TAG, NO_ARTIST, SURE, UNSURE, canon, clean_artist, merge_artist, split_alias, tidy_names,
+    BY_KNOWN, BY_TAG, MULTI, NO_ARTIST, SURE, UNSURE, canon, clean_artist, merge_artist, split_alias, tidy_names,
 )
 
 
@@ -13,7 +13,7 @@ def test_tidy_user_shapes():
                 "[As_ One]02.그녀의 게임"])
     assert got == [("멜로망스", "선물", SURE), ("015B", "텅빈 거리에서", SURE), ("Ami", "천상천하", SURE),
                    ("멜로망스", "사랑인가봐", SURE), ("버스커버스커", "벚꽃엔딩", UNSURE),
-                   ("Benny Benassi", "I Love My Sex", SURE), ("As One", "그녀의 게임", SURE)]
+                   ("Benny Benassi", "I Love My Sex", MULTI), ("As One", "그녀의 게임", SURE)]
 
 
 def test_tidy_reversed_spaced_fixed_by_known_artist():
@@ -96,3 +96,18 @@ def test_tag_spelling_preferred_and_mismatch_asks():
     assert (got[1].artist, got[1].title) == ("Britney Spears", "(You Drive Me) Crazy")
     assert got[2].how == MISMATCH and got[2].unsure and "투투" in got[2].note
     assert got[3].artist == "Chuck" and got[3].note == ""
+
+
+def test_many_hyphens_find_artist_piece_and_ask():
+    names = ["김건모 - 잘못된 만남 - Remix", "Remix - 김건모 - 잘못된 만남", "김건모-잘못된 만남 - 1995",
+             "잘못된 만남-김건모-1995", "김건모 - 핑계"]
+    got = tidy(names)
+    assert got[:4] == [("김건모", "잘못된 만남", MULTI)] * 4
+    assert got[4] == ("김건모", "핑계", SURE)
+
+
+def test_hyphen_inside_name_kept():
+    assert tidy(["Jay-Z - Empire State"]) == [("Jay-Z", "Empire State", SURE)]
+    got = tidy(["김건모 - 잘못된 만남-리믹스", "김건모 - 핑계"])
+    assert got[0] == ("김건모", "잘못된 만남-리믹스", SURE)
+    assert tidy(["김건모 - 잘못된 만남-리믹스"])[0][2] == MULTI      # 실마리가 없으면 확인

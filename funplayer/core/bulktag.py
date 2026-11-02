@@ -8,10 +8,11 @@ import re
 
 FIELDS = ("artist", "title", "album", "year", "genre", "track")
 
-SURE, BY_TAG, BY_KNOWN, UNSURE, NO_ARTIST, MISMATCH = "sure", "tag", "known", "unsure", "no_artist", "mismatch"
+SURE, BY_TAG, BY_KNOWN, UNSURE, NO_ARTIST, MISMATCH, MULTI = (
+    "sure", "tag", "known", "unsure", "no_artist", "mismatch", "multi")
 NOTES = {SURE: "", BY_TAG: "기존 태그의 가수와 같음 → 앞뒤 바꿈", BY_KNOWN: "다른 곡에서 가수로 쓰임 → 앞뒤 바꿈",
          UNSURE: "제목-가수로 봤습니다 · 확인", NO_ARTIST: "가수를 모름 · 직접 입력",
-         MISMATCH: "태그의 가수는 '{tag}' · 확인"}
+         MISMATCH: "태그의 가수는 '{tag}' · 확인", MULTI: "하이픈이 여러 개 · 확인"}
 MERGED_NOTE = "가수 이름 겹침 → 하나로"
 UNIFIED_NOTE = "같은 가수 → {name}로 통일"
 
@@ -116,25 +117,58 @@ class Tidy:
 
     @property
     def unsure(self) -> bool:
-        return self.how in (UNSURE, NO_ARTIST, MISMATCH)
+        return self.how in (UNSURE, NO_ARTIST, MISMATCH, MULTI)
 
     def __repr__(self) -> str:
         return f"Tidy({self.artist!r}, {self.title!r}, {self.how!r})"
 
 
-def _split(stem: str) -> tuple[str, str, str]:
-    """(왼쪽, 오른쪽, 모양): 다듬기 전 조각. 모양: bracket=[가수]제목, spaced=가수 - 제목, bare=제목-가수, single."""
+def _fine(piece: str) -> list[str]:
+    """빈칸 없는 하이픈으로 더 나눌 수 있으면 나눈다. 한쪽이 한 글자면(Jay-Z) 나누지 않는다."""
+    parts = _BARE_HYPHEN.split(piece)
+    if len(parts) >= 2 and all(len(clean_title(p)) >= 2 for p in parts):
+        return parts
+    return [piece]
+
+
+def _split(stem: str) -> tuple[str, str, str, list[list[str]]]:
+    """(왼쪽, 오른쪽, 모양, 조각): 다듬기 전 조각. 모양: bracket=[가수]제목, spaced=가수 - 제목, bare=제목-가수,
+    multi=하이픈으로 셋 이상 나뉨(조각: 빈칸 하이픈 조각마다 그 안의 빈칸 없는 하이픈 조각), single."""
     m = _LEAD_BRACKET.match(stem)
     if m and _tidy(m.group(1)) and clean_title(stem[m.end():]):
-        return m.group(1), _SPACED_HYPHEN.split(stem[m.end():])[0], "bracket"
+        return m.group(1), _SPACED_HYPHEN.split(stem[m.end():])[0], "bracket", []
     body = _LEAD_PAREN.sub("", stem)
-    parts = [p for p in _SPACED_HYPHEN.split(body) if clean_title(p)]
-    if len(parts) >= 2:
-        return parts[0], parts[1], "spaced"
-    bare = _BARE_HYPHEN.split(body)
-    if len(bare) == 2 and all(len(clean_title(p)) >= 2 for p in bare):
-        return bare[0], bare[1], "bare"
-    return "", body, "single"
+    spaced = [p for p in _SPACED_HYPHEN.split(body) if clean_title(p)]
+    fine = [_fine(p) for p in spaced]
+    if sum(len(f) for f in fine) >= 3:
+        return "", "", "multi", fine
+    if len(spaced) == 2:
+        return spaced[0], spaced[1], "spaced", fine
+    if fine and len(fine[0]) == 2:
+        return fine[0][0], fine[0][1], "bare", fine
+    return "", body, "single", fine
+
+
+def _multi(fine: list[list[str]], tag: str, known: list[str]) -> Tidy:
+    """하이픈이 여럿인 이름: 기존 태그 → 다른 곡의 가수로 가수 조각을 찾고, 그 옆 조각을 제목으로. 늘 확인을 받는다."""
+    spaced = ["-".join(f) for f in fine]
+
+    def is_artist(text: str) -> bool:
+        name = clean_artist(text)
+        return _same(tag, name) or any(_same(k, name) for k in known)
+
+    for si, piece in enumerate(spaced):   # 빈칸 하이픈 조각 하나가 통째로 가수
+        if len(spaced) >= 2 and is_artist(piece):
+            other = spaced[si + 1] if si + 1 < len(spaced) else spaced[si - 1]
+            return Tidy(clean_artist(piece), clean_title(other), SURE if len(spaced) == 2 else MULTI)
+    for f in fine:                         # 빈칸 없는 하이픈 조각 하나가 가수
+        for qi, piece in enumerate(f):
+            if len(f) >= 2 and is_artist(piece):
+                other = f[qi - 1] if qi > 0 else f[qi + 1]   # 빈칸 없는 하이픈은 '제목-가수'가 기본
+                return Tidy(clean_artist(piece), clean_title(other), MULTI)
+    if len(spaced) >= 2:                   # 실마리가 없으면 '가수 - 제목'
+        return Tidy(clean_artist(spaced[0]), clean_title(spaced[1]), MULTI)
+    return Tidy(clean_artist(fine[0][1]), clean_title(fine[0][0]), MULTI)   # '제목-가수-…'
 
 
 def tidy_names(stems: list[str], tag_artists: list[str], tag_titles: list[str] | None = None) -> list[Tidy]:
@@ -160,15 +194,18 @@ def tidy_names(stems: list[str], tag_artists: list[str], tag_titles: list[str] |
 
 def _decide(stems: list[str], tags: list[str]) -> list[Tidy]:
     splits = [_split(s) for s in stems]
-    sure_left = [clean_artist(left) if kind in ("bracket", "spaced") else "" for left, _, kind in splits]
+    sure_left = [clean_artist(left) if kind in ("bracket", "spaced") else "" for left, _, kind, _ in splits]
     out = []
-    for i, ((left, right, kind), tag) in enumerate(zip(splits, tags)):
+    for i, ((left, right, kind, fine), tag) in enumerate(zip(splits, tags)):
         if kind == "single":
             out.append(Tidy(tag, clean_title(right), SURE if tag else NO_ARTIST))
             continue
         # 이 곡 자신의 조각은 빼고, 다른 곡의 가수 태그와 '가수 - 제목'·'[가수]'의 가수만 아는 가수로 친다
         known = [a for j, a in enumerate(tags) if a and j != i]
         known += [a for j, a in enumerate(sure_left) if a and j != i]
+        if kind == "multi":
+            out.append(_multi(fine, tag, known))
+            continue
         a_raw, t_raw = (right, left) if kind == "bare" else (left, right)
         artist, title = clean_artist(a_raw), clean_title(t_raw)
         swapped = Tidy(clean_artist(t_raw), clean_title(a_raw), SURE)
