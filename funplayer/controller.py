@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from funplayer.core import renamer, taginfo
 from funplayer.core.effects import FxSettings
@@ -36,6 +36,7 @@ RENAME_EXISTS = "같은 이름의 파일이 이미 있습니다 ({name}). 아무
 RENAME_PARTIAL = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
 RENAME_PARTIAL_EXISTS = "태그는 저장했지만 파일 이름은 바꾸지 못했습니다 (같은 이름의 파일이 이미 있습니다)."
 RENAME_FAILED = "파일 이름을 바꾸지 못했습니다 (다른 프로그램이 쓰는 중이거나 권한이 없습니다)."
+RENAME_EXISTS_ONE = "같은 이름의 파일이 이미 있습니다 ({name})"
 UNDO_DONE = "파일 이름을 되돌렸습니다"
 UNDO_MISSING = "되돌릴 파일이 없습니다 ({name})"
 UNDO_EXISTS = "원래 이름의 파일이 이미 있습니다 ({name})"
@@ -49,6 +50,12 @@ class SaveOutcome:
     info: taginfo.TrackInfo
     renamed_from: str | None = None   # 이름을 바꿨으면 옛 경로
     warning: str = ""                 # 태그만 저장되고 이름은 못 바꾼 경우의 안내
+
+
+@dataclass
+class BulkOutcome:
+    done: list[tuple[str, str]] = field(default_factory=list)     # (옛 경로, 최종 경로)
+    failed: list[tuple[str, str]] = field(default_factory=list)   # (경로, 까닭)
 
 
 class PlayerController:
@@ -220,6 +227,69 @@ class PlayerController:
             return SaveOutcome(self._read_info(path), None, partial)
         self._rename_log.add(path, final)
         return SaveOutcome(self._read_info(final), path)
+
+    # ---- 여러 곡 (5-D) ----
+    def save_many(self, items: list[tuple[str, dict[str, str]]], picture=tagwrite.KEEP) -> BulkOutcome:
+        """곡마다 태그를 쓴다. 실패한 곡은 건너뛰고 모은다."""
+        out = BulkOutcome()
+        for path, fields in items:
+            if not fields and picture is tagwrite.KEEP:
+                continue
+            try:
+                self._edit_tags(path, lambda p=path, f=fields: self._write_tags(p, f, picture))
+            except tagwrite.TagWriteError as e:
+                out.failed.append((path, str(e)))
+                continue
+            out.done.append((path, path))
+        return out
+
+    def rename_many(self, pairs: list[tuple[str, str]]) -> BulkOutcome:
+        """(옛 경로, 새 경로)마다 이름을 바꾼다. 덮어쓰지 않고, 실패한 곡은 건너뛴다."""
+        out = BulkOutcome()
+        for old, new in pairs:
+            if old == new:
+                continue
+            if renamer.conflict(old, new):
+                out.failed.append((old, RENAME_EXISTS_ONE.format(name=os.path.basename(new))))
+                continue
+            try:
+                self._edit_file(old, self._renamer_to(old, new))
+            except renamer.RenameConflict:
+                out.failed.append((old, RENAME_EXISTS_ONE.format(name=os.path.basename(new))))
+                continue
+            except renamer.RenameError:
+                out.failed.append((old, RENAME_FAILED))
+                continue
+            self._rename_log.add(old, new)
+            out.done.append((old, new))
+        return out
+
+    def _renamer_to(self, src: str, dst: str):
+        """_edit_file에 넘길 동작: src를 dst로 바꾸고 dst를 돌려준다."""
+        def action() -> str:
+            self._rename_file(src, dst)
+            return dst
+        return action
+
+    def undo_many(self, pairs: list[tuple[str, str]]) -> BulkOutcome:
+        """rename_many가 바꾼 (옛, 새)들을 뒤에서부터 되돌린다."""
+        out = BulkOutcome()
+        for old, new in reversed(pairs):
+            if not os.path.exists(new):
+                out.failed.append((new, UNDO_MISSING.format(name=os.path.basename(new))))
+                continue
+            try:
+                self._edit_file(new, self._renamer_to(new, old))
+            except renamer.RenameConflict:
+                out.failed.append((new, UNDO_EXISTS.format(name=os.path.basename(old))))
+                continue
+            except renamer.RenameError:
+                out.failed.append((new, UNDO_FAILED))
+                continue
+            if self._rename_log.last() == (old, new):
+                self._rename_log.pop()
+            out.done.append((new, old))
+        return out
 
     def last_rename(self) -> tuple[str, str] | None:
         return self._rename_log.last()

@@ -1133,3 +1133,57 @@ def test_save_favorites_empty_is_error(ctl, tmp_path):
     c, _, _ = ctl
     c.save_favorites(str(tmp_path / "x.m3u8"))
     assert c.status == "즐겨찾기한 곡이 없습니다" and not (tmp_path / "x.m3u8").exists()
+
+
+# ---- 여러 곡 (5-D) ----
+def bulk_ctl(tmp_path, fail=()):
+    from funplayer.engine.tagwrite import TagWriteError
+    written = []
+
+    def write(path, fields, picture):
+        if os.path.basename(path) in fail:
+            raise TagWriteError("저장하지 못했습니다")
+        written.append((os.path.basename(path), fields, picture))
+    fake = FakePlayer()
+    c = PlayerController(fake, Settings({}, lambda: None), write_tags=write,
+                         read_info=lambda p: TrackInfo(p))
+    return c, fake, written
+
+
+def test_save_many_skips_empty_and_collects_failures(tmp_path):
+    c, _, written = bulk_ctl(tmp_path, fail={"02 b.mp3"})
+    folder = make_songs(tmp_path, ABC)
+    items = [(str(folder / "01 a.mp3"), {"title": "A"}), (str(folder / "02 b.mp3"), {"title": "B"}),
+             (str(folder / "03 c.mp3"), {})]
+    out = c.save_many(items)
+    assert [w[0] for w in written] == ["01 a.mp3"]
+    assert [os.path.basename(p) for p, _ in out.done] == ["01 a.mp3"]
+    assert [os.path.basename(p) for p, _ in out.failed] == ["02 b.mp3"]
+
+
+def test_save_many_reloads_playing_track(tmp_path):
+    c, fake, written = bulk_ctl(tmp_path)
+    folder = make_songs(tmp_path, ABC)
+    c.open([str(folder)]); c.play_index(1)
+    path = c.playlist.tracks[1].path
+    c.save_many([(path, {"album": "X"})])
+    assert ("unload",) in fake.calls and fake.loaded[-1] == path and written
+
+
+def test_rename_many_and_undo_many(tmp_path):
+    c, _, _ = bulk_ctl(tmp_path)
+    folder = make_songs(tmp_path, ABC)
+    c.open([str(folder)]); c.set_favorite([0], True)
+    (folder / "B - b.mp3").write_bytes(b"x")    # 겹치는 이름
+    pairs = [(str(folder / "01 a.mp3"), str(folder / "A - a.mp3")),
+             (str(folder / "02 b.mp3"), str(folder / "B - b.mp3")),
+             (str(folder / "03 c.mp3"), str(folder / "C - c.mp3"))]
+    out = c.rename_many(pairs)
+    assert [os.path.basename(n) for _, n in out.done] == ["A - a.mp3", "C - c.mp3"]
+    assert out.failed and "B - b.mp3" in out.failed[0][1]
+    assert (folder / "A - a.mp3").exists() and not (folder / "01 a.mp3").exists()
+    assert "A - a" in [t.title for t in c.playlist.tracks]
+    assert c.is_favorite(str(folder / "A - a.mp3"))
+    back = c.undo_many(out.done)
+    assert len(back.done) == 2 and (folder / "01 a.mp3").exists() and (folder / "03 c.mp3").exists()
+    assert c.last_rename() is None
