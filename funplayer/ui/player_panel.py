@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QMenu, QPushButton, QShortcut, QSizePolicy, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from funplayer import musicbrainz
+from funplayer import coverfind, musicbrainz
 from funplayer.controller import PlayerController
 from funplayer.core.renamer import RenameError, RenameLog
 from funplayer.core.settings import Settings
@@ -33,7 +33,7 @@ from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
 from funplayer.ui.cover import art_pixmap, load_cover
 from funplayer.ui.fx_strip import FxStrip
 from funplayer.ui.icons import OFF_COLOR, full_icon, mini_icon, radio_art, repeat_icon, shuffle_icon
-from funplayer.ui.bulk_dialog import TAB_COMMON, TAB_NAMES, BulkTagDialog
+from funplayer.ui.bulk_dialog import TAB_COVERS, TAB_NAMES, BulkTagDialog
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
@@ -61,7 +61,7 @@ DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받�
 
 BULK_TEXT = "여러 곡 태그 고치기…\tCtrl+T"
 COVER_SCAN_MSG = "그림 없는 곡 찾는 중… ({n}곡)"
-COVER_FOUND_MSG = "그림 없는 곡 {n}곡 (붉은 글) · 목록 → 그림 없는 곡 → 붉은 곡에 한 번에 그림 넣기"
+COVER_FOUND_MSG = "그림 없는 곡 {n}곡 (붉은 글) · 목록 → 그림 없는 곡 → 붉은 곡 그림 자동으로 찾기"
 COVER_NONE_MSG = "그림 없는 곡이 없습니다"
 COVER_SCAN_FAIL_MSG = "그림 없는 곡을 찾지 못했습니다"
 FAV_ON_TEXT = "즐겨찾기 (맨 위로)\tCtrl+D"
@@ -103,7 +103,7 @@ class PlayerPanel(QWidget):
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
                  stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
-                 rename_log_path: str | None = None, has_cover=None) -> None:
+                 rename_log_path: str | None = None, has_cover=None, find_cover=None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
@@ -133,6 +133,7 @@ class PlayerPanel(QWidget):
         self._no_cover: dict[int, object] = {}   # 그림 없는 곡: id(Track) -> Track (줄이 옮겨지거나 이름이 바뀌어도 따라감)
         self._cover_scan = False
         self._has_cover = has_cover or tagwrite.has_cover
+        self._find_cover = find_cover or (lambda artist, title: coverfind.default_finder().find(artist, title))
         self._icon_key: tuple[str, bool] | None = None
         self._status_error: bool | None = None
         self._settings = settings
@@ -437,7 +438,7 @@ class PlayerPanel(QWidget):
         cover = menu.addMenu("그림 없는 곡")
         self._add_action(cover, "find_covers", "찾아서 붉은 글로 표시", self.find_missing_covers)
         self._add_action(cover, "select_covers", "붉은 곡만 고르기", self.select_missing_covers)
-        self._add_action(cover, "add_covers", "붉은 곡에 한 번에 그림 넣기…", self.add_missing_covers)
+        self._add_action(cover, "add_covers", "붉은 곡 그림 자동으로 찾기…", self.add_missing_covers)
         self._add_action(cover, "clear_covers", "붉은 표시 지우기", self.clear_cover_marks)
         menu.addSeparator()
         menu.addAction(self.actions["remove"])
@@ -811,8 +812,8 @@ class PlayerPanel(QWidget):
             infos = [c.info_for(r) for r in rows]
             dialog = self.bulk_dialog = BulkTagDialog(
                 infos, self, save_many=c.save_many, rename_many=c.rename_many, undo_many=c.undo_many,
-                read_info=tags.read_info, has_cover=tagwrite.has_cover, after_change=self._after_file_edit,
-                start_tab=tab)
+                read_info=tags.read_info, has_cover=self._has_cover, after_change=self._after_file_edit,
+                start_tab=tab, find_cover=self._find_cover, run_async=self.runner.run_async)
         dialog.setWindowModality(Qt.WindowModal)
         dialog.show()
 
@@ -854,7 +855,7 @@ class PlayerPanel(QWidget):
         rows = self.no_cover_rows()
         if rows:
             self.select_rows(rows)
-            self.show_bulk_tags(rows, TAB_COMMON)
+            self.show_bulk_tags(rows, TAB_COVERS)
 
     def clear_cover_marks(self) -> None:
         self._no_cover = {}

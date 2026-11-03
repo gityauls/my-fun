@@ -9,8 +9,9 @@ from funplayer.core.settings import Settings
 from funplayer.core.taginfo import TrackInfo
 from funplayer.engine.tagwrite import KEEP
 from funplayer.ui.bulk_dialog import (
-    COL_ARTIST, COL_COVER, COL_NEW, COL_NOTE, COL_TITLE, TAB_COMMON, TAB_NAMES, UNSURE_BG, BulkTagDialog,
+    COL_ARTIST, COL_COVER, COL_NEW, COL_NOTE, COL_TITLE, TAB_COMMON, TAB_COVERS, TAB_NAMES, UNSURE_BG, BulkTagDialog,
 )
+from funplayer.coverfind import Hit
 from funplayer.ui.colors import CHANGED_BG, ERROR_COLOR
 from funplayer.ui.player_panel import PlayerPanel
 
@@ -190,8 +191,11 @@ def test_find_missing_covers_marks_red_and_clears_after_cover(panel):
     p._update_actions()
     p.actions["select_covers"].trigger()
     assert p.selected_rows() == [0, 2]
+    assert p.actions["add_covers"].text() == "붉은 곡 그림 자동으로 찾기…"
+    before = len(runner.calls)
     p.actions["add_covers"].trigger()
-    assert p.bulk_dialog.tabs.currentIndex() == TAB_COMMON and len(p.bulk_dialog.rows) == 2
+    assert p.bulk_dialog.tabs.currentIndex() == TAB_COVERS and len(p.bulk_dialog.rows) == 2
+    assert len(runner.calls) == before + 1          # 첫 곡을 찾기 시작함
     with_cover.add(str(folder / "01 a.mp3"))     # 그림을 넣었다고 치고
     p._after_file_edit()
     assert [red(p, r) for r in range(3)] == [False, False, True]
@@ -257,3 +261,136 @@ def test_paste_picture_to_row_needs_image(rig):
     QApplication.clipboard().setText("글자")
     d.paste_picture_to(0)
     assert "복사한 그림이 없습니다" in d.message_label.text() and not files.calls
+
+
+# ---- 그림 찾기 탭 (곡마다 따로) ----
+def hit(title, sure=True, image=None):
+    return Hit("애플 뮤직", "가수", title, f"{title} 앨범", "2010", image or f"img-{title}".encode(), sure)
+
+
+@pytest.fixture
+def covers(qapp, tmp_path):
+    folder = make_songs(tmp_path, NAMES)
+    files = Files()
+    paths = [str(folder / n) for n in NAMES]
+    files.tags[paths[3]] = {"artist": "이승철", "title": "희야"}
+    have = {paths[0]}
+    runner = FakeRunner()
+    asked = []
+    found = {"텅빈 거리에서": hit("텅빈 거리에서"), "희야": hit("희야 (Live)", sure=False)}
+
+    def find(artist, title):
+        asked.append((artist, title))
+        return found.get(title)
+
+    changed = []
+    d = BulkTagDialog([files.read(p) for p in paths], save_many=files.save_many, read_info=files.read,
+                      has_cover=lambda p: p in have, after_change=lambda: changed.append(1),
+                      start_tab=TAB_COVERS, find_cover=find, run_async=runner.run_async)
+    d.show()
+    yield d, files, runner, asked, have, changed
+    d.close()
+
+
+def finish_all(runner):
+    while runner.pending:
+        work, done = runner.pending.pop(0)
+        try:
+            done(work(), None)
+        except Exception as e:  # noqa: BLE001
+            done(None, e)
+
+
+def cv(d, r, c):
+    from funplayer.ui.bulk_dialog import CV_CHECK
+    item = d.cover_table.item(r, c)
+    return item.checkState() if c == CV_CHECK else item.text()
+
+
+def test_cover_tab_searches_one_song_at_a_time_skipping_songs_with_cover(covers):
+    d, _, runner, asked, *_ = covers
+    assert d.cover_table.isVisible() and not d.table.isVisible()
+    assert len(runner.pending) == 1                      # 한 곡씩 차례로
+    assert "찾는 중 · 3곡 남음" in d.cover_progress.text()
+    finish_all(runner)
+    assert len(asked) == 3 and asked[0][1] == "텅빈 거리에서" and asked[2] == ("이승철", "희야")
+    assert "선물" not in [t for _, t in asked]           # 그림 있는 멜로망스는 찾지 않음
+    assert "다 찾았습니다" in d.cover_progress.text()
+
+
+def test_cover_states_sure_checked_maybe_orange_none_red(covers):
+    from PyQt5.QtCore import Qt
+    from funplayer.ui.bulk_dialog import CV_CHECK, CV_NOTE, CV_PIC, CV_SONG, CV_SOURCE
+    d, _, runner, *_ = covers
+    finish_all(runner)
+    assert cv(d, 0, CV_NOTE) == "그림 있음 · 찾지 않음"
+    assert cv(d, 1, CV_CHECK) == Qt.Checked and cv(d, 1, CV_SOURCE) == "애플 뮤직"
+    assert cv(d, 1, CV_NOTE) == "텅빈 거리에서 앨범 · 2010"
+    assert cv(d, 3, CV_CHECK) == Qt.Unchecked and "확인" in cv(d, 3, CV_NOTE)
+    assert d.cover_table.item(3, CV_SONG).background().color() == QColor(UNSURE_BG)
+    assert cv(d, 2, CV_PIC) == "없음" and "지니·멜론에서 찾기" in cv(d, 2, CV_NOTE)
+    assert d.cover_table.item(2, CV_SONG).foreground().color() == QColor(ERROR_COLOR)
+    assert d.go_button.text() == "체크한 곡에 그림 넣기 (1곡)"
+
+
+def test_checking_orange_row_adds_it(covers):
+    from PyQt5.QtCore import Qt
+    from funplayer.ui.bulk_dialog import CV_CHECK, CV_SONG
+    d, _, runner, *_ = covers
+    finish_all(runner)
+    d.cover_table.item(3, CV_CHECK).setCheckState(Qt.Checked)
+    assert d.go_button.text() == "체크한 곡에 그림 넣기 (2곡)"
+    assert d.cover_table.item(3, CV_SONG).background().color() != QColor(UNSURE_BG)
+
+
+def test_apply_covers_puts_each_songs_own_picture(covers):
+    from PyQt5.QtCore import Qt
+    from funplayer.ui.bulk_dialog import CV_CHECK, CV_NOTE
+    d, files, runner, _, have, changed = covers
+    finish_all(runner)
+    d.cover_table.item(3, CV_CHECK).setCheckState(Qt.Checked)
+    d.go()
+    put = [(os.path.basename(items[0][0]), picture) for items, picture in files.calls]
+    assert put == [("[015B] 텅빈 거리에서.mp3", "img-텅빈 거리에서".encode()), ("희야.mp3", "img-희야 (Live)".encode())]
+    assert cv(d, 1, CV_NOTE) == "넣었습니다" and cv(d, 3, CV_NOTE) == "넣었습니다"
+    assert "그림 2곡 넣었습니다" in d.message_label.text() and changed == [1]
+    assert not d.go_button.isEnabled()
+
+
+def test_research_only_missing_and_failed(covers):
+    from funplayer.ui.bulk_dialog import CV_NOTE
+    d, _, runner, asked, *_ = covers
+    work, done = runner.pending.pop(0)
+    done(None, OSError("down"))                          # 첫 곡은 인터넷이 막힘
+    finish_all(runner)
+    assert "인터넷" in cv(d, 1, CV_NOTE) and d.research_button.isEnabled()
+    asked.clear()
+    d.research_covers()
+    finish_all(runner)
+    assert sorted(t for _, t in asked) == sorted(["텅빈 거리에서", "벚꽃엔딩"])
+    assert cv(d, 1, CV_NOTE) == "텅빈 거리에서 앨범 · 2010"
+
+
+def test_close_stops_searching(covers):
+    d, _, runner, asked, *_ = covers
+    d.close()
+    finish_all(runner)
+    assert len(asked) == 1 and not runner.pending
+
+
+def test_cover_row_menu_searches_with_tag_names_and_manual_picture_marks_done(qapp, tmp_path):
+    from funplayer.ui.bulk_dialog import CV_NOTE
+    folder = make_songs(tmp_path, ["희야.mp3"])
+    files = Files()
+    path = str(folder / "희야.mp3")
+    files.tags[path] = {"artist": "이승철", "title": "희야"}
+    opened, runner = [], FakeRunner()
+    d = BulkTagDialog([files.read(path)], save_many=files.save_many, has_cover=lambda p: False,
+                      start_tab=TAB_COVERS, find_cover=lambda a, t: None, run_async=runner.run_async,
+                      open_url=opened.append)
+    finish_all(runner)
+    d.search(0, "melon")
+    assert opened[0].startswith("https://www.melon.com/") and "%ED%9D%AC%EC%95%BC" in opened[0]
+    d.save_picture_to(0, b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    assert cv(d, 0, CV_NOTE) == "넣었습니다"
+    d.close()
