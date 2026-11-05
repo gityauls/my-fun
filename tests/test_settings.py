@@ -16,7 +16,7 @@ def test_defaults():
                         "player_mini_on_top": True, "player_media_keys": True,
                         "player_geometry": None, "player_mini_geometry": None,
                         "player_last_source": "file", "player_last_station": "",
-                        "player_tab": "playlist",
+                        "player_tab": "now", "player_theme": "light",
                         "player_radio_open": ["favorites", "kr:big3", "user"],
                         "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
                         "player_rename_on_save": False, "player_favorites": []}
@@ -108,11 +108,11 @@ def test_stage2b_round_trip():
 
 def test_radio_keys_defaults_and_sanitising():
     s = Settings({}, lambda: None)
-    assert (s.last_source, s.last_station, s.tab) == ("file", "", "playlist")
+    assert (s.last_source, s.last_station, s.tab) == ("file", "", "now")
     assert s.radio_open == ["favorites", "kr:big3", "user"]
     bad = Settings({"player_last_source": "tv", "player_last_station": 5, "player_tab": 1,
                     "player_radio_open": "x"}, lambda: None)
-    assert (bad.last_source, bad.last_station, bad.tab) == ("file", "", "playlist")
+    assert (bad.last_source, bad.last_station, bad.tab) == ("file", "", "now")
     assert bad.radio_open == ["favorites", "kr:big3", "user"]
     mixed = Settings({"player_radio_open": ["user", 3, "genre:재즈"]}, lambda: None)
     assert mixed.radio_open == ["user", "genre:재즈"]
@@ -171,3 +171,31 @@ def test_rename_on_save_default_and_bad_value():
         assert s.rename_on_save is False
     s.rename_on_save = True
     assert store["player_rename_on_save"] is True and s.rename_on_save is True and saves
+
+
+@pytest.fixture
+def settings_factory():
+    return lambda store: Settings(store, lambda: None)
+
+
+def test_settings_theme_default_and_invalid(settings_factory):
+    assert settings_factory({}).theme == "light"
+    assert settings_factory({"player_theme": "j"}).theme == "light"
+    assert settings_factory({"player_theme": 3}).theme == "light"
+    assert settings_factory({"player_theme": "dark"}).theme == "dark"
+
+
+def test_settings_theme_setter(settings_factory):
+    store = {}
+    s = Settings(store, lambda: None)
+    s.theme = "mid"
+    assert store["player_theme"] == "mid"
+    s.theme = "nope"
+    assert store["player_theme"] == "light"
+
+
+def test_old_tab_values_still_valid(settings_factory):
+    assert settings_factory({"player_tab": "radio"}).tab == "radio"
+    assert settings_factory({"player_tab": "playlist"}).tab == "playlist"
+    assert settings_factory({"player_tab": "fx"}).tab == "fx"
+    assert settings_factory({"player_tab": "x"}).tab == "now"

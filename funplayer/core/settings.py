@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
+from funplayer.core.themes import THEME_IDS
+
 logger = logging.getLogger(__name__)
 
 REPEAT_MODES = ("off", "all", "one")
@@ -16,13 +18,14 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
             "player_mini_on_top": True, "player_media_keys": True,
             "player_geometry": None, "player_mini_geometry": None,
-            "player_last_source": "file", "player_last_station": "", "player_tab": "playlist",
+            "player_last_source": "file", "player_last_station": "", "player_tab": "now",
+            "player_theme": "light",
             "player_radio_open": ["favorites", "kr:big3", "user"],
             "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
             "player_rename_on_save": False, "player_favorites": []}
 
 LAST_SOURCES = ("file", "radio")
-TABS = ("playlist", "radio")
+TABS = ("now", "playlist", "radio", "fx")
 
 
 def _read_int(store: dict, key: str, lo: int, hi: int) -> int:
@@ -191,6 +194,16 @@ class Settings:
     @tab.setter
     def tab(self, value: str) -> None:
         self._set("player_tab", value if value in TABS else DEFAULTS["player_tab"])
+
+    @property
+    def theme(self) -> str:
+        value = self._store.get("player_theme")
+        return value if isinstance(value, str) and value in THEME_IDS else DEFAULTS["player_theme"]
+
+    @theme.setter
+    def theme(self, value: str) -> None:
+        self._set("player_theme", value if isinstance(value, str) and value in THEME_IDS
+                  else DEFAULTS["player_theme"])
 
     @property
     def radio_open(self) -> list[str]:
