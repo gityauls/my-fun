@@ -43,7 +43,7 @@ from funplayer.ui.bulk_dialog import TAB_COVERS, TAB_NAMES, BulkTagDialog
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
 from funplayer.ui.media_keys import MEDIA_KEYS_BUSY_MSG, MediaKeys
-from funplayer.ui.now_strip import ART_RADIUS as STRIP_RADIUS, ART_SIZE as STRIP_ART, NowStrip
+from funplayer.ui.now_strip import ART_RADIUS as STRIP_RADIUS, ART_SIZE as STRIP_ART, ClickLabel, NowStrip
 from funplayer.ui.playlist_view import (ROLE_CURRENT, ROLE_FAVORITE, ROLE_NUMBER, ROLE_TITLE,
                                         PlaylistView)
 from funplayer.ui.radio_dialogs import AddUrlDialog
@@ -114,15 +114,6 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("Ctrl+Left", "prev"), ("Ctrl+Right", "next"), ("Ctrl+E", "toggle_fx_visible"),
     ("Ctrl+D", "toggle_favorite"), ("Ctrl+T", "show_bulk_tags"),
 ]
-
-
-class _ArtLabel(QLabel):
-    clicked = pyqtSignal()
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
 
 
 class PlayerPanel(QWidget):
@@ -420,7 +411,7 @@ class PlayerPanel(QWidget):
         lay.setContentsMargins(*NOW_MARGINS)
         lay.setSpacing(0)
 
-        self.art_label = _ArtLabel()
+        self.art_label = ClickLabel()
         self.art_label.setFixedSize(ART_NORMAL, ART_NORMAL)
         self.art_label.setToolTip("곡 정보")
         self.art_label.setCursor(Qt.PointingHandCursor)
@@ -716,7 +707,7 @@ class PlayerPanel(QWidget):
         self.heart_button.clicked.connect(self.toggle_current_favorite)
         strip = self.now_strip
         strip.prevClicked.connect(self.prev)
-        strip.toggleClicked.connect(self.toggle)
+        strip.toggleClicked.connect(self.media_toggle)   # 띠는 지금 나오는 쪽을 보여 준다
         strip.nextClicked.connect(self.next)
         strip.openClicked.connect(self.show_track_info)
 

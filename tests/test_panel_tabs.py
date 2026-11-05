@@ -339,3 +339,72 @@ def test_real_key_reaches_shortcut_on_fx_tab(panel_with_tracks, qapp):
     assert qapp.focusWidget() is not None
     QTest.keyClick(qapp.focusWidget(), Qt.Key_V)
     assert p._player.state is State.STOPPED
+
+
+class _Handle:
+    moved = 0
+
+    def startSystemMove(self):
+        self.moved += 1
+        return True
+
+
+def _art_events():
+    from test_now_strip import _move, _press, _release
+    return _press, _move, _release
+
+
+def test_mini_art_click_opens_info_on_release(panel_with_tracks):
+    p = panel_with_tracks; press, _, release = _art_events()
+    p.set_mini(True); seen = []
+    p.art_label.clicked.disconnect(); p.art_label.clicked.connect(lambda: seen.append(1))
+    press(p.art_label); assert seen == []
+    release(p.art_label); assert seen == [1]
+
+
+def test_mini_art_drag_moves_window_without_opening_info(panel_with_tracks):
+    p = panel_with_tracks; press, move, release = _art_events()
+    p.set_mini(True); handle = _Handle(); seen = []
+    p.windowHandle = lambda: handle
+    p.art_label.clicked.disconnect(); p.art_label.clicked.connect(lambda: seen.append(1))
+    press(p.art_label); move(p.art_label, 40, 5); release(p.art_label, 40, 5)
+    assert handle.moved == 1 and seen == [] and p.info_dialog is None
+
+
+def _strip_click(p):
+    p.now_strip.toggle_button.click(); p.refresh()
+
+
+def test_strip_play_on_playlist_tab_reconnects_stopped_radio(panel_on_radio):
+    p = panel_on_radio
+    fake = p._player; station = p.radio.current
+    p.stop(); p.set_tab("playlist"); p.refresh()
+    assert p.controller.source == "radio" and p.radio.state.name == "IDLE"
+    loads = list(fake.loaded)
+    _strip_click(p)
+    assert p.controller.source == "radio" and p.radio.current is station
+    assert p.radio.state.name != "IDLE" and fake.loaded == loads   # 곡을 틀지 않는다
+
+
+def test_strip_toggle_pauses_live_radio_from_any_tab(panel_on_radio):
+    p = panel_on_radio
+    for tab in ("playlist", "radio", "fx"):
+        p.set_tab(tab); assert p.radio.state.name == "LIVE"
+        _strip_click(p); assert p.radio.state.name == "IDLE" and p.controller.source == "radio"
+        p.set_tab(tab); _strip_click(p)            # 다시 접속
+        runner = p.runner; runner.finish(len(runner.calls) - 1, result=FakeStream()); p.refresh()
+
+
+@pytest.mark.parametrize("tab", ("playlist", "radio", "fx"))
+def test_strip_toggle_follows_song_when_source_is_file(panel_with_tracks, tab):
+    p = panel_with_tracks; p.set_tab(tab); p.refresh()
+    fake = p._player
+    assert p.controller.source == "file" and fake.state is State.PLAYING
+    _strip_click(p); assert fake.state is State.PAUSED
+    _strip_click(p); assert fake.state is State.PLAYING
+    p.stop(); _strip_click(p); assert fake.state is State.PLAYING and p.controller.source == "file"
+
+
+def test_strip_toggle_with_empty_list_does_nothing(panel):
+    panel.set_tab("playlist"); _strip_click(panel)
+    assert panel.controller.source == "file" and panel._player.state is State.STOPPED

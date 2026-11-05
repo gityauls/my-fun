@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QPixmap
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
+                             QWidget)
 
 from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
 from funplayer.ui.glyphs import glyph
@@ -17,13 +18,30 @@ ICON_SIZE = 18
 PLAY_SIZE = 36
 
 
-class _ClickLabel(QLabel):
+class ClickLabel(QLabel):
+    """누르고 끌지 않은 채 뗐을 때만 clicked. 끌기는 부모로 흘려보낸다 (미니 막대에서는 창이 움직인다)."""
     clicked = pyqtSignal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._press = None
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
-            self.clicked.emit()
+            self._press = event.pos()
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if (self._press is not None and (event.pos() - self._press).manhattanLength()
+                >= QApplication.startDragDistance()):
+            self._press = None
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        press, self._press = self._press, None
+        if press is not None and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 class _Progress(QWidget):
@@ -78,7 +96,7 @@ class NowStrip(QWidget):
         row.setSpacing(8)
         root.addLayout(row, 1)
 
-        self.art_label = _ClickLabel()
+        self.art_label = ClickLabel()
         self.art_label.setFixedSize(ART_SIZE, ART_SIZE)
         self.art_label.setToolTip("곡 정보")
         self.art_label.setCursor(Qt.PointingHandCursor)
