@@ -33,7 +33,7 @@ from funplayer.ui.bridge import PlayerBridge
 from funplayer.core.playlist import path_key
 from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
 from funplayer.ui.cover import load_cover, radio_art_for, rounded_art
-from funplayer.ui.fx_strip import FxStrip
+from funplayer.ui.fx_strip import BARS, FxStrip
 from funplayer.ui.glyphs import glyph, glyph_pixmap
 from funplayer.ui.icon_tabs import IconTabs
 from funplayer.ui.icons import radio_art
@@ -52,8 +52,6 @@ from funplayer.ui.worker import QtRunner
 REFRESH_MS = 200
 SPECTRUM_MS = 40
 SPECTRUM_MAX_DT = 0.2
-BIG_BARS = 24
-SMALL_BARS = 12
 VOLUME_STEP = 5
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
@@ -174,8 +172,7 @@ class PlayerPanel(QWidget):
         self._spectrum_timer = QTimer(self)
         self._spectrum_timer.setInterval(SPECTRUM_MS)
         self._spectrum_timer.timeout.connect(self._spectrum_tick)
-        self._big_decay = Decay(BIG_BARS)
-        self._small_decay = Decay(SMALL_BARS)
+        self._big_decay = Decay(BARS)
         self._spectrum_last: float | None = None
         self._build()
         self._wire()
@@ -208,6 +205,7 @@ class PlayerPanel(QWidget):
         self.now_strip.set_theme(theme)
         self.playlist_view.set_theme(theme)
         self.station_view.set_theme(theme)
+        self.fx_strip.set_theme(theme)   # 음향 효과 쪽은 hero가 아니라 기본 색이다
         hero = self._hero
         self.prev_button.setIcon(glyph("prev", hero.icon, 21))
         self.next_button.setIcon(glyph("next", hero.icon, 21))
@@ -469,7 +467,6 @@ class PlayerPanel(QWidget):
         lay.setContentsMargins(18, 12, 18, 12)
         self.fx_strip = FxStrip()
         self.fx_strip.set_value(self.controller.effects)
-        self.fx_strip.set_open(self._settings.fx_open)
         lay.addWidget(self.fx_strip)
         lay.addStretch(1)
         return page
@@ -527,7 +524,6 @@ class PlayerPanel(QWidget):
             self._fit_min_width(b)
         self.tab_bar.currentChanged.connect(self._tab_changed)
         self.fx_strip.changed.connect(self._fx_changed)
-        self.fx_strip.open_changed.connect(self._fx_open_changed)
         sv = self.station_view
         sv.station_activated.connect(self._play_station)
         sv.changed.connect(self._stations_changed)
@@ -692,11 +688,7 @@ class PlayerPanel(QWidget):
         dt = 0.0 if last is None else min(max(now - last, 0.0), SPECTRUM_MAX_DT)
         block = self._player.latest_block() if self._spectrum_playing() else None
         strip = self.fx_strip
-        # 보이는 쪽만 계산한다 (열림: 큰 것, 접힘: 작은 것)
-        if strip.is_open:
-            view, decay, bars = strip.big_spectrum, self._big_decay, BIG_BARS
-        else:
-            view, decay, bars = strip.small_spectrum, self._small_decay, SMALL_BARS
+        view, decay, bars = strip.spectrum, self._big_decay, BARS
         if block is None or len(block) == 0:
             levels = np.zeros(bars)
         else:
@@ -713,9 +705,6 @@ class PlayerPanel(QWidget):
             t.start()
         elif not on and t.isActive():
             t.stop()
-
-    def _fx_open_changed(self, on: bool) -> None:
-        self._settings.fx_open = bool(on)
 
     def _media_keys_clicked(self) -> None:
         self.set_media_keys(self.actions["media_keys"].isChecked())

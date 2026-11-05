@@ -57,10 +57,12 @@ def test_fx_changes_reach_player_and_save_on_final(fpanel):
     assert store["player_fx"] == fx.to_dict()
 
 
-def test_fx_open_state_saved(fpanel):
-    p, _, store = fpanel
-    p.fx_strip.set_open(False, notify=True)
-    assert store["player_fx_open"] is False
+def test_panel_theme_reaches_fx_spectrum(fpanel):
+    from funplayer.core.themes import get_theme
+    p, *_ = fpanel
+    t = get_theme("dark")
+    p.apply_theme(t)
+    assert p.fx_strip.spectrum.bar_color(0, 24) == (t.spec or (t.g1,))[0]
 
 
 def test_effects_stay_across_song_radio_song(qapp, tmp_path):
@@ -99,14 +101,12 @@ def test_values_changed_while_off_apply_when_on(fpanel):
     assert fake.effects.bands == strip.value.bands
 
 
-def test_hiding_or_folding_strip_keeps_effects_on(fpanel):
+def test_hiding_strip_keeps_effects_on(fpanel):
     p, fake, _ = fpanel
     p.toggle_fx_visible()
     p.fx_strip.enabled_box.click()
     on = fake.effects
     assert on.enabled
-    p.fx_strip.fold_button.click()
-    assert not p.fx_strip.is_open and fake.effects == on
     p.toggle_fx_visible()
     assert not p.fx_strip.isVisible() and fake.effects == on and p.controller.effects == on
 
@@ -132,7 +132,8 @@ def test_showing_strip_keeps_window_width(qapp):
         p.set_tab("fx"); qapp.processEvents()
         assert p.fx_strip.isVisible() and p.width() == width
         assert p.minimumSizeHint().width() == panel_min
-        p.fx_strip.set_open(False, notify=True); qapp.processEvents()
+        p.fx_strip.set_value(FxSettings().with_preset("베이스 강하게").with_mode("earphone"))
+        qapp.processEvents()
         assert p.width() == width
         p.set_tab("now"); qapp.processEvents()
         assert not p.fx_strip.isVisible() and p.width() == width
@@ -141,7 +142,7 @@ def test_showing_strip_keeps_window_width(qapp):
         qapp.setFont(old_font)
 
 
-def test_collapsed_longest_summary_keeps_window_width(qapp):
+def test_longest_preset_name_keeps_window_width(qapp):
     from funplayer.ui.window_keeper import DEFAULT_SIZE
     old_font = qapp.font()
     font = qapp.font()
@@ -152,18 +153,14 @@ def test_collapsed_longest_summary_keeps_window_width(qapp):
         p.resize(*DEFAULT_SIZE); p.show(); qapp.processEvents()
         width, panel_min = p.width(), p.minimumSizeHint().width()
         p.set_tab("fx"); qapp.processEvents()
-        p.fx_strip.set_open(False, notify=True); qapp.processEvents()
         for fx in (FxSettings().with_preset("베이스 강하게").with_auto(True),
                    FxSettings().with_auto(True)):
             fx = FxSettings.from_dict({**fx.to_dict(), "enabled": True, "mode": "earphone"})
             p.fx_strip.set_value(fx)
             p.fx_strip.set_genre_preset("베이스 강하게")
             qapp.processEvents()
-            assert p.fx_strip.preset_link.sizeHint().width() > 0
             assert p.pages.widget(3).minimumSizeHint().width() <= width
             assert p.width() == width and p.minimumSizeHint().width() == panel_min
-        assert p.fx_strip.preset_link.toolTip() == "눌러서 다음 프리셋"
-        assert p.fx_strip.small_spectrum.minimumWidth() == 36
     finally:
         p.shutdown(); p.deleteLater()
         qapp.setFont(old_font)
@@ -189,11 +186,11 @@ def test_spectrum_timer_stops_when_panel_hidden(fpanel):
 
 def test_fx_state_survives_restart(qapp):
     fx = FxSettings.from_dict({"enabled": True, "preset": "발라드"})
-    store = {"player_fx": fx.to_dict(), "player_tab": "fx", "player_fx_open": False}
+    store = {"player_fx": fx.to_dict(), "player_tab": "fx"}
     p, fake, _ = make_panel(store)
     try:
-        assert p.fx_strip.isVisible() and not p.fx_strip.is_open
-        assert "켜짐" in p.fx_strip.power_link.text() and "발라드" in p.fx_strip.preset_link.text()
+        assert p.fx_strip.isVisible() and p.fx_strip.enabled_box.isChecked()
+        assert p.fx_strip.preset_combo.currentText() == "발라드"
         assert fake.effects.preset == "발라드"
         p.view_menu.aboutToShow.emit()
         assert p.tab == "fx"
@@ -226,9 +223,9 @@ def test_track_change_updates_strip_genre(qapp, tmp_path):
         p.controller.set_effects(fx); p.fx_strip.set_value(fx)
         p.controller.open([str(make_songs(tmp_path, ["01 a.mp3", "02 b.mp3"]))])
         p.refresh()
-        assert "록" in p.fx_strip.preset_link.text()
+        assert "록" in p.fx_strip.preset_combo.currentText()
         p.next(); p.refresh()
-        assert "재즈" in p.fx_strip.preset_link.text()
+        assert "재즈" in p.fx_strip.preset_combo.currentText()
     finally:
         p.shutdown(); p.deleteLater()
 
@@ -238,7 +235,6 @@ def test_spectrum_falls_when_paused(fpanel, monkeypatch):
     import funplayer.ui.player_panel as pp
     p, fake, _ = fpanel
     p.toggle_fx_visible()
-    p.fx_strip.set_open(True)
     clock = [100.0]
     monkeypatch.setattr(pp.time, "monotonic", lambda: clock[0])
     fake.has_track = True
@@ -248,7 +244,7 @@ def test_spectrum_falls_when_paused(fpanel, monkeypatch):
     p._spectrum_tick()
     clock[0] += 0.04
     p._spectrum_tick()
-    top = p.fx_strip.big_spectrum.levels[:]
+    top = p.fx_strip.spectrum.levels[:]
     assert max(top) > 0.3
     fake.state = pp.State.PAUSED
     fake.block = None
@@ -256,6 +252,6 @@ def test_spectrum_falls_when_paused(fpanel, monkeypatch):
     for _ in range(5):
         clock[0] += 0.04
         p._spectrum_tick()
-        cur = max(p.fx_strip.big_spectrum.levels)
+        cur = max(p.fx_strip.spectrum.levels)
         assert cur < prev
         prev = cur

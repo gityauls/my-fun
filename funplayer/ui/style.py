@@ -113,6 +113,27 @@ def _block(s: str, c: Theme) -> str:
 """
 
 
+def _fx_block(c: Theme) -> str:
+    """음향 효과 페이지만의 모양: 세로 밴드 슬라이더, 듣는 곳 세 칸 묶음, 켜기 스위치."""
+    q = qcolor_gradient
+    s = "#pageFx"
+    return f"""
+{s} QSlider::groove:vertical {{ width: 4px; border-radius: 2px; background: {q(c.track)}; }}
+{s} QSlider::add-page:vertical {{ width: 4px; border-radius: 2px; background: {q(c.acc)}; }}
+{s} QSlider::sub-page:vertical {{ background: transparent; }}
+{s} QSlider::handle:vertical {{ width: 12px; height: 12px; margin: 0 -4px; border-radius: 6px; background: {q(c.acc)}; }}
+{s} QFrame#fxSeg {{ background: {q(c.ctrl_bg)}; border-radius: 9px; border: none; }}
+{s} QRadioButton {{ background: transparent; color: {q(c.ink)}; border: none; border-radius: 7px; padding: 4px 0; font-size: 12px; spacing: 0; }}
+{s} QRadioButton::indicator {{ width: 0; height: 0; image: none; }}
+{s} QRadioButton:checked {{ background: {q(c.acc)}; color: {q(c.on_acc)}; font-weight: 700; }}
+{s} QCheckBox {{ color: {q(c.mute)}; background: transparent; font-size: 12px; spacing: 6px; }}
+{s} QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 4px; background: {q(c.track)}; }}
+{s} QCheckBox::indicator:checked {{ background: {q(c.acc)}; }}
+{s} QComboBox::drop-down {{ border: none; width: 18px; }}
+{s} QComboBox QAbstractItemView {{ background: {q(c.ctrl_bg)}; color: {q(c.ink)}; selection-background-color: {q(c.tint)}; selection-color: {q(c.row_fg)}; }}
+"""
+
+
 def stylesheet(theme: Theme, family: str) -> str:
     q = qcolor_gradient
     t = theme
@@ -146,6 +167,7 @@ QMenu#themed::item:selected {{ background: {q(t.tint)}; color: {q(t.row_fg)}; }}
     for name in ("pagePlaylist", "pageRadio", "pageFx"):
         out.append(f"#{name} {{ background: {q(t.bg)}; color: {q(t.ink)}; }}\n")
         out.append(_block(f"#{name}", t))
+    out.append(_fx_block(t))
     out.append(_block("#footBar", t))
     out.append(_block("#nowStrip", t))
     out.append(_block("#miniBar", mini))
