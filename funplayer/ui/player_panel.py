@@ -103,8 +103,10 @@ class PlayerPanel(QWidget):
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
                  stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
-                 rename_log_path: str | None = None, has_cover=None, find_cover=None) -> None:
+                 rename_log_path: str | None = None, has_cover=None, find_cover=None,
+                 font_family: str = "Malgun Gothic") -> None:
         super().__init__(parent)
+        self._font_family = font_family
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
             self._player, settings, session_path=session_path, read_info=read_info,
