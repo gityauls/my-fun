@@ -184,7 +184,7 @@ THEMES: tuple[Theme, ...] = (
           hero={"bg": "#2C2F4D", "ink": "#F2F3FA", "mute": "#C5C9E2", "icon": "#F2F3FA",
                 "ic2": "#C9CCE2", "track": "#54587A", "acc": "#C9CCE2", "acc2": "#C9CCE2",
                 "accT": "#C9CCE2", "g1": "#F2F3FA", "g2": "#C9CCE2", "onAcc": "#23264A",
-                "line": "#54587A"}),
+                "line": "#54587A", "fav": "#C9CCE2"}),
     _make("i", "I 숲과 테라코타", "아이보리 · 숲색 · 민트 · 테라코타 · 남색",
           art=_art("#E9D9BD", "#C8643C", "#3F7A63", "#1E3A52"), v={
         "bg": "#F4EEE3", "bar": "#1F4D3A", "barFg": "#FBF7EF", "tabs": "#DCEBDD",
@@ -199,7 +199,7 @@ THEMES: tuple[Theme, ...] = (
           spec=("#C8643C", "#3F7A63", "#1E3A52"),
           hero={"bg": "#1F4D3A", "ink": "#FBF7EF", "mute": "#B7D9C1", "icon": "#FBF7EF",
                 "ic2": "#B7D9C1", "track": "#3C6F5B", "acc": "#E8926B", "acc2": "#B7D9C1",
-                "accT": "#E8926B", "line": "#3C6F5B", "g1": "#E8926B", "g2": "#C8643C"}),
+                "accT": "#E8926B", "line": "#3C6F5B", "g1": "#E8926B", "g2": "#C8643C", "fav": "#E8926B"}),
     _make("k", "K 흙과 올리브", "모래색 · 올리브 · 갈색 · 황토색",
           art=_art("#D9B98A", "#F0DCB0", "#8A5A3C", "#5E6B43"), v={
         "bg": "#F6EFE2", "bar": "#5E6B43", "barFg": "#F6EFE2", "tabs": "#E6DAC6",
@@ -227,11 +227,11 @@ THEMES: tuple[Theme, ...] = (
           hero={"bg": "linear-gradient(170deg,#2B3D63 0%,#6F4F7E 48%,#B05F62 82%,#C46A5A 100%)",
                 "ink": "#FFFFFF", "mute": "#FFE9D4", "icon": "#FFFFFF", "ic2": "#FFE08F",
                 "track": "rgba(255,255,255,.35)", "acc": "#FFE08F", "acc2": "#FFE08F",
-                "accT": "#FFE08F", "line": "rgba(255,255,255,.3)"},
+                "accT": "#FFE08F", "line": "rgba(255,255,255,.3)", "fav": "#FFE08F"},
           mini={"bg": "linear-gradient(100deg,#2B3D63 0%,#6F4F7E 45%,#B05F62 80%,#C46A5A 100%)",
                 "ink": "#FFFFFF", "mute": "#FFE9D4", "icon": "#FFFFFF", "ic2": "#FFE08F",
                 "track": "rgba(255,255,255,.35)", "acc": "#FFE08F", "acc2": "#FFE08F",
-                "accT": "#FFE08F", "line": "rgba(255,255,255,.3)"}),
+                "accT": "#FFE08F", "line": "rgba(255,255,255,.3)", "fav": "#FFE08F"}),
     _make("m", "M 청록과 구리", "청록 회색 · 크림 · 구리색 · 복숭아",
           art=_art("#A9C4BD", "#F2D9BC", "#D18F54", "#3E6B68"), v={
         "bg": "#F5F0E6", "bar": "#3E6B68", "barFg": "#FFFFFF", "tabs": "#A9C4BD",

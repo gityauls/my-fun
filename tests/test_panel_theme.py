@@ -339,3 +339,10 @@ def test_heart_compares_only_when_track_or_favourites_change(panel_with_tracks):
     assert p._player.loaded and len(calls) == 2
     n = len(calls); p.settings.favorites = []; p.refresh()
     assert len(calls) == n + 1 and not p.heart_button.isChecked()
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES + ALBUMS, ids=lambda t: t.id + t.bg[:7])
+@pytest.mark.parametrize("face", (hero_theme, mini_theme), ids=("hero", "mini"))
+def test_filled_heart_stands_out_on_hero_and_mini(theme, face):
+    c = face(theme)
+    assert _worst(c.fav, c.bg) >= MARK_MIN
