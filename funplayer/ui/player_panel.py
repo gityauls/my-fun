@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import numpy as np
 
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QKeySequence, QPixmap
+from PyQt5.QtGui import QColor, QFont, QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
     QAbstractItemView, QAction, QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLabel,
     QListWidgetItem, QMenu, QPushButton, QShortcut, QSizePolicy, QStackedWidget, QStyle,
@@ -21,7 +21,7 @@ from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
 from funplayer.core.taginfo import TrackInfo
-from funplayer.core.themes import Theme, get_theme
+from funplayer.core.themes import Theme, accent_from_pixels, album_theme, get_theme
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
@@ -37,6 +37,7 @@ from funplayer.ui.fx_strip import BARS, FxStrip
 from funplayer.ui.glyphs import glyph, glyph_pixmap
 from funplayer.ui.icon_tabs import IconTabs
 from funplayer.ui.icons import radio_art
+from funplayer.ui.settings_dialog import SettingsDialog
 from funplayer.ui.bulk_dialog import TAB_COVERS, TAB_NAMES, BulkTagDialog
 from funplayer.ui.info_dialog import ART_SIZE as INFO_ART_SIZE, TrackInfoDialog
 from funplayer.ui.jump_slider import JumpSlider
@@ -148,7 +149,12 @@ class PlayerPanel(QWidget):
             time.monotonic, notify=self.controller.radio_notify)
         self.controller.attach_radio(self.radio)
         self._tab = "now"
-        self.theme = get_theme(settings.theme)
+        self.theme = get_theme(settings.theme)   # 고른 테마 (앨범 색이어도 id는 "c")
+        self._applied_theme = self.theme          # 실제로 입힌 색 (앨범 색이면 곡마다 album_theme)
+        self._album_accent: str | None = None
+        self.settings_dialog = None
+        self._sheet_set = False
+        self._restyle_on_show = False
         self._hero = hero_theme(self.theme)
         self._live_color: str | None = None
         self._marked_station: object = object()
@@ -218,20 +224,75 @@ class PlayerPanel(QWidget):
     def apply_theme(self, theme: Theme) -> None:
         """테마를 입힌다. 비싼 일이라 테마가 바뀔 때만 부른다 (refresh에서 부르지 않는다)."""
         self.theme = theme
-        self.setStyleSheet(stylesheet(theme, self._font_family))
-        self.title_bar.set_theme(theme)
-        self.tab_bar.set_theme(theme)
-        self.now_strip.set_theme(theme)
-        self.playlist_view.set_theme(theme)
-        self.station_view.set_theme(theme)
-        self.fx_strip.set_theme(theme)   # 음향 효과 쪽은 hero가 아니라 기본 색이다
+        applied = self._applied_theme = album_theme(self._album_accent) if theme.id == "c" else theme
+        # 아직 보이지 않는 창에 두 번째로 입힌 규칙은 Qt가 이미 만든 자식 위젯에 닿지 않는다
+        # (제목줄이 처음 색 그대로 남는다). 보일 때 한 번 더 입힌다 (showEvent)
+        self._restyle_on_show = self._restyle_on_show or (self._sheet_set and not self.isVisible())
+        self._sheet_set = True
+        self.setStyleSheet(stylesheet(applied, self._font_family))
+        self.title_bar.set_theme(applied)
+        self.tab_bar.set_theme(applied)
+        self.now_strip.set_theme(applied)
+        self.playlist_view.set_theme(applied)
+        self.station_view.set_theme(applied)
+        self.fx_strip.set_theme(applied)   # 음향 효과 쪽은 hero가 아니라 기본 색이다
         self._apply_icons()
         self._render_art()
         self._sync_pages_min(force=True)
 
+    def set_theme_id(self, id: str) -> None:
+        """테마를 바꿔 입힌다. 저장하지 않는다 (저장은 설정 창의 [확인])."""
+        self._album_accent = None
+        if id == "c":
+            self._album_accent = self._accent_of(None if self._art_radio else self._cover_src)
+        self.apply_theme(get_theme(id))
+
+    @staticmethod
+    def _accent_of(cover: QPixmap | None) -> str | None:
+        """표지를 32x32로 줄여 대표색을 뽑는다. 표지가 없으면 None (기본 보라)."""
+        if cover is None or cover.isNull():
+            return None
+        img = cover.toImage().scaled(32, 32, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        img = img.convertToFormat(QImage.Format_RGB32)
+        pixels = []
+        for y in range(img.height()):
+            for x in range(img.width()):
+                c = QColor(img.pixel(x, y))
+                pixels.append((c.red(), c.green(), c.blue()))
+        return accent_from_pixels(pixels)
+
+    def _accent_changed(self) -> bool:
+        """앨범 색 테마일 때 지금 곡의 대표색이 바뀌었는가 (바뀌었으면 기억해 둔다)."""
+        if self.theme.id != "c":
+            return False
+        accent = None if self._art_radio else self._accent_of(self._cover_src)
+        if accent == self._album_accent:
+            return False
+        self._album_accent = accent
+        return True
+
+    def show_settings(self, modal: bool = True) -> SettingsDialog:
+        dialog = self.settings_dialog = SettingsDialog(self.theme.id, self)
+        original = self.theme.id
+        dialog.themePicked.connect(self.set_theme_id)
+
+        def accepted() -> None:
+            chosen = dialog.selected_id()
+            self.set_theme_id(chosen)
+            self.settings.theme = chosen
+
+        dialog.accepted.connect(accepted)
+        dialog.rejected.connect(lambda: self.set_theme_id(original))   # X로 닫아도 취소다
+        dialog.finished.connect(lambda _=0: setattr(self, "settings_dialog", None))
+        if modal:
+            dialog.open()
+        else:
+            dialog.show()
+        return dialog
+
     def _apply_icons(self) -> None:
         """공용 위젯은 지금 놓인 면(지금 재생 또는 미니 막대)의 색과 크기로 그린다."""
-        theme = self.theme
+        theme = self._applied_theme
         hero = self._hero = mini_theme(theme) if self.is_mini else hero_theme(theme)
         self._set_glyph(self.prev_button, "prev", hero.icon)
         self._set_glyph(self.next_button, "next", hero.icon)
@@ -252,13 +313,21 @@ class PlayerPanel(QWidget):
         """지금 그림(_cover_src)을 지금 크기와 테마로 다시 그린다. 곡·방송·테마·크기가 바뀔 때만."""
         size = self.art_label.width()
         radius = ART_MINI_RADIUS if self.is_mini else ART_RADIUS
+        theme = self._applied_theme
         if self._art_radio:
-            art = radio_art_for(self.theme, size, radius)
-            self._strip_art = radio_art_for(self.theme, STRIP_ART, STRIP_RADIUS)
+            art = radio_art_for(theme, size, radius)
+            self._strip_art = radio_art_for(theme, STRIP_ART, STRIP_RADIUS)
         else:
-            art = rounded_art(self._cover_src, size, radius, self.theme)
-            self._strip_art = rounded_art(self._cover_src, STRIP_ART, STRIP_RADIUS, self.theme)
+            art = rounded_art(self._cover_src, size, radius, theme)
+            self._strip_art = rounded_art(self._cover_src, STRIP_ART, STRIP_RADIUS, theme)
         self.art_label.setPixmap(art)
+
+    def _art_changed(self) -> None:
+        """곡·방송이 바뀌었다: 앨범 색이 달라지면 테마를 새로 입히고(그림도 다시 그린다), 아니면 그림만."""
+        if self._accent_changed():
+            self.apply_theme(self.theme)
+        else:
+            self._render_art()
 
     @staticmethod
     def _repolish(w: QWidget) -> None:
@@ -783,6 +852,8 @@ class PlayerPanel(QWidget):
 
     def _make_view_menu(self) -> None:
         menu = self.view_menu = QMenu(self.view_button)
+        self._add_action(menu, "settings", "설정…", self.show_settings)
+        menu.addSeparator()
         self._add_action(menu, "info", "곡 정보…\tCtrl+I", self.show_track_info)
         mini = self._add_action(menu, "mini", "작게 보기\tCtrl+M", self.toggle_mini)
         mini.setCheckable(True)
@@ -831,6 +902,9 @@ class PlayerPanel(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if self._restyle_on_show:
+            self._restyle_on_show = False
+            self.setStyleSheet(self.styleSheet())
         self._sync_spectrum_timer()
         self._sync_pages_min(force=True)   # QSS가 입혀진 글자 높이는 보일 때에야 정해진다
 
@@ -1683,14 +1757,14 @@ class PlayerPanel(QWidget):
                 self._cover_key = key
                 self._cover_src = None
                 self._art_radio = True
-                self._render_art()
+                self._art_changed()
         else:
             key = c.info.path if c.info else None
             if key != self._cover_key:
                 self._cover_key = key
                 self._cover_src = load_cover(c.info) if c.info else None
                 self._art_radio = False
-                self._render_art()
+                self._art_changed()
         self._refresh_live(on_radio)
         shown = self.seek_slider.value() / 1000 if self._dragging else position
         self.elapsed_label.setText(format_time(shown))

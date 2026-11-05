@@ -247,7 +247,7 @@ def test_context_info_uses_row_and_does_not_follow(rig):
 
 def test_view_button_and_info_action(rig):
     p, *_ = rig
-    assert p.view_button.text() == "보기" and p.view_menu.actions()[0].text() == "곡 정보…\tCtrl+I"
+    assert p.view_button.text() == "보기" and p.view_menu.actions()[2].text() == "곡 정보…\tCtrl+I"
     p.controller.clear(); p.refresh(); p.playlist_view.setCurrentRow(-1); p.view_menu.aboutToShow.emit()
     assert not p.actions["info"].isEnabled()
 
@@ -380,7 +380,7 @@ def test_keyboard_still_reaches_shortcuts_after_switching(rig, qapp):
 def test_view_menu_mini_items(rig):
     p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)
     assert [a.text() for a in p.view_menu.actions()] == [
-        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "",
+        "설정…", "", "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "",
         "작게 볼 때 항상 위", "멀티미디어 키 사용"]
     p.view_menu.aboutToShow.emit()
     assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()
