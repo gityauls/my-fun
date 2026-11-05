@@ -1,10 +1,98 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QMimeData, QPoint, Qt, pyqtSignal
-from PyQt5.QtGui import QDrag
-from PyQt5.QtWidgets import QAbstractItemView, QListWidget
+from PyQt5.QtCore import QMimeData, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QDrag, QFont, QPainter, QPainterPath
+from PyQt5.QtWidgets import QAbstractItemView, QListWidget, QStyle, QStyledItemDelegate
+
+from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
+from funplayer.ui.colors import FAVORITE_COLOR
+from funplayer.ui.glyphs import glyph_pixmap
 
 ROWS_MIME = "application/x-myfun-rows"
+ROLE_NUMBER = Qt.UserRole + 10    # 줄 번호
+ROLE_CURRENT = Qt.UserRole + 11   # 지금 곡
+ROLE_FAVORITE = Qt.UserRole + 12  # 즐겨찾기
+ROLE_TITLE = Qt.UserRole + 13     # 번호·표시 없는 제목 (item.text()는 예전 그대로)
+ROW_HEIGHT = 34
+_RADIUS = 9
+_PAD = 10
+_NUM_WIDTH = 18
+_GAP = 8
+_HEART = 13
+_EQ_HEIGHTS = (7, 12, 9)
+
+
+class RowDelegate(QStyledItemDelegate):
+    """줄 하나: 번호(지금 곡은 막대 3개), 제목, 즐겨찾기 하트. 글자색은 ForegroundRole을 따른다."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.theme = get_theme(DEFAULT_THEME)
+
+    def sizeHint(self, option, index: QModelIndex) -> QSize:
+        return QSize(1, ROW_HEIGHT)   # 폭은 보기 폭을 따른다 (긴 제목은 줄임표)
+
+    def text_color(self, index: QModelIndex, highlighted: bool) -> QColor:
+        t = self.theme
+        plain = QColor(t.row_fg if highlighted else t.ink)
+        fg = index.data(Qt.ForegroundRole)
+        if fg is None:
+            return plain
+        color = fg.color() if hasattr(fg, "color") else QColor(fg)
+        # 즐겨찾기는 테마 색으로 (고른 줄에서는 하트가 표시하므로 줄 글자색). 회색·붉은 글은 그대로
+        if color == QColor(FAVORITE_COLOR):
+            return plain if highlighted else QColor(t.fav)
+        return color
+
+    def paint(self, p: QPainter, option, index: QModelIndex) -> None:
+        t = self.theme
+        current = bool(index.data(ROLE_CURRENT))
+        favorite = bool(index.data(ROLE_FAVORITE))
+        highlighted = current or bool(option.state & QStyle.State_Selected)
+        fg = self.text_color(index, highlighted)
+        rect = option.rect
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        if highlighted:
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(rect), _RADIUS, _RADIUS)
+            p.fillPath(path, QColor(t.tint))
+        p.setPen(QColor(t.row_fg if highlighted else t.mute))
+        num = QRect(rect.left() + _PAD, rect.top(), _NUM_WIDTH, rect.height())
+        if current:
+            self._eq(p, num, p.pen().color())
+        else:
+            font = QFont(option.font)
+            font.setPixelSize(11)
+            font.setBold(False)
+            p.setFont(font)
+            p.drawText(num, Qt.AlignRight | Qt.AlignVCenter, str(index.data(ROLE_NUMBER) or ""))
+        left = num.right() + 1 + _GAP
+        right = rect.right() - _PAD
+        if favorite:
+            color = t.row_fg if highlighted else t.fav
+            right -= _HEART
+            p.drawPixmap(right + 1, rect.top() + (rect.height() - _HEART) // 2,
+                         glyph_pixmap("heartOn", color, _HEART))
+            right -= _GAP
+        font = QFont(option.font)
+        font.setPixelSize(13)
+        p.setFont(font)
+        p.setPen(fg)
+        box = QRect(left, rect.top(), max(0, right - left + 1), rect.height())
+        title = index.data(ROLE_TITLE)
+        title = index.data(Qt.DisplayRole) if title is None else title
+        p.drawText(box, Qt.AlignLeft | Qt.AlignVCenter,
+                   p.fontMetrics().elidedText(title or "", Qt.ElideRight, box.width()))
+        p.restore()
+
+    @staticmethod
+    def _eq(p: QPainter, box: QRect, color: QColor) -> None:
+        x = box.right() + 1 - (3 * 3 + 2 * 2)
+        bottom = box.center().y() + 6
+        for h in _EQ_HEIGHTS:
+            p.fillRect(x, bottom - h, 3, h, color)
+            x += 5
 
 
 class PlaylistView(QListWidget):
@@ -21,6 +109,13 @@ class PlaylistView(QListWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._delegate = RowDelegate(self)
+        self.setItemDelegate(self._delegate)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._delegate.theme = theme
+        self.viewport().update()
 
     def mimeTypes(self) -> list[str]:
         return [ROWS_MIME, "text/uri-list"]

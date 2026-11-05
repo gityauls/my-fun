@@ -6,6 +6,8 @@ import math
 import re
 from dataclasses import replace
 
+from PyQt5.QtGui import QColor
+
 from funplayer.core.themes import Theme
 
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
@@ -60,6 +62,21 @@ def qcolor_gradient(css: str) -> str:
     return f"qlineargradient(x1:{x1:g}, y1:{y1:g}, x2:{x2:g}, y2:{y2:g}, {', '.join(out)})"
 
 
+def css_color(css: str) -> QColor:
+    """테마의 색 문자열(#RRGGBB 또는 rgba(...))을 QColor로."""
+    m = _RGBA.search(css)
+    if m:
+        c = QColor(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        c.setAlphaF(float(m.group(4)))
+        return c
+    return QColor(css)
+
+
+def hero_theme(theme: Theme) -> Theme:
+    """지금 재생 페이지에 쓰는 색 (hero 덮어쓰기가 있으면 적용)."""
+    return replace(theme, **theme.hero) if theme.hero else theme
+
+
 def _block(s: str, c: Theme) -> str:
     """Rules for the widgets inside one themed surface (page, strip, mini bar...)."""
     q = qcolor_gradient
@@ -70,6 +87,7 @@ def _block(s: str, c: Theme) -> str:
 {s} QPushButton {{ background: transparent; border: none; color: {q(c.icon)}; padding: 0; }}
 {s} QPushButton[kind="btn"] {{ background: {q(c.ctrl_bg)}; color: {q(c.ink)}; border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 500; }}
 {s} QPushButton[kind="btn"]:checked {{ background: {q(c.acc)}; color: {q(c.on_acc)}; font-weight: 700; }}
+{s} QPushButton[kind="btn"]::menu-indicator {{ image: none; width: 0; }}
 {s} QPushButton[kind="play"], {s} QPushButton[kind="playMd"], {s} QPushButton[kind="playSm"] {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {q(c.g1)}, stop:1 {q(c.g2)}); color: {q(c.on_acc)}; }}
 {s} QPushButton[kind="play"] {{ border-radius: 30px; }}
 {s} QPushButton[kind="playMd"] {{ border-radius: 23px; }}
@@ -79,6 +97,9 @@ def _block(s: str, c: Theme) -> str:
 {s} QSlider::groove:horizontal {{ height: 5px; border-radius: 2px; background: {q(c.track)}; }}
 {s} QSlider::sub-page:horizontal {{ border-radius: 2px; background: {q(c.acc)}; }}
 {s} QSlider::handle:horizontal {{ width: 13px; height: 13px; margin: -4px 0; border-radius: 6px; background: {q(c.acc)}; }}
+{s} QSlider#volumeSlider::groove:horizontal {{ height: 4px; }}
+{s} QSlider#volumeSlider::sub-page:horizontal {{ background: {q(c.acc2)}; }}
+{s} QSlider#volumeSlider::handle:horizontal {{ width: 12px; height: 12px; background: {q(c.acc2)}; }}
 {s} QSlider::groove:vertical {{ width: 4px; border-radius: 2px; background: {q(c.track)}; }}
 {s} QSlider::add-page:vertical {{ border-radius: 2px; background: {q(c.acc)}; }}
 {s} QSlider::handle:vertical {{ width: 12px; height: 12px; margin: 0 -4px; border-radius: 6px; background: {q(c.acc)}; }}
@@ -95,7 +116,7 @@ def _block(s: str, c: Theme) -> str:
 def stylesheet(theme: Theme, family: str) -> str:
     q = qcolor_gradient
     t = theme
-    hero = replace(t, **t.hero) if t.hero else t
+    hero = hero_theme(t)
     mini_over = t.mini or t.hero
     mini = replace(t, **mini_over) if mini_over else t
     fam = family.replace('"', "")
@@ -106,8 +127,8 @@ def stylesheet(theme: Theme, family: str) -> str:
 #titleBar QPushButton {{ background: transparent; border: none; color: {q(t.bar_fg)}; padding: 0; }}
 #titleBar QPushButton:hover {{ background: rgba(255,255,255,30); border-radius: 6px; }}
 #tabs {{ background: {q(t.tabs)}; border-bottom: 1px solid {q(t.line)}; }}
-#tabs QPushButton {{ background: transparent; border: none; border-bottom: 3px solid transparent; color: {q(t.tab_fg)}; font-size: 12px; padding: 0 4px; }}
-#tabs QPushButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; border-bottom: 3px solid {q(t.tab_line)}; }}
+#tabs QToolButton {{ background: transparent; border: none; border-bottom: 3px solid transparent; color: {q(t.tab_fg)}; font-size: 12px; padding: 0 4px; }}
+#tabs QToolButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; border-bottom: 3px solid {q(t.tab_line)}; }}
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
 #nowStrip {{ background: {q(t.strip_bg)}; border-top: 1px solid {q(t.line)}; }}

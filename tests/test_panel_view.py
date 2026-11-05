@@ -4,7 +4,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 from fakes import FakePlayer, make_songs
 from funplayer.core.settings import Settings
-from funplayer.ui.player_panel import ERROR_COLOR, INFO_COLOR, PlayerPanel
+from funplayer.ui.player_panel import ART_NORMAL, ERROR_COLOR, INFO_COLOR, PlayerPanel
 
 ABC = ["01 a.mp3", "02 bad.mp3", "03 c.mp3"]
 
@@ -132,15 +132,15 @@ def test_header_shows_subtitle_and_tag_art(qapp, tmp_path):
     try:
         p.controller.open([str(make_songs(tmp_path, ["01 a.mp3"]))]); p.refresh()
         assert p.artist_label.toolTip() == "Lo-Fi Band · Sunday Mornings"
-        assert p.art_label.toolTip() == "곡 정보" and p.art_label.width() == 56
-        assert p.art_label.pixmap().toImage().pixelColor(28, 28) == QColor("#ff0000")
+        assert p.art_label.toolTip() == "곡 정보" and p.art_label.width() == ART_NORMAL
+        assert p.art_label.pixmap().toImage().pixelColor(ART_NORMAL // 2, ART_NORMAL // 2) == QColor("#ff0000")
     finally:
         p.shutdown(); p.deleteLater()
 
 def test_default_art_and_empty_subtitle(panel):
     p, _ = panel
     pm = p.art_label.pixmap()
-    assert pm is not None and (pm.width(), pm.height()) == (56, 56) and p.artist_label.text() == ""
+    assert pm is not None and (pm.width(), pm.height()) == (ART_NORMAL, ART_NORMAL) and p.artist_label.text() == ""
 
 def test_cover_loaded_once_per_track(qapp, tmp_path, monkeypatch):
     import funplayer.ui.player_panel as pp

@@ -7,7 +7,7 @@ from fakes import FakePlayer, make_songs
 from funplayer.core.settings import Settings
 from funplayer.engine.player import State
 from funplayer.ui.jump_slider import JumpSlider
-from funplayer.ui.player_panel import SHORTCUTS, PlayerPanel
+from funplayer.ui.player_panel import ART_MINI, ART_NORMAL, SHORTCUTS, PlayerPanel
 
 ABC = ["01 a.mp3", "02 b.mp3", "03 c.mp3"]
 
@@ -24,7 +24,7 @@ def test_buttons(rig):
     QTest.mouseClick(p.next_button, Qt.LeftButton); assert p.controller.playlist.index == 1
     QTest.mouseClick(p.prev_button, Qt.LeftButton); assert p.controller.playlist.index == 0
     QTest.mouseClick(p.play_button, Qt.LeftButton); assert fake.state is State.PAUSED
-    QTest.mouseClick(p.stop_button, Qt.LeftButton); assert fake.state is State.STOPPED
+    p.actions["stop"].trigger(); assert fake.state is State.STOPPED
     QTest.mouseClick(p.mute_button, Qt.LeftButton); assert fake.gain == 0.0
     p.actions["clear"].trigger()
     assert len(p.controller.playlist) == 0 and p.title_label.text() == "곡을 추가하세요"
@@ -133,26 +133,26 @@ def test_selection_survives_track_change(rig):
     assert not v.item(0).font().bold() and not v.item(0).text().startswith("▶")
 
 def test_delete_removes_selected_and_selects_same_row(rig):
-    p, fake, *_ = rig; v = p.playlist_view
+    p, fake, *_ = rig; v = p.playlist_view; p.set_tab("playlist")
     v.item(0).setSelected(True); v.item(1).setSelected(True)
     p.shortcuts["Delete"].activated.emit()
     assert [t.title for t in p.controller.playlist.tracks] == ["03 c"] and fake.loaded[-1].endswith("03 c.mp3")
     assert p.selected_rows() == [0]
 
 def test_real_keys_in_list(rig):
-    p, fake, *_ = rig; v = p.playlist_view; p.activateWindow()
+    p, fake, *_ = rig; v = p.playlist_view; p.set_tab("playlist"); p.activateWindow()
     assert QTest.qWaitForWindowActive(p)
     v.setFocus(); v.setCurrentRow(2)
     QTest.keyClick(v, Qt.Key_Return); assert fake.loaded[-1].endswith("03 c.mp3")
     QTest.keyClick(v, Qt.Key_Delete); assert len(p.controller.playlist) == 2
 
 def test_enter_and_select_all(rig):
-    p, fake, *_ = rig; p.playlist_view.setCurrentRow(1)
+    p, fake, *_ = rig; p.set_tab("playlist"); p.playlist_view.setCurrentRow(1)
     p.shortcuts["Return"].activated.emit(); assert fake.loaded[-1].endswith("02 b.mp3")
     p.shortcuts["Ctrl+A"].activated.emit(); assert p.selected_rows() == [0, 1, 2]
 
 def test_context_menu(rig):
-    p, fake, *_ = rig
+    p, fake, *_ = rig; p.set_tab("playlist")
     assert [a.text() for a in p.context_menu.actions()] == [
         "재생\tEnter", "곡 정보 고치기…", "여러 곡 태그 고치기…\tCtrl+T", "즐겨찾기 (맨 위로)\tCtrl+D", "이름 되돌리기", "선택한 곡 지우기\tDel", "", "전체 선택\tCtrl+A"]
     p.playlist_view.clearSelection(); p.context_menu.aboutToShow.emit()
@@ -269,9 +269,9 @@ def test_show_track_info_falls_back_to_selected_row(rig):
     assert p.info_dialog.path_label.text().endswith("02 b.mp3")
 
 
-HIDDEN_IN_MINI = ("elapsed_label", "total_label", "stop_button", "repeat_button", "shuffle_button",
-                  "mute_button", "volume_slider", "separator", "playlist_view", "open_button",
-                  "add_button", "list_button", "view_button", "count_label", "status_label")
+HIDDEN_IN_MINI = ("elapsed_label", "total_label", "repeat_button", "shuffle_button",
+                  "mute_button", "volume_slider")
+LIST_PAGE = ("playlist_view", "open_button", "add_button", "list_button", "view_button", "count_label")
 SHOWN_IN_MINI = ("art_label", "title_label", "artist_label", "prev_button", "play_button",
                  "next_button", "seek_slider", "mini_button")
 
@@ -280,21 +280,23 @@ def test_set_mini_hides_moves_and_restores(rig):
     assert p.mini_button.toolTip() == "작게 보기"
     p.set_mini(True)
     assert p.is_mini and store["player_mini"] is True and seen == [True]
-    assert not any(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI)
+    assert not any(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI + LIST_PAGE)
+    assert p.status_label.isHidden()
     assert all(getattr(p, n).isVisible() for n in SHOWN_IN_MINI)
-    assert p.art_label.width() == 40 and p.mini_button.toolTip() == "보통 보기"
+    assert p.art_label.width() == ART_MINI and p.mini_button.toolTip() == "보통 보기"
     assert all(p.head_row.indexOf(b) >= 0 for b in (p.prev_button, p.play_button, p.next_button))
     p.set_mini(True); assert seen == [True]
     p.set_mini(False)
     assert not p.is_mini and store["player_mini"] is False and seen == [True, False]
     assert all(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI)
-    assert p.art_label.width() == 56 and p.mini_button.toolTip() == "작게 보기"
+    assert p.art_label.width() == ART_NORMAL and p.mini_button.toolTip() == "작게 보기"
     assert [p.control_row.indexOf(b) for b in
-            (p.prev_button, p.play_button, p.stop_button, p.next_button)] == [0, 1, 2, 3]
+            (p.shuffle_button, p.prev_button, p.play_button, p.next_button, p.repeat_button)] == [0, 2, 4, 6, 8]
+    p.set_tab("playlist"); assert all(getattr(p, n).isVisible() for n in LIST_PAGE)
 
 def test_mini_is_short(rig):
     p, *_ = rig; p.set_mini(True); p.layout().activate()
-    assert p.sizeHint().height() < 100
+    assert p.sizeHint().height() < 130
 
 def test_mini_toggles_by_key_button_and_title_double_click(rig):
     p, *_ = rig
@@ -307,7 +309,7 @@ def test_mini_toggles_by_key_button_and_title_double_click(rig):
 def test_view_menu_mini_items(rig):
     p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)
     assert [a.text() for a in p.view_menu.actions()] == [
-        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "음향 효과 칸 보이기\tCtrl+E", "",
+        "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "",
         "작게 볼 때 항상 위", "멀티미디어 키 사용"]
     p.view_menu.aboutToShow.emit()
     assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()

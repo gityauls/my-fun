@@ -41,3 +41,72 @@ def test_drop_files_emits_local_paths(qapp, tmp_path):
     drop(v, QPoint(5, 5), md, Qt.CopyAction)
     assert [[os.path.normpath(p) for p in paths] for paths in got] == [[str(tmp_path / "x.mp3")]]
     assert v.count() == 3
+
+
+# ---- 줄 그리기 (5.5) ----
+
+from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QApplication, QListWidgetItem
+from funplayer.core.themes import THEMES, get_theme
+from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR
+from funplayer.ui.playlist_view import ROLE_CURRENT, ROLE_FAVORITE, ROLE_NUMBER, ROLE_TITLE, ROW_HEIGHT
+
+
+def rows_view():
+    v = PlaylistView(); v.resize(300, 200); v.set_theme(get_theme("light"))
+    for n, (title, cur, fav, color) in enumerate((
+            ("AAA", True, False, None), ("BBB", False, True, QColor(FAVORITE_COLOR)),
+            ("MMMMMM", False, False, QColor(ERROR_COLOR)), ("DDD", False, False, QColor(Qt.gray)))):
+        item = QListWidgetItem("  원문 그대로")
+        item.setData(ROLE_NUMBER, n + 1); item.setData(ROLE_TITLE, title)
+        item.setData(ROLE_CURRENT, cur); item.setData(ROLE_FAVORITE, fav)
+        item.setData(Qt.ForegroundRole, color)
+        v.addItem(item)
+    v.show(); return v
+
+
+def colors_in(img, rect):
+    return {img.pixelColor(x, y).name() for x in range(rect.left(), rect.right())
+            for y in range(rect.top(), rect.bottom())}
+
+
+def test_row_height_and_text_kept(qapp):
+    v = rows_view()
+    assert v.visualItemRect(v.item(0)).height() == ROW_HEIGHT == 34
+    assert v.item(1).text() == "  원문 그대로"
+
+
+def test_foreground_role_shows_in_row(qapp):
+    v = rows_view(); d = v.itemDelegate(); t = get_theme("light")
+    index = v.model().index
+    assert d.text_color(index(2, 0), False) == QColor(ERROR_COLOR)
+    assert d.text_color(index(3, 0), False) == QColor(Qt.gray)
+    assert d.text_color(index(1, 0), False) == QColor(t.fav)     # 즐겨찾기 색은 테마를 따른다
+    assert d.text_color(index(1, 0), True) == QColor(t.row_fg)
+    assert d.text_color(index(0, 0), False) == QColor(t.ink)
+    seen = []; real = d.text_color                # offscreen에는 글꼴이 없어 픽셀로 확인할 수 없다
+    d.text_color = lambda i, h: seen.append(i.row()) or real(i, h)
+    v.viewport().grab()
+    assert sorted(set(seen)) == [0, 1, 2, 3]
+
+
+def test_current_row_has_tint_and_favorite_heart(qapp):
+    v = rows_view(); t = get_theme("light")
+    img = v.viewport().grab().toImage()
+    assert QColor(t.tint).name() in colors_in(img, v.visualItemRect(v.item(0)))
+    r = v.visualItemRect(v.item(1))
+    assert QColor(t.fav).name() in colors_in(img, r.adjusted(r.width() - 30, 0, 0, 0))
+
+
+def test_rows_never_wider_than_the_view(qapp):
+    v = rows_view()
+    v.resize(900, 200); QApplication.processEvents()
+    v.resize(200, 200); QApplication.processEvents()
+    assert v.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+    assert v.visualItemRect(v.item(0)).width() <= v.viewport().width()    # 오른쪽 하트가 잘리지 않는다
+
+
+def test_paints_in_all_themes(qapp):
+    v = rows_view()
+    for t in THEMES:
+        v.set_theme(t); v.viewport().grab()

@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QAbstractItemView, QAction, QInputDialog, QMenu,
                              QTreeWidget, QTreeWidgetItem)
 
 from funplayer.core.stations import StationList
+from funplayer.core.themes import Theme
 from funplayer.ui.colors import INFO_COLOR
 
 STATION_MIME = "application/x-myfun-station"
@@ -33,6 +34,8 @@ class StationView(QTreeWidget):
         self._playing: str | None = None
         self._building = False
         self._swallow_click = False
+        self._group_color = INFO_COLOR
+        self._fav_color = FAVORITES_COLOR
         self.setColumnCount(2)
         self.setHeaderHidden(True)
         self.setIndentation(14)
@@ -56,6 +59,11 @@ class StationView(QTreeWidget):
         self._open = set(open_groups)
         self._fill()
 
+    def set_theme(self, theme: Theme) -> None:
+        """묶음 글자색을 테마에 맞춘다. 목록 내용은 바뀌지 않으니 changed를 내지 않는다."""
+        self._group_color, self._fav_color = theme.mute, theme.fav
+        self._fill()
+
     def rebuild(self) -> None:
         """목록이 바뀐 뒤 다시 그린다. 펼침과 현재 줄을 지키고 changed를 낸다."""
         self._fill()
@@ -69,7 +77,7 @@ class StationView(QTreeWidget):
         self._building = True
         self.clear()
         if self._stations is not None:
-            gray = QBrush(QColor(INFO_COLOR))
+            gray = QBrush(QColor(self._group_color))
             for key, title, members in self._stations.groups():
                 top = QTreeWidgetItem([title])
                 top.setData(0, KEY_ROLE, key)
@@ -77,7 +85,7 @@ class StationView(QTreeWidget):
                 font = top.font(0)
                 font.setBold(True)
                 top.setFont(0, font)
-                top.setForeground(0, QBrush(QColor(FAVORITES_COLOR)) if key == "favorites" else gray)
+                top.setForeground(0, QBrush(QColor(self._fav_color)) if key == "favorites" else gray)
                 self.addTopLevelItem(top)
                 for s in members:
                     row = QTreeWidgetItem([s.name, s.source])

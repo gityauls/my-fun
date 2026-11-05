@@ -47,22 +47,22 @@ def connect(p, runner, sid="kbs-25"):
 
 def test_tab_switch_never_touches_network(rpanel):
     p, fake, runner = rpanel
-    p.tab_bar.setCurrentIndex(1)
+    p.tab_bar.setCurrentIndex(2)
     assert p.station_view.isVisible() and not p.playlist_view.isVisible() and runner.pending == []
     assert p.add_url_button.isVisible() and not p.open_button.isVisible() and p.count_label.text() == "방송 72개"
     assert not p.add_button.isVisible() and not p.list_button.isVisible() and p.view_button.isVisible()
     assert p.settings.tab == "radio"
-    p.tab_bar.setCurrentIndex(0); assert p.open_button.isVisible() and p.settings.tab == "playlist"
+    p.tab_bar.setCurrentIndex(1); assert p.open_button.isVisible() and p.settings.tab == "playlist"
     assert not p.add_url_button.isVisible() and p.count_label.text() == "0곡"
     assert runner.calls == [] and fake.loaded == [] and fake.streams == []
 
 
 def test_tab_bar_texts_and_ctrl_tab(rpanel):
     p, _, runner = rpanel
-    assert [p.tab_bar.tabText(i) for i in range(p.tab_bar.count())] == ["재생목록", "라디오"]
+    assert [p.tab_bar.tabText(i) for i in range(p.tab_bar.count())] == ["지금 재생", "재생목록", "라디오", "음향 효과"]
     assert p.tab_bar.isVisible() and p.tab_bar.currentIndex() == 0
     p.shortcuts["Ctrl+Tab"].activated.emit(); assert p.tab_bar.currentIndex() == 1
-    p.shortcuts["Ctrl+Tab"].activated.emit(); assert p.tab_bar.currentIndex() == 0
+    p.shortcuts["Ctrl+Tab"].activated.emit(); assert p.tab_bar.currentIndex() == 2
     assert runner.calls == []
 
 
@@ -76,6 +76,7 @@ def test_one_click_starts_station_and_live_row(rpanel):
     p.station_view.station_activated.emit("kbs-25"); assert p.controller.status == "연결 중…"
     runner.finish(0, result=FakeStream()); p.refresh()
     assert p.title_label.toolTip() == "KBS 쿨FM" and p.live_label.text() == "● LIVE"
+    p.set_tab("now")
     assert not p.seek_slider.isVisible() and p.listened_label.text().startswith("들은 시간 ")
     assert not p.repeat_button.isEnabled() and not p.shuffle_button.isEnabled()
     assert p.live_label.isVisible() and p.listened_label.isVisible()
@@ -153,7 +154,7 @@ def test_playlist_tab_play_button_returns_to_track(rpanel, tmp_path):
     p.set_tab("playlist"); p.play_button.click()
     assert fake.loaded[-1].endswith("01 a.mp3") and fake.seeks[-1] == 50.0
     assert p.controller.source == "file" and fake.state is State.PLAYING
-    p.refresh()
+    p.refresh(); p.set_tab("now")
     assert p.seek_slider.isVisible() and p.elapsed_label.isVisible() and not p.live_label.isVisible()
     assert p.repeat_button.isEnabled() and p.shuffle_button.isEnabled()
     assert not station_item(p.station_view, "kbs-25").text(0).startswith("▶ ")
@@ -238,8 +239,9 @@ def test_mini_hides_radio_rows(rpanel):
     assert not any(getattr(p, n).isVisible() for n in names) and not p.seek_slider.isVisible()
     p.refresh(); assert not any(getattr(p, n).isVisible() for n in names)
     p.set_mini(False)
-    assert all(getattr(p, n).isVisible() for n in names)
+    assert all(getattr(p, n).isVisible() for n in ("tab_bar", "station_view", "add_url_button"))
     assert not p.playlist_view.isVisible() and not p.open_button.isVisible()
+    p.set_tab("now"); assert p.live_label.isVisible() and p.listened_label.isVisible()
 
 
 def test_station_info(rpanel):
@@ -298,7 +300,7 @@ def test_open_groups_saved_to_settings(rpanel):
 def test_start_tab_from_settings(qapp):
     p, fake, runner = make_panel({"player_tab": "radio"})
     try:
-        assert p.tab_bar.currentIndex() == 1 and p.station_view.isVisible() and runner.calls == []
+        assert p.tab_bar.currentIndex() == 2 and p.station_view.isVisible() and runner.calls == []
     finally:
         p.shutdown(); p.deleteLater()
 
@@ -310,10 +312,10 @@ def test_restore_radio_session_no_network(qapp, tmp_path):
              "player_last_track": str(songs / "01 a.mp3"), "player_last_position": 30.0}
     p, fake, runner = make_panel(store, session_path=str(session))
     try:
-        assert p.tab_bar.currentIndex() == 1 and p.station_view.isVisible()
+        assert p.tab_bar.currentIndex() == 2 and p.station_view.isVisible()
         assert p.controller.status == "이어 듣기: MBC FM4U" and runner.pending == [] and runner.calls == []
         assert fake.loaded == [] and p.title_label.toolTip() == "MBC FM4U"
-        assert p.live_label.isVisible() and INFO_COLOR in p.live_label.styleSheet()
+        p.set_tab("now"); assert p.live_label.isVisible() and INFO_COLOR in p.live_label.styleSheet()
         assert p.play_button.toolTip() == "재생"
     finally:
         p.shutdown(); p.deleteLater()
@@ -354,7 +356,7 @@ def test_ctrl_tab_key_reaches_shortcut_from_station_view(rpanel):
     p.activateWindow(); assert QTest.qWaitForWindowActive(p)
     p.station_view.setFocus()
     QTest.keyClick(p.station_view, Qt.Key_Tab, Qt.ControlModifier)
-    assert p.tab_bar.currentIndex() == 0
+    assert p.tab_bar.currentIndex() == 3
 
 
 def test_mini_switch_button_only_in_mini_and_follows_source(rpanel, tmp_path):

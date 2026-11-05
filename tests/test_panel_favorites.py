@@ -16,6 +16,7 @@ def panel(qapp, tmp_path):
     p = PlayerPanel(Settings(store, lambda: None), player=fake)
     p.resize(380, 480); p.show()
     p.controller.open([str(make_songs(tmp_path, ABCD))]); p.refresh()
+    p.set_tab("playlist")
     yield p, fake, store
     p.shutdown(); p.deleteLater()
 

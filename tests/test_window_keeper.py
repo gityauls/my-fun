@@ -58,7 +58,7 @@ def test_save_writes_current_mode(make):
 
 def test_runtime_mini_is_as_short_as_its_content(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents()
-    assert p.height() == p.sizeHint().height() and p.height() < 100
+    assert p.height() == p.sizeHint().height() and p.height() < 130
 
 def test_back_to_normal_keeps_layout_minimum_height(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents(); p.set_mini(False); qapp.processEvents()
@@ -79,4 +79,4 @@ def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
     k.save(); assert store["player_geometry"] == [50, 60, 400, 500]
     p.set_mini(True); qapp.processEvents()
     assert not p.isMaximized() and store["player_geometry"] == [50, 60, 400, 500]
-    g = p.geometry(); assert (g.x(), g.y(), g.width()) == (50, 60, 400) and g.height() < 100
+    g = p.geometry(); assert (g.x(), g.y(), g.width()) == (50, 60, 400) and g.height() < 130

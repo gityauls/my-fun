@@ -22,30 +22,19 @@ def fpanel(qapp):
     p.shutdown(); p.deleteLater()
 
 
-def test_fx_hidden_by_default_and_menu_toggles(fpanel):
+def test_fx_tab_by_ctrl_e(fpanel):
     p, _, store = fpanel
-    assert not p.fx_strip.isVisible() and not p.fx_separator.isVisible()
-    act = p.actions["fx_visible"]
-    assert act.isCheckable() and act.text() == "음향 효과 칸 보이기\tCtrl+E"
-    act.trigger()
-    assert p.fx_strip.isVisible() and p.fx_separator.isVisible()
-    assert p.settings.fx_visible is True and store["player_fx_visible"] is True
-    p.view_menu.aboutToShow.emit()
-    assert act.isChecked()
+    assert not p.fx_strip.isVisible()
+    assert "fx_visible" not in p.actions
     p.shortcuts["Ctrl+E"].activated.emit()
-    assert not p.fx_strip.isVisible() and not p.fx_separator.isVisible()
-    assert p.settings.fx_visible is False
-    p.view_menu.aboutToShow.emit()
-    assert not act.isChecked()
+    assert p.fx_strip.isVisible() and p.tab == "fx" and store["player_tab"] == "fx"
+    p.shortcuts["Ctrl+E"].activated.emit()
+    assert not p.fx_strip.isVisible() and p.tab == "now"
 
 
-def test_fx_strip_sits_between_controls_and_tabs(fpanel):
+def test_fx_strip_sits_in_its_page(fpanel):
     p, *_ = fpanel
-    lay = p.layout()
-    idx = {w: lay.indexOf(w) for w in (p.separator, p.fx_strip, p.fx_separator, p.tab_bar)}
-    assert idx[p.separator] < idx[p.fx_strip] < idx[p.fx_separator] < idx[p.tab_bar]
-    assert p.fx_separator.frameShape() == p.separator.frameShape()
-    assert p.fx_separator.frameShadow() == p.separator.frameShadow()
+    assert p.pages.widget(3).objectName() == "pageFx" and p.pages.widget(3).isAncestorOf(p.fx_strip)
 
 
 def test_fx_hidden_in_mini_and_back(fpanel):
@@ -53,10 +42,9 @@ def test_fx_hidden_in_mini_and_back(fpanel):
     p.toggle_fx_visible()
     assert p.fx_strip.isVisible()
     p.set_mini(True)
-    assert not p.fx_strip.isVisible() and not p.fx_separator.isVisible()
-    assert p.settings.fx_visible is True
+    assert not p.fx_strip.isVisible() and p.tab == "fx"
     p.set_mini(False)
-    assert p.fx_strip.isVisible() and p.fx_separator.isVisible()
+    assert p.fx_strip.isVisible()
 
 
 def test_fx_changes_reach_player_and_save_on_final(fpanel):
@@ -140,13 +128,13 @@ def test_showing_strip_keeps_window_width(qapp):
         assert p.fx_strip.reset_button.minimumWidth() > 0
         p.resize(*DEFAULT_SIZE); p.show(); qapp.processEvents()
         width, panel_min = p.width(), p.minimumSizeHint().width()
-        assert p.fx_strip.minimumSizeHint().width() <= panel_min
-        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        assert p.pages.widget(3).minimumSizeHint().width() <= width   # 효과 페이지가 창 폭에 들어간다
+        p.set_tab("fx"); qapp.processEvents()
         assert p.fx_strip.isVisible() and p.width() == width
         assert p.minimumSizeHint().width() == panel_min
         p.fx_strip.set_open(False, notify=True); qapp.processEvents()
         assert p.width() == width
-        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        p.set_tab("now"); qapp.processEvents()
         assert not p.fx_strip.isVisible() and p.width() == width
     finally:
         p.shutdown(); p.deleteLater()
@@ -163,7 +151,7 @@ def test_collapsed_longest_summary_keeps_window_width(qapp):
     try:
         p.resize(*DEFAULT_SIZE); p.show(); qapp.processEvents()
         width, panel_min = p.width(), p.minimumSizeHint().width()
-        p.actions["fx_visible"].trigger(); qapp.processEvents()
+        p.set_tab("fx"); qapp.processEvents()
         p.fx_strip.set_open(False, notify=True); qapp.processEvents()
         for fx in (FxSettings().with_preset("베이스 강하게").with_auto(True),
                    FxSettings().with_auto(True)):
@@ -172,7 +160,7 @@ def test_collapsed_longest_summary_keeps_window_width(qapp):
             p.fx_strip.set_genre_preset("베이스 강하게")
             qapp.processEvents()
             assert p.fx_strip.preset_link.sizeHint().width() > 0
-            assert p.fx_strip.minimumSizeHint().width() <= panel_min
+            assert p.pages.widget(3).minimumSizeHint().width() <= width
             assert p.width() == width and p.minimumSizeHint().width() == panel_min
         assert p.fx_strip.preset_link.toolTip() == "눌러서 다음 프리셋"
         assert p.fx_strip.small_spectrum.minimumWidth() == 36
@@ -201,14 +189,14 @@ def test_spectrum_timer_stops_when_panel_hidden(fpanel):
 
 def test_fx_state_survives_restart(qapp):
     fx = FxSettings.from_dict({"enabled": True, "preset": "발라드"})
-    store = {"player_fx": fx.to_dict(), "player_fx_visible": True, "player_fx_open": False}
+    store = {"player_fx": fx.to_dict(), "player_tab": "fx", "player_fx_open": False}
     p, fake, _ = make_panel(store)
     try:
         assert p.fx_strip.isVisible() and not p.fx_strip.is_open
         assert "켜짐" in p.fx_strip.power_link.text() and "발라드" in p.fx_strip.preset_link.text()
         assert fake.effects.preset == "발라드"
         p.view_menu.aboutToShow.emit()
-        assert p.actions["fx_visible"].isChecked()
+        assert p.tab == "fx"
     finally:
         p.shutdown(); p.deleteLater()
 

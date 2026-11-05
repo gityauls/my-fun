@@ -159,7 +159,7 @@ def panel(qapp, tmp_path):
     runner = FakeRunner()
     p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), runner=runner,
                     has_cover=lambda path: path in with_cover)
-    p.controller.open([str(folder)]); p.refresh()
+    p.controller.open([str(folder)]); p.refresh(); p.set_tab("playlist")
     yield p, runner, with_cover, folder
     if p.bulk_dialog is not None:
         p.bulk_dialog.close()
