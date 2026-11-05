@@ -216,7 +216,8 @@ def seg_font(panel):
     family = QFontDatabase.applicationFontFamilies(fid)[0]
     for b in panel.fx_strip.mode_buttons.values():
         font = QFont(b.font()); font.setFamily(family); font.setPixelSize(16); b.setFont(font)
-    return panel
+    yield panel
+    QFontDatabase.removeApplicationFont(fid)   # 뒤 테스트의 글꼴 크기 재기에 번지지 않게
 
 
 @pytest.mark.parametrize("theme_id", THEME_IDS)
