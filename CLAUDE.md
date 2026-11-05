@@ -25,13 +25,11 @@
 ## 파일 (5.5단계 디자인)
 - `funplayer/core/themes.py`: 색 테마 12종과 앨범 색 계산 — 화면 없음
 - `funplayer/ui/style.py`: 테마 → 패널 스타일시트 (패널 안 위젯만 대상, 대화상자에는 번지지 않음)
-- `funplayer/ui/fonts.py`: 번들 글꼴(Noto Sans KR) 등록, 실패하면 맑은 고딕
 - `funplayer/ui/glyphs.py`: Lucide 아이콘 모양(SVG)을 아이콘으로 그리기
 - `funplayer/ui/title_bar.py`: 테두리 없는 창의 상단바와 가장자리 크기 조절
 - `funplayer/ui/icon_tabs.py`: 아이콘이 글자 위에 있는 탭 막대
 - `funplayer/ui/now_strip.py`: 지금 재생 탭 말고 다른 탭 맨 아래의 재생 띠
 - `funplayer/ui/settings_dialog.py`: 설정 창 (색 테마 고르기, 고르면 바로 미리보기)
-- `funplayer/assets/fonts/`: Noto Sans KR Regular·Bold와 OFL 라이선스 (`assets/LICENSES.md` 참고)
 
 ## 원칙
 - 알송의 코드, 아이콘, 이미지, 문구, 이름을 쓰지 않는다. 기능 아이디어만 참고한다.
