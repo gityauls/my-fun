@@ -53,7 +53,8 @@ def move(w, pos, buttons=Qt.LeftButton):
 
 # ---- 상단바 ----
 
-@pytest.mark.parametrize("name,signal", [("mini_btn", "miniClicked"), ("min_btn", "minimizeClicked"),
+@pytest.mark.parametrize("name,signal", [("settings_btn", "settingsClicked"), ("mini_btn", "miniClicked"),
+                                         ("min_btn", "minimizeClicked"),
                                          ("max_btn", "maximizeClicked"), ("close_btn", "closeClicked")])
 def test_titlebar_buttons_emit(host, name, signal):
     _, bar, _ = host
@@ -66,7 +67,7 @@ def test_titlebar_shape_and_tips(host):
     _, bar, _ = host
     assert bar.objectName() == "titleBar" and bar.height() == TITLE_HEIGHT == 44
     assert bar.title_label.text() == "my-fun"
-    assert bar.mini_btn.toolTip() == "작게 보기"
+    assert bar.mini_btn.toolTip() == "작게 보기" and bar.settings_btn.toolTip() == "설정"
     assert (bar.close_btn.width(), bar.close_btn.height()) == (30, 28)
     bar.set_maximized(True)
     on_max = bar.max_btn.toolTip()
@@ -325,3 +326,23 @@ def test_stylesheet_rounds_and_squares(t):
     css = stylesheet(t)
     assert "border-top-left-radius: 19px" in css and "border-bottom-right-radius: 19px" in css
     assert '#root[square="true"]' in css and "border-radius: 20px" in css
+
+
+def test_settings_button_sits_left_of_mini_with_its_icon(host):
+    _, bar, _ = host
+    bar.resize(500, TITLE_HEIGHT); bar.layout().activate()
+    assert bar.settings_btn.x() + bar.settings_btn.width() <= bar.mini_btn.x()
+    assert not bar.settings_btn.icon().isNull()
+
+
+def test_settings_button_opens_settings(qapp, monkeypatch):
+    calls = []
+    monkeypatch.setattr(PlayerPanel, "show_settings", lambda self, modal=True: calls.append(modal))
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer(), runner=FakeRunner())
+    p.title_bar.settings_btn.click()
+    assert calls == [True]
+    p.shutdown(); p.deleteLater()
+
+
+def test_kept_small_mini_button_on_the_now_page(panel):
+    assert panel.mini_button.toolTip() == "작게 보기" and panel.mini_button.parent() is not panel.title_bar

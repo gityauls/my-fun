@@ -16,7 +16,7 @@ TITLE_HEIGHT = 44
 APP_ICON_SIZE = 18
 BUTTON_SIZE = (30, 28)
 MAX_TIPS = {False: "최대화", True: "이전 크기로"}
-_ICONS = (("mini_btn", "shrink", 15), ("min_btn", "min", 16), ("max_btn", "max", 14), ("close_btn", "x", 16))
+_ICONS = (("settings_btn", "settings", 15), ("mini_btn", "shrink", 15), ("min_btn", "min", 16), ("max_btn", "max", 14), ("close_btn", "x", 16))
 
 
 class WindowDragArea(QWidget):
@@ -49,6 +49,7 @@ class WindowDragArea(QWidget):
 
 
 class TitleBar(WindowDragArea):
+    settingsClicked = pyqtSignal()
     miniClicked = pyqtSignal()
     minimizeClicked = pyqtSignal()
     maximizeClicked = pyqtSignal()
@@ -74,6 +75,7 @@ class TitleBar(WindowDragArea):
         buttons = QHBoxLayout()
         buttons.setSpacing(2)
         row.addLayout(buttons)
+        self.settings_btn = self._button(buttons, "설정", self.settingsClicked)
         self.mini_btn = self._button(buttons, "작게 보기", self.miniClicked)
         self.min_btn = self._button(buttons, "최소화", self.minimizeClicked)
         self.max_btn = self._button(buttons, MAX_TIPS[False], self.maximizeClicked)

@@ -749,6 +749,7 @@ class PlayerPanel(QWidget):
         self.mini_close_button.clicked.connect(lambda _=False: self.close())
         self.title_label.installEventFilter(self)
         bar = self.title_bar
+        bar.settingsClicked.connect(self.show_settings)
         bar.miniClicked.connect(self.toggle_mini)
         bar.minimizeClicked.connect(self.showMinimized)
         bar.maximizeClicked.connect(self.toggle_maximize)
