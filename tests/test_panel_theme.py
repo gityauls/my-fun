@@ -296,3 +296,46 @@ def test_status_recolours_at_once_on_theme_change(panel):
     panel.controller.notify("안내"); panel.refresh()
     panel.set_theme_id("i")
     assert panel.status_label.styleSheet() == f"color: {get_theme('i').mute};"
+
+
+def test_every_panel_menu_is_themed(panel):
+    from PyQt5.QtWidgets import QMenu
+    menus = panel.findChildren(QMenu)
+    assert panel.station_view.context_menu in menus and panel.context_menu in menus
+    assert len(menus) >= 8 and {m.objectName() for m in menus} == {"themed"}
+
+
+def test_station_menu_paints_with_theme(panel):
+    panel.set_theme_id("dark")
+    menu = panel.station_view.context_menu
+    menu.ensurePolished()
+    assert menu.grab().toImage().pixelColor(menu.width() // 2, menu.height() // 2).name().upper() in (
+        get_theme("dark").bar.upper(), get_theme("dark").tint.upper())
+
+
+def test_settings_dialog_is_deleted_after_closing(panel):
+    from PyQt5 import sip
+    from PyQt5.QtCore import QCoreApplication, QEvent
+    for finish in ("accept", "reject", "close"):
+        d = panel.show_settings(modal=False)
+        getattr(d, finish)()
+        assert panel.settings_dialog is None and d.selected_id()   # 닫은 직후에는 아직 읽을 수 있다
+        QCoreApplication.sendPostedEvents(d, QEvent.DeferredDelete)
+        assert sip.isdeleted(d)
+    assert panel.findChildren(SettingsDialog) == []
+
+
+def test_heart_compares_only_when_track_or_favourites_change(panel_with_tracks):
+    p = panel_with_tracks
+    p.refresh()
+    calls = []; real = p.controller.is_favorite
+    p.controller.is_favorite = lambda path: (calls.append(path), real(path))[1]
+    for _ in range(5):
+        p.refresh()
+    assert calls == []
+    p.toggle_current_favorite()
+    assert p.heart_button.isChecked() and len(calls) == 1
+    p.next()
+    assert p._player.loaded and len(calls) == 2
+    n = len(calls); p.settings.favorites = []; p.refresh()
+    assert len(calls) == n + 1 and not p.heart_button.isChecked()

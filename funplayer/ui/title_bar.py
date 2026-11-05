@@ -1,7 +1,7 @@
 """Title bar and resize grips for the frameless window (stage 5.5).
 
 The panel keeps the bar even without a frame; only `EdgeGrips` belongs to the frameless window.
-Moving and resizing go through QWindow so Windows does the work (snap, multi monitor).
+Moving and resizing go through QWindow so Windows does the work.
 """
 from __future__ import annotations
 

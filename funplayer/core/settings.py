@@ -53,6 +53,7 @@ class Settings:
     def __init__(self, store: dict, save: Callable[[], None]) -> None:
         self._store = store
         self._save = save
+        self.favorites_version = 0   # 즐겨찾기가 바뀔 때마다 는다 (화면이 매번 목록을 다시 보지 않게)
 
     def _set(self, key: str, value) -> None:
         self._store[key] = value
@@ -271,6 +272,7 @@ class Settings:
     @favorites.setter
     def favorites(self, value: list[str]) -> None:
         self._set("player_favorites", [v for v in value if isinstance(v, str) and v])
+        self.favorites_version += 1
 
 
 class JsonStore:

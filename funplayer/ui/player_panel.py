@@ -169,6 +169,8 @@ class PlayerPanel(QWidget):
         self._play_key: bool | None = None
         self._mute_key: bool | None = None
         self._heart_key: bool | None = None
+        self._track_fav_key: tuple | None = None
+        self._track_fav = False
         self._status_error: bool | None = None
         self._settings = settings
         self.settings = settings   # 공개 이름(같은 객체)
@@ -278,6 +280,7 @@ class PlayerPanel(QWidget):
         dialog.accepted.connect(accepted)
         dialog.rejected.connect(lambda: self.set_theme_id(original))   # X로 닫아도 취소다
         dialog.finished.connect(lambda _=0: setattr(self, "settings_dialog", None))
+        dialog.finished.connect(dialog.deleteLater)
         if modal:
             dialog.open()
         else:
@@ -429,7 +432,7 @@ class PlayerPanel(QWidget):
         self.artist_label = self._label(px=13, role="mute")
         self.artist_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.artist_label.setMinimumWidth(0)
-        titles = self._titles = QVBoxLayout()
+        titles = QVBoxLayout()
         titles.setSpacing(3)
         titles.addWidget(self.title_label)
         titles.addWidget(self.artist_label)
@@ -459,7 +462,7 @@ class PlayerPanel(QWidget):
         self.listened_label = self._label(LISTENED_PREFIX + format_time(0), 13, "mute")
         self.live_label.hide()
         self.listened_label.hide()
-        row = self._time_row = QHBoxLayout()
+        row = QHBoxLayout()
         row.addWidget(self.elapsed_label)
         row.addWidget(self.live_label)
         row.addStretch(1)
@@ -865,7 +868,7 @@ class PlayerPanel(QWidget):
     def _make_source_menu(self) -> None:
         """재생 버튼·제목·미니 막대를 오른쪽 클릭한 메뉴: 정지, 라디오로/MP3로."""
         menu = self.source_menu = QMenu(self)
-        self._add_action(menu, "stop", "정지\tV", self.stop).setText("정지")
+        self._add_action(menu, "stop", "정지", self.stop)
         self._add_action(menu, "switch", "라디오로", self._switch_source)
         for w in (self.play_button, self.title_label, self.mini_bar):
             w.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1837,7 +1840,7 @@ class PlayerPanel(QWidget):
         else:
             track = c.playlist.current
             known = track is not None
-            favorite = known and c.is_favorite(track.path)
+            favorite = known and self._track_is_favorite(track.path)
         self.heart_button.setEnabled(known)
         self.heart_button.setChecked(favorite)
         if favorite != self._heart_key:
@@ -1846,6 +1849,14 @@ class PlayerPanel(QWidget):
                             hero.fav if favorite else hero.icon)
         self._refresh_modes()
         return playing
+
+    def _track_is_favorite(self, path: str) -> bool:
+        # refresh가 200ms마다 부른다: 곡이나 즐겨찾기가 바뀔 때만 긴 목록을 다시 본다
+        key = (path, self._settings.favorites_version)
+        if key != self._track_fav_key:
+            self._track_fav_key = key
+            self._track_fav = self.controller.is_favorite(path)
+        return self._track_fav
 
     def _refresh_live(self, on_radio: bool) -> None:
         r = self.radio
