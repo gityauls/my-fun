@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QObject, QRect, QSize, Qt
+from PyQt5.QtCore import QObject, QPoint, QRect, QSize, Qt
 from PyQt5.QtGui import QGuiApplication
 
 DEFAULT_SIZE = (380, 620)
@@ -75,6 +75,7 @@ class WindowKeeper(QObject):
             self._center(rect)
         if mini:
             self._fit_width(rect)
+        self._fit_height(rect)
         panel.setGeometry(rect)
 
     @staticmethod
@@ -87,6 +88,22 @@ class WindowKeeper(QObject):
             return
         area = screen.availableGeometry()
         rect.moveLeft(max(area.left(), min(rect.left(), area.right() + 1 - rect.width())))
+
+    @staticmethod
+    def _fit_height(rect: QRect) -> None:
+        """아래쪽이 작업 영역 밖이면 들어오게 민다 (옛 작은 창 자리에서 늘어났을 때).
+        위아래 두 화면에 걸친 창과 작업 영역보다 큰 창은 둔다."""
+        x = rect.center().x()
+        top = QGuiApplication.screenAt(QPoint(x, rect.top()))
+        bottom = QGuiApplication.screenAt(QPoint(x, rect.bottom()))
+        if top is not None and bottom is not None and top != bottom:
+            return
+        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        if rect.height() <= area.height():
+            rect.moveTop(max(area.top(), min(rect.top(), area.bottom() + 1 - rect.height())))
 
     @staticmethod
     def _center(rect: QRect) -> None:

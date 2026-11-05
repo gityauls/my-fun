@@ -5,6 +5,7 @@ from fakes import FakePlayer
 from funplayer.core.settings import Settings
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.player_panel import TABS
+from funplayer.ui import window_keeper
 from funplayer.ui.window_keeper import DEFAULT_SIZE, MIN_SIZE, MINI_SIZE, WindowKeeper
 
 @pytest.fixture
@@ -159,3 +160,70 @@ def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
     p.set_mini(True); qapp.processEvents()
     assert not p.isMaximized() and store["player_geometry"] == [50, 60, 400, 500]
     g = p.geometry(); assert (g.x(), g.y(), g.width(), g.height()) == (50, 60, 680, 104)
+
+
+class FakeScreen:
+    def __init__(self, geometry, available=None):
+        self.geometry, self.available = geometry, available or geometry
+
+    def availableGeometry(self):
+        return self.available
+
+
+def screens(monkeypatch, *items):
+    class App:
+        @staticmethod
+        def screenAt(point):
+            return next((s for s in items if s.geometry.contains(point)), None)
+
+        @staticmethod
+        def primaryScreen():
+            return items[0]
+    monkeypatch.setattr(window_keeper, "QGuiApplication", App)
+
+
+FULL_HD = FakeScreen(QRect(0, 0, 1920, 1080), QRect(0, 0, 1920, 1040))   # 작업 표시줄 40
+
+
+def fit(rect):
+    WindowKeeper._fit_height(rect)
+    return rect
+
+
+def test_old_window_near_the_bottom_moves_up(monkeypatch):
+    screens(monkeypatch, FULL_HD)
+    assert fit(QRect(10, 900, 380, 610)) == QRect(10, 430, 380, 610)
+
+
+def test_window_behind_the_taskbar_moves_up(monkeypatch):
+    screens(monkeypatch, FULL_HD)
+    assert fit(QRect(10, 450, 380, 610)).bottom() == 1039
+
+
+def test_window_inside_the_work_area_stays_put(monkeypatch):
+    screens(monkeypatch, FULL_HD)
+    assert fit(QRect(10, 430, 380, 610)) == QRect(10, 430, 380, 610)
+
+
+def test_window_taller_than_the_work_area_stays_put(monkeypatch):
+    screens(monkeypatch, FULL_HD)
+    assert fit(QRect(10, 20, 380, 1200)) == QRect(10, 20, 380, 1200)
+
+
+def test_window_across_stacked_screens_stays_put(monkeypatch):
+    screens(monkeypatch, FULL_HD, FakeScreen(QRect(0, 1080, 1920, 1080)))
+    assert fit(QRect(10, 800, 380, 610)) == QRect(10, 800, 380, 610)
+
+
+def test_saved_window_passes_through_the_vertical_fit(make, monkeypatch):
+    seen = []
+    real = WindowKeeper._fit_height
+    monkeypatch.setattr(WindowKeeper, "_fit_height", staticmethod(lambda r: (seen.append(QRect(r)), real(r))))
+    p, _ = make({"player_geometry": [10, 20, 360, 480]})
+    assert seen == [QRect(10, 20, 360, MIN_SIZE[1])]
+
+
+def test_mini_near_the_bottom_stays_on_screen(make):
+    area = QGuiApplication.primaryScreen().availableGeometry()
+    p, _ = make({"player_mini": True, "player_mini_geometry": [10, area.bottom() - 20, 680, 104]})
+    assert p.geometry().bottom() <= area.bottom()
