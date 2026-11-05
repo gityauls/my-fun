@@ -32,7 +32,7 @@ def test_restores_saved_normal_geometry(make):
 
 def test_old_saved_size_is_raised_to_minimum(make):
     p, _ = make({"player_geometry": [10, 10, 300, 480]})
-    assert p.geometry() == QRect(10, 10, *MIN_SIZE) and p.width() >= 340 and p.height() >= 560
+    assert p.size() == QSize(*MIN_SIZE) and abs(p.x() - 10) <= 2 and p.height() >= 560   # offscreen은 틀 몫만큼 민다
 
 def test_window_cannot_shrink_below_minimum(make):
     p, _ = make({})
@@ -153,7 +153,7 @@ def test_mini_start_without_any_place_uses_default_width_centered(make):
 
 def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
     store = {}; p, k = make(store)
-    # offscreen 화면(800x600)은 MIN_SIZE보다 낮아 화면에 들어가는 크기로 낮춰 놓고 잰다
+    # offscreen 화면(800x600)에 넉넉히 들어가는 크기로 낮춰 놓고 잰다
     p.setMinimumHeight(500); p.setGeometry(50, 60, 400, 500); qapp.processEvents(); k.save()
     p.showMaximized(); qapp.processEvents(); assert p.isMaximized()
     k.save(); assert store["player_geometry"] == [50, 60, 400, 500]

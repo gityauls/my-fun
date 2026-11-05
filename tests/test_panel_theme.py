@@ -1,6 +1,9 @@
+import os
+from pathlib import Path
+
 import pytest
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont, QPixmap
+from PyQt5.QtGui import QColor, QFont, QFontDatabase, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from fakes import FakePlayer, FakeRunner
@@ -9,7 +12,6 @@ from funplayer.core.settings import Settings
 from funplayer.core.themes import THEME_IDS, album_theme, get_theme
 from funplayer.ui import player_panel
 from funplayer.ui.cover import rounded_art
-from funplayer.ui.fonts import load_fonts
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.settings_dialog import SettingsDialog
 from funplayer.ui.style import hero_theme, mini_theme
@@ -209,8 +211,9 @@ def _count(image, color: str) -> int:
 
 @pytest.fixture
 def seg_font(panel):
-    # offscreen 플랫폼에는 한글 글꼴이 없어 글자가 그려지지 않는다: 동봉 글꼴을 입힌다
-    family = load_fonts()
+    # offscreen 플랫폼에는 한글 글꼴이 없어 글자가 그려지지 않는다: 시스템의 맑은 고딕을 등록해 입힌다
+    fid = QFontDatabase.addApplicationFont(str(Path(os.environ["WINDIR"]) / "Fonts" / "malgun.ttf"))
+    family = QFontDatabase.applicationFontFamilies(fid)[0]
     for b in panel.fx_strip.mode_buttons.values():
         font = QFont(b.font()); font.setFamily(family); font.setPixelSize(16); b.setFont(font)
     return panel

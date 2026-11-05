@@ -50,7 +50,7 @@ def test_main_smoke(qapp, monkeypatch, tmp_path):
     try:
         assert entry.main([]) == 0
         # stations.json이 없어도 켜지고 꺼진다. 바꾼 게 없으면 파일을 만들지 않는다
-        assert seen["font_family"] == "Noto Sans KR"
+        assert QApplication.font().family() == "Malgun Gothic"
         assert seen["stations_path"] == str(tmp_path / "my-fun" / "stations.json")
         assert not (tmp_path / "my-fun" / "stations.json").exists()
         assert (tmp_path / "my-fun" / "logs" / "funplayer.log").exists()

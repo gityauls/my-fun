@@ -293,6 +293,6 @@ def test_mini_icons_use_the_mini_colours(panel, name):
 def test_theme_stylesheet_gives_the_bar_its_shape():
     from funplayer.core.themes import get_theme
     from funplayer.ui.style import MINI_RADIUS, stylesheet
-    qss = stylesheet(get_theme("light"), "Pretendard")
+    qss = stylesheet(get_theme("light"))
     assert MINI_RADIUS == 24 and '#miniBar QPushButton[kind="playMd"]' in qss
     assert "#miniLine" in qss and "#miniControls QPushButton:hover" in qss

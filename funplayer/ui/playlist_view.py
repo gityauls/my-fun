@@ -47,6 +47,13 @@ class RowDelegate(QStyledItemDelegate):
             return QColor(error_color(t.tint if highlighted else t.bg))
         return color
 
+    @staticmethod
+    def title_font(base: QFont, current: bool) -> QFont:
+        font = QFont(base)
+        font.setPixelSize(13)
+        font.setBold(current)
+        return font
+
     def paint(self, p: QPainter, option, index: QModelIndex) -> None:
         t = self.theme
         current = bool(index.data(ROLE_CURRENT))
@@ -78,9 +85,7 @@ class RowDelegate(QStyledItemDelegate):
             p.drawPixmap(right + 1, rect.top() + (rect.height() - _HEART) // 2,
                          glyph_pixmap("heartOn", color, _HEART))
             right -= _GAP
-        font = QFont(option.font)
-        font.setPixelSize(13)
-        p.setFont(font)
+        p.setFont(self.title_font(option.font, current))
         p.setPen(fg)
         box = QRect(left, rect.top(), max(0, right - left + 1), rect.height())
         title = index.data(ROLE_TITLE)

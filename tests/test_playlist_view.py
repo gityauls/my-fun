@@ -100,6 +100,13 @@ def test_current_row_has_tint_and_favorite_heart(qapp):
     assert QColor(t.fav).name() in colors_in(img, r.adjusted(r.width() - 30, 0, 0, 0))
 
 
+def test_current_row_title_is_bold(qapp):
+    v = rows_view(); d = v.itemDelegate(); seen = {}; real = d.title_font
+    d.title_font = lambda base, cur: seen.setdefault(cur, real(base, cur))   # offscreen은 글꼴을 픽셀로 못 잰다
+    v.viewport().grab()
+    assert seen[True].bold() and not seen[False].bold() and seen[True].pixelSize() == 13
+
+
 def test_rows_never_wider_than_the_view(qapp):
     v = rows_view()
     v.resize(900, 200); QApplication.processEvents()

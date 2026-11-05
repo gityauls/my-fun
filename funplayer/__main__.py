@@ -11,8 +11,8 @@ from PyQt5.QtWidgets import QApplication
 
 from funplayer.core.settings import JsonStore, Settings
 from funplayer.ui import media_keys as media_keys_mod
-from funplayer.ui.fonts import load_fonts
 from funplayer.ui.player_panel import PlayerPanel
+from funplayer.ui.style import FONT_FAMILY
 from funplayer.ui.window_keeper import WindowKeeper
 
 logger = logging.getLogger("funplayer")
@@ -47,16 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     sys.excepthook = _log_excepthook
     app = QApplication.instance() or QApplication(argv or sys.argv)
     app.setStyle("Fusion")
-    family = load_fonts()
-    app.setFont(QFont(family, 9))
+    app.setFont(QFont(FONT_FAMILY, 9))
     store = JsonStore(app_dir() / "settings.json")
     settings = Settings(store.data, store.save)
     panel = PlayerPanel(
         settings, session_path=str(app_dir() / "last.m3u8"),
         stations_path=str(app_dir() / "stations.json"),
         rename_log_path=str(app_dir() / "rename_log.txt"),
-        media_keys=media_keys_mod.MediaKeys(api=media_keys_mod.default_api()),
-        font_family=family)
+        media_keys=media_keys_mod.MediaKeys(api=media_keys_mod.default_api()))
     panel.setWindowTitle("my-fun")
     panel.use_window_chrome()
     keeper = WindowKeeper(panel, settings)

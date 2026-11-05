@@ -10,6 +10,7 @@ from PyQt5.QtGui import QColor
 
 from funplayer.core.themes import Theme
 
+FONT_FAMILY = "Malgun Gothic"
 WINDOW_RADIUS = 20
 MINI_RADIUS = 24
 EDGE = 1   # 창 테두리 두께. 안쪽 내용은 그만큼 작은 반지름으로 맞물린다
@@ -172,16 +173,15 @@ def _corners() -> str:
 """
 
 
-def stylesheet(theme: Theme, family: str) -> str:
+def stylesheet(theme: Theme) -> str:
     q = qcolor_gradient
     t = theme
     hero = hero_theme(t)
     mini = mini_theme(t)
-    fam = family.replace('"', "")
     out = [f"""
-#root {{ background: {q(t.bg)}; color: {q(t.ink)}; font-family: "{fam}"; border: {EDGE}px solid {q(t.edge)}; border-radius: {WINDOW_RADIUS}px; }}
+#root {{ background: {q(t.bg)}; color: {q(t.ink)}; font-family: "{FONT_FAMILY}"; border: {EDGE}px solid {q(t.edge)}; border-radius: {WINDOW_RADIUS}px; }}
 #titleBar {{ background: {q(t.bar)}; color: {q(t.bar_fg)}; }}
-#titleBar QLabel {{ color: {q(t.bar_fg)}; background: transparent; font-size: 14px; }}
+#titleBar QLabel {{ color: {q(t.bar_fg)}; background: transparent; font-size: 14px; font-weight: 700; }}
 #titleBar QPushButton {{ background: transparent; border: none; color: {q(t.bar_fg)}; padding: 0; }}
 #titleBar QPushButton:hover {{ background: rgba(128,128,128,70); border-radius: 6px; }}
 #tabs {{ background: {q(t.tabs)}; border-bottom: 1px solid {q(t.line)}; }}
@@ -190,7 +190,7 @@ def stylesheet(theme: Theme, family: str) -> str:
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
 #nowStrip {{ background: {q(t.strip_bg)}; border-top: 1px solid {q(t.line)}; }}
-#miniBar {{ background: {q(mini.bg)}; font-family: "{fam}"; border: 1px solid {q(t.mini_edge)}; border-radius: {MINI_RADIUS}px; }}
+#miniBar {{ background: {q(mini.bg)}; font-family: "{FONT_FAMILY}"; border: 1px solid {q(t.mini_edge)}; border-radius: {MINI_RADIUS}px; }}
 QMenu#themed {{ background: {q(t.bar)}; color: {q(t.bar_fg)}; border: 1px solid {q(t.line)}; }}
 QMenu#themed::item {{ padding: 6px 22px; }}
 QMenu#themed::item:selected {{ background: {q(t.tint)}; color: {q(t.row_fg)}; }}

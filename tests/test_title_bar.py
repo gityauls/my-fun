@@ -322,6 +322,6 @@ def test_refresh_does_not_repolish(panel, monkeypatch):
 
 @pytest.mark.parametrize("t", THEMES, ids=lambda t: t.id)
 def test_stylesheet_rounds_and_squares(t):
-    css = stylesheet(t, "x")
+    css = stylesheet(t)
     assert "border-top-left-radius: 19px" in css and "border-bottom-right-radius: 19px" in css
     assert '#root[square="true"]' in css and "border-radius: 20px" in css

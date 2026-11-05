@@ -4,8 +4,8 @@ from PyQt5.QtCore import QObject, QPoint, QRect, QSize, Qt
 from PyQt5.QtGui import QGuiApplication
 
 DEFAULT_SIZE = (380, 620)
-# 높이: 지금 재생 탭 + 안내 줄이 실제로 603 (상단바 44, 탭 64, 페이지 470, 안내 23, 테두리 2). 글꼴 차이 몫을 조금 더한다
-MIN_SIZE = (340, 610)
+# 높이: 맑은 고딕으로 잰 지금 재생 탭 + 안내 줄 594 (상단바 44, 탭 64, 페이지 463, 안내 21, 테두리 2)
+MIN_SIZE = (340, 594)
 MINI_SIZE = (680, 104)
 _QWIDGETSIZE_MAX = 16777215
 

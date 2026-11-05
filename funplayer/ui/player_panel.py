@@ -123,10 +123,8 @@ class PlayerPanel(QWidget):
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
                  stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
-                 rename_log_path: str | None = None, has_cover=None, find_cover=None,
-                 font_family: str = "Malgun Gothic") -> None:
+                 rename_log_path: str | None = None, has_cover=None, find_cover=None) -> None:
         super().__init__(parent)
-        self._font_family = font_family
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
             self._player, settings, session_path=session_path, read_info=read_info,
@@ -222,7 +220,7 @@ class PlayerPanel(QWidget):
         # (제목줄이 처음 색 그대로 남는다). 보일 때 한 번 더 입힌다 (showEvent)
         self._restyle_on_show = self._restyle_on_show or (self._sheet_set and not self.isVisible())
         self._sheet_set = True
-        self.setStyleSheet(stylesheet(applied, self._font_family))
+        self.setStyleSheet(stylesheet(applied))
         self.title_bar.set_theme(applied)
         self.tab_bar.set_theme(applied)
         self.now_strip.set_theme(applied)
