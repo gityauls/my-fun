@@ -185,8 +185,8 @@ def stylesheet(theme: Theme) -> str:
 #titleBar QPushButton {{ background: transparent; border: none; color: {q(t.bar_fg)}; padding: 0; }}
 #titleBar QPushButton:hover {{ background: rgba(128,128,128,70); border-radius: 6px; }}
 #tabs {{ background: {q(t.tabs)}; border-bottom: 1px solid {q(t.line)}; }}
-#tabs QToolButton {{ background: transparent; border: none; border-bottom: 3px solid transparent; color: {q(t.tab_fg)}; font-size: 12px; padding: 7px 4px 5px; }}
-#tabs QToolButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; border-bottom: 3px solid {q(t.tab_line)}; }}
+#tabs QToolButton {{ background: transparent; border: none; color: {q(t.tab_fg)}; font-size: 12px; padding: 7px 4px 8px; }}
+#tabs QToolButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; }}
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
 #nowStrip {{ background: {q(t.strip_bg)}; border-top: 1px solid {q(t.line)}; }}

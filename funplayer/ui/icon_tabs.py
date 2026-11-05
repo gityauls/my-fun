@@ -1,15 +1,19 @@
 """Tab bar with an icon above each title (stage 5.5). Same small API as QTabBar."""
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt5.QtGui import QIcon, QPainter, QPainterPath
 from PyQt5.QtWidgets import QButtonGroup, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
 from funplayer.ui.glyphs import glyph_pixmap
+from funplayer.ui.style import css_color
 
 TAB_HEIGHT = 64
 ICON_SIZE = 20
+LINE_INSET = 12
+LINE_HEIGHT = 3
+_BORDER = 1   # #tabs 아래 테두리. 밑줄은 그 위에 얹는다
 
 
 class IconTabs(QWidget):
@@ -67,6 +71,7 @@ class IconTabs(QWidget):
         self._theme = theme
         for b, name in zip(self._buttons, self._names):
             b.setIcon(self._icon(name))
+        self.update()
 
     def _icon(self, name: str) -> QIcon:
         t = self._theme
@@ -78,4 +83,24 @@ class IconTabs(QWidget):
     def _toggled(self, i: int, on: bool) -> None:
         if on and i != self._current:
             self._current = i
+            self.update()
             self.currentChanged.emit(i)
+
+    def underline_rect(self) -> QRect:
+        b = self._buttons[self._current]
+        return QRect(b.x() + LINE_INSET, self.height() - _BORDER - LINE_HEIGHT,
+                     b.width() - 2 * LINE_INSET, LINE_HEIGHT)
+
+    def paintEvent(self, event) -> None:
+        """고른 탭의 밑줄. 양옆을 띄우고 위쪽 모서리만 둥근 선은 QSS로 그릴 수 없다.
+        단추는 배경이 투명해 그 아래에서 그려도 보인다."""
+        if not self._buttons:
+            return
+        rect = self.underline_rect()
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(rect).adjusted(0, 0, 0, LINE_HEIGHT), LINE_HEIGHT, LINE_HEIGHT)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setClipRect(rect)   # 둥근 사각형의 아래 절반을 잘라 위쪽 모서리만 남긴다
+        p.fillPath(path, css_color(self._theme.tab_line))
+        p.end()
