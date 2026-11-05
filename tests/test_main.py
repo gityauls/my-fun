@@ -28,12 +28,24 @@ def test_main_smoke(qapp, monkeypatch, tmp_path):
     import funplayer.ui.media_keys as mk
     monkeypatch.setattr(mk, "default_api", lambda: None)
     seen = {}
+    order = []
 
     class Panel(entry.PlayerPanel):
         def __init__(self, *a, **kw):
             seen.update(kw)
             super().__init__(*a, **kw)
+
+        def use_window_chrome(self):
+            order.append("chrome")
+            super().use_window_chrome()
+            seen["chrome"] = self.chrome
+
+    class Keeper(entry.WindowKeeper):
+        def start(self):
+            order.append("keeper")
+            super().start()
     monkeypatch.setattr(entry, "PlayerPanel", Panel)
+    monkeypatch.setattr(entry, "WindowKeeper", Keeper)
     QTimer.singleShot(0, QApplication.instance().quit)
     try:
         assert entry.main([]) == 0
@@ -44,6 +56,7 @@ def test_main_smoke(qapp, monkeypatch, tmp_path):
         assert (tmp_path / "my-fun" / "logs" / "funplayer.log").exists()
         import json
         data = json.loads((tmp_path / "my-fun" / "settings.json").read_text(encoding="utf-8"))
-        assert data["player_geometry"][2:] == [380, 480]
+        assert data["player_geometry"][2:] == [380, 620]
+        assert seen["chrome"] and order == ["chrome", "keeper"]   # 창 틀은 자리를 잡기 전에 정한다
     finally:
         _cleanup()

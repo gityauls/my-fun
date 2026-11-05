@@ -46,13 +46,15 @@ from funplayer.ui.playlist_view import (ROLE_CURRENT, ROLE_FAVORITE, ROLE_NUMBER
                                         PlaylistView)
 from funplayer.ui.radio_dialogs import AddUrlDialog
 from funplayer.ui.station_view import StationView
-from funplayer.ui.style import hero_theme, stylesheet
+from funplayer.ui.style import EDGE, WINDOW_RADIUS, hero_theme, stylesheet
+from funplayer.ui.title_bar import EdgeGrips, TitleBar
 from funplayer.ui.worker import QtRunner
 
 REFRESH_MS = 200
 SPECTRUM_MS = 40
 SPECTRUM_MAX_DT = 0.2
 VOLUME_STEP = 5
+_QWIDGETSIZE_MAX = 16777215
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 216
@@ -63,7 +65,6 @@ PLAY_SIZE = 60
 PLAY_MINI_SIZE = 36
 NOW_MARGINS = (26, 18, 26, 16)
 NOW_MINI_MARGINS = (10, 8, 10, 8)
-PAGES_MIN_HEIGHT = 350   # 탭 64 + 재생 띠 61과 합쳐 지금 기본 창(480)에 들어간다
 TITLE_PX = 19
 TITLE_MINI_PX = 14
 TABS = ("now", "playlist", "radio", "fx")
@@ -161,6 +162,10 @@ class PlayerPanel(QWidget):
         self._settings = settings
         self.settings = settings   # 공개 이름(같은 객체)
         self.is_mini = False   # settings.mini는 창(Task 10)이 적용한다
+        self.chrome = False    # 테두리 없는 창인가 (__main__이 켠다. 6단계에서 끼울 때는 그대로 둔다)
+        self.grips: EdgeGrips | None = None
+        self._maximized = False
+        self._pages_min_key: tuple | None = None
 
         self._bridge = PlayerBridge(self._player, self)
         self._bridge.ended.connect(self._on_ended, Qt.QueuedConnection)
@@ -201,6 +206,7 @@ class PlayerPanel(QWidget):
         self.theme = theme
         self._hero = hero_theme(theme)
         self.setStyleSheet(stylesheet(theme, self._font_family))
+        self.title_bar.set_theme(theme)
         self.tab_bar.set_theme(theme)
         self.now_strip.set_theme(theme)
         self.playlist_view.set_theme(theme)
@@ -214,6 +220,7 @@ class PlayerPanel(QWidget):
         self._icon_key = self._play_key = self._mute_key = self._heart_key = None
         self._refresh_icons()
         self._render_art()
+        self._sync_pages_min(force=True)
 
     def _set_mini_icon(self) -> None:
         self.mini_button.setIcon(glyph("max" if self.is_mini else "shrink", self._hero.icon, 16))
@@ -266,12 +273,19 @@ class PlayerPanel(QWidget):
         return label
 
     def _build(self) -> None:
-        self.setObjectName("root")
-        self.setAttribute(Qt.WA_StyledBackground)
         self.setFocusPolicy(Qt.StrongFocus)   # 초점 받을 위젯이 없는 페이지에서도 단축키가 듣게
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.root = QWidget()   # 둥근 배경. 패널 자체는 테두리 없는 창에서 투명이다
+        self.root.setObjectName("root")
+        self.root.setAttribute(Qt.WA_StyledBackground)
+        outer.addWidget(self.root)
+        root = self._body = QVBoxLayout(self.root)
+        root.setContentsMargins(EDGE, EDGE, EDGE, EDGE)
         root.setSpacing(0)
+
+        self.title_bar = TitleBar()
+        root.addWidget(self.title_bar)
 
         self.tab_bar = IconTabs()
         for name, title in zip(TAB_ICONS, TAB_TITLES):
@@ -280,7 +294,7 @@ class PlayerPanel(QWidget):
 
         self.pages = QStackedWidget()
         # 쌓인 페이지 중 가장 큰 것이 창 최소 크기를 정하지 않게 한다 (숨은 음향 효과 칸이 창을 넓히면 안 된다)
-        self.pages.setMinimumSize(1, PAGES_MIN_HEIGHT)
+        self.pages.setMinimumSize(1, 1)
         for page in (self._build_now_page(), self._build_list_page(), self._build_radio_page(),
                      self._build_fx_page()):
             self.pages.addWidget(page)
@@ -532,6 +546,13 @@ class PlayerPanel(QWidget):
         self.art_label.clicked.connect(self.show_track_info)
         self.mini_button.clicked.connect(self.toggle_mini)
         self.title_label.installEventFilter(self)
+        bar = self.title_bar
+        bar.miniClicked.connect(self.toggle_mini)
+        bar.minimizeClicked.connect(self.showMinimized)
+        bar.maximizeClicked.connect(self.toggle_maximize)
+        bar.closeClicked.connect(self.close)
+        # 지금 재생·음향 효과 탭에는 [보기] 버튼이 없어 상단바에서도 연다
+        bar.menu_requested.connect(lambda pos: self.view_menu.exec_(pos))
 
         self.shortcuts: dict[str, QShortcut] = {}
         for key, name in SHORTCUTS:
@@ -673,6 +694,7 @@ class PlayerPanel(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._sync_spectrum_timer()
+        self._sync_pages_min(force=True)   # QSS가 입혀진 글자 높이는 보일 때에야 정해진다
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
@@ -725,8 +747,68 @@ class PlayerPanel(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange:
             self._sync_spectrum_timer()
+            self._sync_maximized()
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._retry_media_keys()
+
+    # ---- 창 ----
+
+    def use_window_chrome(self) -> None:
+        """테두리 없는 둥근 창으로 바꾼다. 안 부르면 보통 창이다 (6단계에서 캘린더에 끼울 때)."""
+        if self.chrome:
+            return
+        shown = self.isVisible()
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.chrome = True
+        self.grips = EdgeGrips(self)
+        self.grips.set_suspended(self._maximized)
+        if shown:
+            self.show()
+
+    def corner_radius(self) -> int:
+        return 0 if self.isMaximized() else WINDOW_RADIUS
+
+    def toggle_maximize(self) -> None:
+        if self.is_mini:
+            return
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self._limit_to_work_area()
+            self.showMaximized()
+
+    def _limit_to_work_area(self) -> None:
+        # 테두리 없는 창은 최대화할 때 작업 표시줄을 덮을 수 있다
+        self.setMaximumSize(self.screen().availableGeometry().size())
+
+    def _check_work_area(self) -> None:
+        """Win+위 화살표처럼 toggle_maximize를 거치지 않은 최대화도 작업 표시줄을 덮지 않게."""
+        if (self.isMaximized() and not self.is_mini
+                and not self.screen().availableGeometry().contains(self.frameGeometry())):
+            self._limit_to_work_area()
+
+    def _sync_maximized(self) -> None:
+        """최대화가 어디서 왔든 (상단바, Win+위 화살표) 여기를 지난다. 상태가 바뀔 때만 다시 칠한다."""
+        on = self.isMaximized()
+        if on == self._maximized:
+            return
+        self._maximized = on
+        if not self.is_mini:   # 작게 보기의 고정 높이는 WindowKeeper가 맡는다
+            if not on:
+                self.setMaximumSize(_QWIDGETSIZE_MAX, _QWIDGETSIZE_MAX)
+            else:
+                QTimer.singleShot(0, self._check_work_area)   # 최대화한 자리가 정해진 뒤에 본다
+        self.title_bar.set_maximized(on)
+        if self.grips is not None:
+            self.grips.set_suspended(on)
+        edge = 0 if on else EDGE
+        self._body.setContentsMargins(edge, edge, edge, edge)
+        self.root.setProperty("square", "true" if on else "false")   # "maximized"는 QWidget이 이미 쓰는 이름이다
+        pages = [self.pages.widget(i) for i in range(self.pages.count())]
+        for w in (self.root, self.title_bar, *pages, self.now_strip,
+                  *self.findChildren(QWidget, "footBar")):
+            self._repolish(w)
 
     def _retry_media_keys(self) -> None:
         # 다른 프로그램(예: 동영상 재생 중인 Chrome)이 놓아 준 키를 창이 활성화될 때 조용히 다시 건다
@@ -755,7 +837,6 @@ class PlayerPanel(QWidget):
         for i in range(1, self.pages.count()):
             self.pages.widget(i).setSizePolicy(
                 QSizePolicy.Preferred, QSizePolicy.Ignored if on else QSizePolicy.Preferred)
-        self.pages.setMinimumHeight(1 if on else PAGES_MIN_HEIGHT)
         self._apply_visibility()   # 라디오에 따라 다시 숨길 것을 숨긴다
         size = ART_MINI if on else ART_NORMAL
         self.art_label.setFixedSize(size, size)
@@ -766,7 +847,9 @@ class PlayerPanel(QWidget):
         self._set_mini_icon()
         self._now_layout.invalidate()
         self._now_layout.activate()   # 창 크기를 정하는 sizeHint가 옛 값을 내지 않게
+        self._sync_pages_min(force=True)   # 그림 크기가 돌아온 뒤에 잰다
         self.pages.updateGeometry()
+        self.root.updateGeometry()   # 패널 배치는 root 속이 바뀐 걸 스스로 모른다
         self.mini_button.setToolTip("보통 보기" if on else "작게 보기")
         self.actions["mini"].setChecked(on)
         self._settings.mini = on
@@ -879,6 +962,7 @@ class PlayerPanel(QWidget):
     def _apply_visibility(self) -> None:
         mini = self.is_mini
         on_radio = self.controller.source == "radio"
+        self.title_bar.setVisible(not mini)
         self.tab_bar.setVisible(not mini)
         # 작게 볼 때는 어느 탭이든 지금 재생 페이지의 위젯을 쓴다
         self.pages.setCurrentIndex(0 if mini else TABS.index(self._tab))
@@ -903,7 +987,20 @@ class PlayerPanel(QWidget):
         show_status = not mini and bool(self.controller.status)
         if show_status == self.status_label.isHidden():
             self.status_label.setVisible(show_status)
-            self.layout().activate()   # 글자를 줄이기 전에 폭을 맞춘다
+            # 안내 줄이 창 맨 아래를 차지하면 지금 재생 면의 둥근 아래 모서리가 줄 위에 떠 보인다
+            self.page_now.setProperty("flush", "true" if show_status else "false")
+            self._repolish(self.page_now)
+            self._body.activate()   # 글자를 줄이기 전에 폭을 맞춘다
+        self._sync_pages_min()
+
+    def _sync_pages_min(self, force: bool = False) -> None:
+        """쌓인 페이지 칸의 최소 높이는 보이는 페이지의 실제 최소 높이다 (창이 줄어도 겹치지 않게)."""
+        key = (self.is_mini, self._tab, self.controller.source)
+        if key == self._pages_min_key and not force:
+            return
+        self._pages_min_key = key
+        page = self.pages.currentWidget()
+        self.pages.setMinimumHeight(1 if self.is_mini else page.minimumSizeHint().height())
 
     def _update_count(self) -> None:
         if self._tab == "radio":

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QObject, QRect, Qt
+from PyQt5.QtCore import QObject, QRect, QSize, Qt
 from PyQt5.QtGui import QGuiApplication
 
-DEFAULT_SIZE = (380, 480)
+DEFAULT_SIZE = (380, 620)
+# 높이: 지금 재생 탭 + 안내 줄이 실제로 603 (상단바 44, 탭 64, 페이지 470, 안내 23, 테두리 2). 글꼴 차이 몫을 조금 더한다
+MIN_SIZE = (340, 610)
 _QWIDGETSIZE_MAX = 16777215
 
 
@@ -62,9 +64,11 @@ class WindowKeeper(QObject):
             saved = self._settings.geometry
             if saved:
                 rect = QRect(*saved)
+                rect.setSize(rect.size().expandedTo(QSize(*MIN_SIZE)))   # 옛 버전이 저장한 작은 창
             else:
                 rect = QRect(0, 0, *DEFAULT_SIZE)
                 self._center(rect)
+            panel.setMinimumSize(*MIN_SIZE)
         if QGuiApplication.screenAt(rect.center()) is None:
             self._center(rect)
         panel.setGeometry(rect)

@@ -4,7 +4,8 @@ from PyQt5.QtGui import QGuiApplication
 from fakes import FakePlayer
 from funplayer.core.settings import Settings
 from funplayer.ui.player_panel import PlayerPanel
-from funplayer.ui.window_keeper import WindowKeeper
+from funplayer.ui.player_panel import TABS
+from funplayer.ui.window_keeper import DEFAULT_SIZE, MIN_SIZE, WindowKeeper
 
 @pytest.fixture
 def make(qapp):
@@ -22,15 +23,56 @@ on_top = lambda p: bool(p.windowFlags() & Qt.WindowStaysOnTopHint)
 
 def test_first_start_uses_default_size(make):
     p, _ = make({})
-    assert p.size() == QSize(380, 480) and not p.is_mini and not on_top(p)
+    assert p.size() == QSize(380, 620) == QSize(*DEFAULT_SIZE) and not p.is_mini and not on_top(p)
 
 def test_restores_saved_normal_geometry(make):
-    p, _ = make({"player_geometry": [50, 60, 400, 500]})
-    assert p.geometry() == QRect(50, 60, 400, 500)
+    p, _ = make({"player_geometry": [50, 60, 400, 640]})
+    assert p.geometry() == QRect(50, 60, 400, 640)
+
+def test_old_saved_size_is_raised_to_minimum(make):
+    p, _ = make({"player_geometry": [10, 10, 300, 480]})
+    assert p.geometry() == QRect(10, 10, *MIN_SIZE) and p.width() >= 340 and p.height() >= 560
+
+def test_window_cannot_shrink_below_minimum(make):
+    p, _ = make({})
+    assert p.minimumSize() == QSize(*MIN_SIZE)
+    p.resize(100, 100); assert p.size() == QSize(*MIN_SIZE)
+
+@pytest.mark.parametrize("tab", TABS)
+def test_minimum_size_holds_a_status_line_without_overlap(make, qapp, tab):
+    p, _ = make({})
+    p.controller.notify("안내"); p.refresh(); p.set_tab(tab)
+    p.resize(*MIN_SIZE); qapp.processEvents()
+    assert p.size() == QSize(*MIN_SIZE) and p.status_label.isVisible()
+    assert p.layout().totalMinimumSize().height() <= MIN_SIZE[1]
+    assert p.pages.height() >= p.pages.currentWidget().minimumSizeHint().height()
+    if tab == "now":
+        assert p.title_label.y() >= p.art_label.geometry().bottom()
+
+def test_stack_minimum_follows_the_shown_page(make, qapp):
+    p, _ = make({})
+    assert p.pages.minimumHeight() == p.page_now.minimumSizeHint().height() > 400
+    p.set_tab("playlist")
+    assert p.pages.minimumHeight() < 200
+    p.set_mini(True); assert p.pages.minimumHeight() == 1
+    p.set_mini(False); p.set_tab("now")
+    assert p.pages.minimumHeight() == p.page_now.minimumSizeHint().height() > 400
+
+def test_on_top_toggle_keeps_chrome_flags(qapp):
+    s = Settings({"player_mini": True}, lambda: None)
+    p = PlayerPanel(s, player=FakePlayer()); p.use_window_chrome()
+    k = WindowKeeper(p, s); k.start(); p.show(); qapp.processEvents()
+    try:
+        assert on_top(p) and p.windowFlags() & Qt.FramelessWindowHint
+        p.set_mini(False)
+        assert not on_top(p) and p.windowFlags() & Qt.FramelessWindowHint
+        assert p.windowFlags() & Qt.WindowMinimizeButtonHint and p.testAttribute(Qt.WA_TranslucentBackground)
+    finally:
+        p.shutdown(); p.deleteLater()
 
 def test_offscreen_geometry_is_centered(make):
-    p, _ = make({"player_geometry": [5000, 5000, 380, 480]})
-    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 480)
+    p, _ = make({"player_geometry": [5000, 5000, 380, 640]})
+    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 640)
 
 def test_starts_in_mini_on_top_at_saved_place(make):
     p, _ = make({"player_mini": True, "player_mini_geometry": [30, 40, 380, 92]}); g = p.geometry()
@@ -38,12 +80,12 @@ def test_starts_in_mini_on_top_at_saved_place(make):
     assert p.minimumHeight() == p.maximumHeight() == p.sizeHint().height()
 
 def test_toggle_saves_each_mode_and_restores_other(make):
-    store = {"player_geometry": [50, 60, 400, 500]}; p, _ = make(store)
+    store = {"player_geometry": [50, 60, 400, 640]}; p, _ = make(store)
     p.set_mini(True)
-    assert store["player_geometry"] == [50, 60, 400, 500] and on_top(p)
+    assert store["player_geometry"] == [50, 60, 400, 640] and on_top(p)
     p.move(70, 80); g = p.geometry(); p.set_mini(False)   # 보이는 창의 move는 틀 기준이라 안쪽 자리로 비교
     assert store["player_mini_geometry"][:2] == [g.x(), g.y()] and g.x() >= 70
-    assert p.geometry() == QRect(50, 60, 400, 500)
+    assert p.geometry() == QRect(50, 60, 400, 640)
     assert not on_top(p) and p.maximumHeight() == 16777215
 
 def test_on_top_option(make):
@@ -53,8 +95,8 @@ def test_on_top_option(make):
     p.set_mini(False); assert not on_top(p)
 
 def test_save_writes_current_mode(make):
-    store = {}; p, k = make(store); p.setGeometry(20, 30, 390, 470); k.save()
-    assert store["player_geometry"] == [20, 30, 390, 470]
+    store = {}; p, k = make(store); p.setGeometry(20, 30, 390, 640); k.save()
+    assert store["player_geometry"] == [20, 30, 390, 640]
 
 def test_runtime_mini_is_as_short_as_its_content(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents()
@@ -62,10 +104,10 @@ def test_runtime_mini_is_as_short_as_its_content(make, qapp):
 
 def test_back_to_normal_keeps_layout_minimum_height(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents(); p.set_mini(False); qapp.processEvents()
-    assert p.minimumHeight() == p.layout().totalMinimumSize().height() and p.minimumHeight() > 200
+    assert p.minimumHeight() == MIN_SIZE[1] >= p.layout().totalMinimumSize().height() > 200
 
 def test_mini_start_without_mini_place_uses_normal_place(make):
-    p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 500]}); g = p.geometry()
+    p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 640]}); g = p.geometry()
     assert p.is_mini and (g.x(), g.y(), g.width()) == (50, 60, 400)
 
 def test_mini_start_without_any_place_uses_default_width_centered(make):
@@ -74,7 +116,9 @@ def test_mini_start_without_any_place_uses_default_width_centered(make):
     assert p.is_mini and p.width() == 380 and p.geometry().center().x() in (screen.center().x(), screen.center().x() + 1)
 
 def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
-    store = {"player_geometry": [50, 60, 400, 500]}; p, k = make(store)
+    store = {}; p, k = make(store)
+    # offscreen 화면(800x600)은 MIN_SIZE보다 낮아 화면에 들어가는 크기로 낮춰 놓고 잰다
+    p.setMinimumHeight(500); p.setGeometry(50, 60, 400, 500); qapp.processEvents(); k.save()
     p.showMaximized(); qapp.processEvents(); assert p.isMaximized()
     k.save(); assert store["player_geometry"] == [50, 60, 400, 500]
     p.set_mini(True); qapp.processEvents()

@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         media_keys=media_keys_mod.MediaKeys(api=media_keys_mod.default_api()),
         font_family=family)
     panel.setWindowTitle("my-fun")
+    panel.use_window_chrome()
     keeper = WindowKeeper(panel, settings)
     keeper.start()
     # Windows 로그오프·종료 때는 exec_() 뒤가 돌지 않을 수 있어 끝나기 직전에도 저장한다 (두 번 해도 된다)

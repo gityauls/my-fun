@@ -61,7 +61,7 @@ def test_constants():
 def test_four_tabs_and_default_now(panel):
     assert panel.tab == "now" and panel.tab_bar.count() == 4
     assert panel.pages.currentWidget().objectName() == "pageNow"
-    assert panel.objectName() == "root"
+    assert panel.root.objectName() == "root"
 
 
 @pytest.mark.parametrize("name,page", [("playlist", "pagePlaylist"), ("radio", "pageRadio"), ("fx", "pageFx")])
@@ -265,7 +265,7 @@ def test_status_shows_on_every_tab_and_takes_no_space_when_empty(panel, tab):
 
 
 def test_status_sits_above_strip(panel):
-    lay = panel.layout()
+    lay = panel.root.layout()
     assert lay.indexOf(panel.pages) < lay.indexOf(panel.status_label) < lay.indexOf(panel.now_strip)
 
 

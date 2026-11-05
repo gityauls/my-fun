@@ -10,6 +10,12 @@ from PyQt5.QtGui import QColor
 
 from funplayer.core.themes import Theme
 
+WINDOW_RADIUS = 20
+EDGE = 1   # 창 테두리 두께. 안쪽 내용은 그만큼 작은 반지름으로 맞물린다
+_INNER = WINDOW_RADIUS - EDGE
+# 창 맨 아래에 닿을 수 있는 면들
+_BOTTOM_SURFACES = ("#pageNow", "#pagePlaylist", "#pageRadio", "#pageFx", "#footBar", "#nowStrip")
+
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 _GRAD = re.compile(r"^linear-gradient\((.*)\)$", re.S)
 
@@ -134,6 +140,19 @@ def _fx_block(c: Theme) -> str:
 """
 
 
+def _corners() -> str:
+    """둥근 창 모서리. Qt에는 overflow가 없어 가장자리에 닿는 면마다 같이 둥글게 한다."""
+    bottom = ", ".join(_BOTTOM_SURFACES)
+    square = ", ".join(f'#root[square="true"] {s}' for s in ("#titleBar", *_BOTTOM_SURFACES))
+    return f"""
+#titleBar {{ border-top-left-radius: {_INNER}px; border-top-right-radius: {_INNER}px; }}
+{bottom} {{ border-bottom-left-radius: {_INNER}px; border-bottom-right-radius: {_INNER}px; }}
+#pageNow[flush="true"] {{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; }}
+#root[square="true"] {{ border: none; border-radius: 0; }}
+{square} {{ border-radius: 0; }}
+"""
+
+
 def stylesheet(theme: Theme, family: str) -> str:
     q = qcolor_gradient
     t = theme
@@ -142,13 +161,13 @@ def stylesheet(theme: Theme, family: str) -> str:
     mini = replace(t, **mini_over) if mini_over else t
     fam = family.replace('"', "")
     out = [f"""
-#root {{ background: {q(t.bg)}; color: {q(t.ink)}; font-family: "{fam}"; }}
+#root {{ background: {q(t.bg)}; color: {q(t.ink)}; font-family: "{fam}"; border: {EDGE}px solid {q(t.edge)}; border-radius: {WINDOW_RADIUS}px; }}
 #titleBar {{ background: {q(t.bar)}; color: {q(t.bar_fg)}; }}
 #titleBar QLabel {{ color: {q(t.bar_fg)}; background: transparent; font-size: 14px; }}
 #titleBar QPushButton {{ background: transparent; border: none; color: {q(t.bar_fg)}; padding: 0; }}
-#titleBar QPushButton:hover {{ background: rgba(255,255,255,30); border-radius: 6px; }}
+#titleBar QPushButton:hover {{ background: rgba(128,128,128,70); border-radius: 6px; }}
 #tabs {{ background: {q(t.tabs)}; border-bottom: 1px solid {q(t.line)}; }}
-#tabs QToolButton {{ background: transparent; border: none; border-bottom: 3px solid transparent; color: {q(t.tab_fg)}; font-size: 12px; padding: 0 4px; }}
+#tabs QToolButton {{ background: transparent; border: none; border-bottom: 3px solid transparent; color: {q(t.tab_fg)}; font-size: 12px; padding: 7px 4px 5px; }}
 #tabs QToolButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; border-bottom: 3px solid {q(t.tab_line)}; }}
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
@@ -171,4 +190,5 @@ QMenu#themed::item:selected {{ background: {q(t.tint)}; color: {q(t.row_fg)}; }}
     out.append(_block("#footBar", t))
     out.append(_block("#nowStrip", t))
     out.append(_block("#miniBar", mini))
+    out.append(_corners())
     return "".join(out)
