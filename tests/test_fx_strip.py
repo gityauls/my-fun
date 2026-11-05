@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import time
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QCheckBox, QVBoxLayout, QWidget
 
 from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtGui import QColor
+from PyQt5.QtTest import QTest
 
 from funplayer.core.effects import AUTO, CUSTOM, PRESETS, FxSettings
 from funplayer.ui.fx_strip import THROTTLE_MS, FxStrip
@@ -268,3 +270,43 @@ def test_spectrum_view_paints(qapp):
     view.set_levels([0.5] * 24, [0.8] * 24)
     assert view.levels == [0.5] * 24 and view.peaks == [0.8] * 24
     assert not view.grab().isNull()
+
+
+# ---- 켜기 스위치 ----
+
+def switch(theme="light"):
+    from funplayer.core.themes import get_theme
+    from funplayer.ui.style import stylesheet
+    host = QWidget(); host.setObjectName("pageFx"); host.setStyleSheet(stylesheet(get_theme(theme)))
+    box = QVBoxLayout(host); strip = FxStrip(); box.addWidget(strip)
+    strip.set_theme(get_theme(theme)); host.resize(360, 400); host.show(); QApplication.processEvents()
+    return host, strip.enabled_box, get_theme(theme)
+
+
+def test_switch_is_still_a_labelled_checkbox(qapp):
+    host, sw, _ = switch()
+    assert isinstance(sw, QCheckBox) and sw.text() == "켜기" and sw.focusPolicy() != Qt.NoFocus
+    r = sw.track_rect()
+    assert (r.width(), r.height()) == (34, 19)
+
+
+def test_switch_colours_and_knob_follow_the_state(qapp):
+    host, sw, t = switch()
+    r = sw.track_rect(); y = r.center().y(); left, right = r.left() + 10, r.right() - 10
+    sw.setChecked(False); QApplication.processEvents()
+    img = sw.grab().toImage()
+    assert img.pixelColor(right, y).name() == QColor(t.track).name()
+    assert img.pixelColor(left, y).name() == QColor(t.on_acc).name()
+    sw.setChecked(True); QApplication.processEvents()
+    img = sw.grab().toImage()
+    assert img.pixelColor(left, y).name() == QColor(t.acc).name()
+    assert img.pixelColor(right, y).name() == QColor(t.on_acc).name()
+
+
+def test_switch_clicks_and_keyboard_toggle(qapp):
+    host, sw, _ = switch()
+    seen = []; sw.toggled.connect(seen.append)
+    QTest.mouseClick(sw, Qt.LeftButton, pos=sw.track_rect().center())
+    assert seen == [True]
+    sw.setFocus(); QTest.keyClick(sw, Qt.Key_Space)
+    assert seen == [True, False]

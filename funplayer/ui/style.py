@@ -11,6 +11,7 @@ from PyQt5.QtGui import QColor
 from funplayer.core.themes import Theme
 
 FONT_FAMILY = "Malgun Gothic"
+SWITCH_WIDTH, SWITCH_HEIGHT = 34, 19
 WINDOW_RADIUS = 20
 MINI_RADIUS = 24
 EDGE = 1   # 창 테두리 두께. 안쪽 내용은 그만큼 작은 반지름으로 맞물린다
@@ -141,8 +142,7 @@ def _fx_block(c: Theme) -> str:
 {s} QRadioButton::indicator {{ width: 0; height: 0; image: none; }}
 {s} QRadioButton:checked {{ background: {q(c.acc)}; color: {q(c.on_acc)}; font-weight: 700; }}
 {s} QCheckBox {{ color: {q(c.mute)}; background: transparent; font-size: 12px; spacing: 6px; }}
-{s} QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 4px; background: {q(c.track)}; }}
-{s} QCheckBox::indicator:checked {{ background: {q(c.acc)}; }}
+{s} QCheckBox::indicator {{ width: {SWITCH_WIDTH}px; height: {SWITCH_HEIGHT}px; background: transparent; image: none; }}
 {s} QComboBox::drop-down {{ border: none; width: 18px; }}
 {s} QComboBox QAbstractItemView {{ background: {q(c.ctrl_bg)}; color: {q(c.ink)}; selection-background-color: {q(c.tint)}; selection-color: {q(c.row_fg)}; }}
 """

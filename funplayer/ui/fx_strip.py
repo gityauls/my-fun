@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QPainter, QPainterPath
 from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout,
                              QHBoxLayout, QLabel, QPushButton, QRadioButton, QSizePolicy,
                              QSlider, QStyle, QStyleOptionButton, QVBoxLayout, QWidget)
@@ -10,12 +10,15 @@ from funplayer.core.effects import (AUTO, BAND_LABELS, BANDS_HZ, CUSTOM, PRESETS
                                     FxSettings)
 from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
 from funplayer.ui.spectrum_view import SpectrumView
+from funplayer.ui.style import SWITCH_HEIGHT, SWITCH_WIDTH, css_color
 
 THROTTLE_MS = 50
 MODE_TEXT = (("off", "끄기"), ("speaker", "스피커"), ("earphone", "이어폰"))
 LEVEL_TEXT = {"width": "넓이", "depth": "입체감", "bass": "베이스"}
 LEVEL_MODE = {"speaker": ("width",), "earphone": ("depth", "bass")}
 BARS = 24
+_KNOB = 15
+_KNOB_GAP = 2
 
 
 class _SegRadio(QRadioButton):
@@ -46,6 +49,40 @@ class _SegRadio(QRadioButton):
     def sizeHint(self) -> QSize:
         base = super().sizeHint()
         return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 16, base.height())
+
+
+class SwitchBox(QCheckBox):
+    """켜고 끄는 스위치 모양의 체크 상자. 신호와 키보드는 QCheckBox 그대로이고, QSS가 비워 둔
+    표시 칸에 트랙과 손잡이를 그린다."""
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(text, parent)
+        self._theme = get_theme(DEFAULT_THEME)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def track_rect(self) -> QRect:
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        box = self.style().subElementRect(QStyle.SE_CheckBoxIndicator, opt, self)
+        return QRect(box.left(), box.center().y() - SWITCH_HEIGHT // 2, SWITCH_WIDTH, SWITCH_HEIGHT)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        t, r = self._theme, self.track_rect()
+        on = self.isChecked()
+        track = QPainterPath()
+        track.addRoundedRect(QRectF(r), r.height() / 2, r.height() / 2)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillPath(track, css_color(t.acc if on else t.track))
+        x = r.right() + 1 - _KNOB_GAP - _KNOB if on else r.left() + _KNOB_GAP
+        p.setPen(Qt.NoPen)
+        p.setBrush(css_color(t.on_acc))
+        p.drawEllipse(QRectF(x, r.top() + _KNOB_GAP, _KNOB, _KNOB))
+        p.end()
 
 
 def _hz_text(hz: int) -> str:
@@ -84,7 +121,7 @@ class FxStrip(QWidget):
         font.setBold(True)
         font.setPixelSize(14)
         self.title_label.setFont(font)
-        self.enabled_box = QCheckBox("켜기")
+        self.enabled_box = SwitchBox("켜기")
         self.enabled_box.toggled.connect(self._enabled_toggled)
         head.addWidget(self.title_label, 1)
         head.addWidget(self.enabled_box)
@@ -191,6 +228,7 @@ class FxStrip(QWidget):
         return label
 
     def set_theme(self, theme: Theme) -> None:
+        self.enabled_box.set_theme(theme)
         """스펙트럼과 듣는 곳 칸의 글자색만 여기서 바꾼다. 나머지는 패널 스타일시트(#pageFx)가 입힌다."""
         self.spectrum.set_colors(theme.spec or (theme.g1,), theme.acc_t)
         for button in self.mode_buttons.values():
