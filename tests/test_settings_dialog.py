@@ -42,3 +42,9 @@ def test_dots_skip_non_solid(qapp):
 def test_buttons_are_korean(qapp):
     d = SettingsDialog("light")
     assert (d.ok_button.text(), d.cancel_button.text()) == ("확인", "취소")
+
+
+def test_all_themes_fit_without_scrolling(qapp):
+    d = SettingsDialog("light"); d.show(); qapp.processEvents()
+    assert d.theme_list.verticalScrollBar().maximum() == 0
+    d.close(); d.deleteLater()
