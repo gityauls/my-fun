@@ -235,13 +235,47 @@ def test_lost_signal_reaches_radio(rpanel):
 def test_mini_hides_radio_rows(rpanel):
     p, fake, runner = rpanel; connect(p, runner)
     p.set_mini(True)
-    names = ("tab_bar", "station_view", "live_label", "listened_label", "add_url_button")
+    names = ("tab_bar", "station_view", "add_url_button")
+    live = ("live_label", "listened_label")
     assert not any(getattr(p, n).isVisible() for n in names) and not p.seek_slider.isVisible()
+    assert all(getattr(p, n).isVisible() for n in live)
     p.refresh(); assert not any(getattr(p, n).isVisible() for n in names)
+    assert all(getattr(p, n).isVisible() for n in live)
     p.set_mini(False)
     assert all(getattr(p, n).isVisible() for n in ("tab_bar", "station_view", "add_url_button"))
     assert not p.playlist_view.isVisible() and not p.open_button.isVisible()
     p.set_tab("now"); assert p.live_label.isVisible() and p.listened_label.isVisible()
+
+
+def test_radio_mini_shows_live(rpanel, qapp):
+    p, fake, runner = rpanel; connect(p, runner); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
+    p.refresh()
+    assert p.mini_bar.isAncestorOf(p.live_label) and p.mini_bar.isAncestorOf(p.listened_label)
+    assert p.live_label.isVisible() and p.listened_label.isVisible()
+    assert not p.seek_slider.isVisible() and not p.elapsed_label.isVisible() and not p.total_label.isVisible()
+    assert not p.shuffle_button.isEnabled() and not p.repeat_button.isEnabled()
+    assert p.heart_button.isVisible() and p.heart_button.isEnabled()
+    assert p.live_label.x() < p.listened_label.x()
+    assert p.listened_label.geometry().right() == p.mini_info.width() - 1
+    p.set_mini(False); p.set_tab("now")
+    assert p.live_label.isVisible() and p.page_now.isAncestorOf(p.live_label)
+
+
+def test_mini_live_mark_uses_the_bar_accent(rpanel):
+    from funplayer.ui.style import mini_theme
+    p, fake, runner = rpanel; connect(p, runner)
+    p.set_mini(True)
+    assert mini_theme(p.theme).acc_t in p.live_label.styleSheet()   # 어두운 막대에서도 보이게
+    p.set_mini(False)
+    assert "#C5221F" in p.live_label.styleSheet()
+
+
+def test_radio_mini_shows_radio_art(rpanel, monkeypatch):
+    import funplayer.ui.player_panel as pp
+    p, fake, runner = rpanel; connect(p, runner); calls = []; real = pp.radio_art_for
+    monkeypatch.setattr(pp, "radio_art_for", lambda *a: calls.append(a[1:]) or real(*a))
+    p.set_mini(True)
+    assert (80, 14) in calls and p.art_label.pixmap().width() == 80
 
 
 def test_station_info(rpanel):
@@ -359,23 +393,22 @@ def test_ctrl_tab_key_reaches_shortcut_from_station_view(rpanel):
     assert p.tab_bar.currentIndex() == 3
 
 
-def test_mini_switch_button_only_in_mini_and_follows_source(rpanel, tmp_path):
-    p, fake, runner = rpanel
-    assert not p.switch_button.isVisible()
+def test_mini_switch_item_follows_source(rpanel, tmp_path):
+    p, fake, runner = rpanel; switch = p.actions["switch"]
     p.set_mini(True); p.refresh()
-    assert p.switch_button.isVisible() and p.switch_button.text() == "라디오로"
+    assert switch in p.source_menu.actions() and switch.text() == "라디오로"
     connect(p, runner); p.refresh()
-    assert p.switch_button.text() == "MP3로" and not p.switch_button.isEnabled()   # 재생목록이 비었다
-    p.set_mini(False); assert not p.switch_button.isVisible()
+    assert switch.text() == "MP3로" and not switch.isEnabled()   # 재생목록이 비었다
+    p.set_mini(False); assert switch.text() == "MP3로"
 
 
 def test_mini_switch_to_radio_plays_last_station_or_first(rpanel, tmp_path):
     p, fake, runner = rpanel
     p.set_mini(True)
-    p.switch_button.click()   # 한 번도 듣지 않았다: 목록 맨 위 방송
+    p.actions["switch"].trigger()   # 한 번도 듣지 않았다: 목록 맨 위 방송
     assert p.controller.source == "radio" and p.radio.current.id == "kbs-21" and len(runner.calls) == 1
     runner.finish(0, result=FakeStream()); p.refresh()
-    assert p.radio.state is RadioState.LIVE and p.switch_button.text() == "MP3로"
+    assert p.radio.state is RadioState.LIVE and p.actions["switch"].text() == "MP3로"
 
 
 def test_mini_switch_round_trip_resumes_track_and_station(rpanel, tmp_path):
@@ -384,11 +417,11 @@ def test_mini_switch_round_trip_resumes_track_and_station(rpanel, tmp_path):
     fake.position = 50.0
     connect(p, runner, "sbs-powerfm")
     p.set_mini(True); p.refresh()
-    p.switch_button.click()   # MP3로: 라디오를 끊고 듣던 곡 위치에서
+    p.actions["switch"].trigger()   # MP3로: 라디오를 끊고 듣던 곡 위치에서
     assert p.radio.state is RadioState.IDLE and p.controller.source == "file"
     assert fake.loaded[-1].endswith("01 a.mp3") and fake.seeks[-1] == 50.0 and fake.state is State.PLAYING
-    assert p.switch_button.text() == "라디오로" and p.tab == "playlist"
-    p.switch_button.click()   # 라디오로: 마지막 방송국
+    assert p.actions["switch"].text() == "라디오로" and p.tab == "playlist"
+    p.actions["switch"].trigger()   # 라디오로: 마지막 방송국
     assert p.controller.source == "radio" and p.radio.current.id == "sbs-powerfm" and p.tab == "radio"
 
 
@@ -396,5 +429,5 @@ def test_mini_switch_to_mp3_without_track_index_plays_first(rpanel, tmp_path):
     p, fake, runner = rpanel
     p.controller.open([str(make_songs(tmp_path / "m", ["01 a.mp3"]))])
     connect(p, runner)
-    p.set_mini(True); p.refresh(); p.switch_button.click()
+    p.set_mini(True); p.refresh(); p.actions["switch"].trigger()
     assert p.controller.source == "file" and fake.loaded[-1].endswith("01 a.mp3") and fake.state is State.PLAYING

@@ -299,8 +299,8 @@ def test_theme_reaches_title_bar(panel):
 
 def test_mini_hides_title_bar(panel):
     panel.show()
-    panel.set_mini(True); assert panel.title_bar.isHidden()
-    panel.set_mini(False); assert not panel.title_bar.isHidden()
+    panel.set_mini(True); assert panel.title_bar.isHidden() and panel.corner_radius() == 24
+    panel.set_mini(False); assert not panel.title_bar.isHidden() and panel.corner_radius() == 20
 
 
 def test_hero_meets_status_line_with_square_bottom(panel):

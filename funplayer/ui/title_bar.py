@@ -19,7 +19,36 @@ MAX_TIPS = {False: "최대화", True: "이전 크기로"}
 _ICONS = (("mini_btn", "shrink", 15), ("min_btn", "min", 16), ("max_btn", "max", 14), ("close_btn", "x", 16))
 
 
-class TitleBar(QWidget):
+class WindowDragArea(QWidget):
+    """Dragging on this widget (or on children that ignore the mouse) moves the window."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._press: QPoint | None = None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._press = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        # 누르는 순간이 아니라 끌기 시작할 때 맡긴다: 누를 때 맡기면 Windows가 더블클릭을 삼킨다
+        press = self._press
+        if (press is not None and event.buttons() & Qt.LeftButton
+                and (event.pos() - press).manhattanLength() >= QApplication.startDragDistance()):
+            self._press = None
+            window = self.window()
+            handle = window.windowHandle()
+            if handle is not None and not window.isMaximized():
+                handle.startSystemMove()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._press = None
+        super().mouseReleaseEvent(event)
+
+
+class TitleBar(WindowDragArea):
     miniClicked = pyqtSignal()
     minimizeClicked = pyqtSignal()
     maximizeClicked = pyqtSignal()
@@ -31,7 +60,6 @@ class TitleBar(QWidget):
         self.setObjectName("titleBar")
         self.setAttribute(Qt.WA_StyledBackground)
         self.setFixedHeight(TITLE_HEIGHT)
-        self._press: QPoint | None = None
         row = QHBoxLayout(self)
         row.setContentsMargins(16, 0, 12, 0)
         row.setSpacing(8)
@@ -71,27 +99,6 @@ class TitleBar(QWidget):
 
     def set_maximized(self, on: bool) -> None:
         self.max_btn.setToolTip(MAX_TIPS[bool(on)])
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self._press = event.pos()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:
-        # 누르는 순간이 아니라 끌기 시작할 때 맡긴다: 누를 때 맡기면 Windows가 더블클릭을 삼킨다
-        press = self._press
-        if (press is not None and event.buttons() & Qt.LeftButton
-                and (event.pos() - press).manhattanLength() >= QApplication.startDragDistance()):
-            self._press = None
-            window = self.window()
-            handle = window.windowHandle()
-            if handle is not None and not window.isMaximized():
-                handle.startSystemMove()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._press = None
-        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:

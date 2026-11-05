@@ -175,3 +175,122 @@ def test_bottom_buttons_size_from_font(panel):
     for b in (p.open_button, p.add_button, p.list_button, p.view_button):
         assert b.minimumWidth() > b.fontMetrics().horizontalAdvance(b.text())
         assert b.sizePolicy().horizontalPolicy() == QSizePolicy.Preferred
+
+
+# ---- 긴 막대 미니 ----
+
+SHARED = ("art_label", "title_label", "artist_label", "heart_button", "elapsed_label", "seek_slider",
+          "total_label", "shuffle_button", "prev_button", "play_button", "next_button", "repeat_button",
+          "mute_button", "volume_slider", "live_label", "listened_label")
+
+def test_mini_size_and_shared_widgets(panel):
+    p, _ = panel; p.set_mini(True)
+    assert p.art_label.width() == 80 and p.play_button.window() is p
+    assert (p.play_button.width(), p.play_button.property("kind")) == (46, "playMd")
+    assert all(p.mini_bar.isAncestorOf(getattr(p, n)) for n in SHARED)
+    p.set_mini(False)
+    assert all(p.pages.widget(0).isAncestorOf(getattr(p, n)) for n in SHARED)
+    assert p.art_label.width() == ART_NORMAL
+    assert (p.play_button.width(), p.play_button.property("kind")) == (60, "play")
+
+def test_mini_shows_only_the_bar(panel, qapp):
+    p, _ = panel; p.show(); assert not p.mini_bar.isVisible() and p.mini_bar.objectName() == "miniBar"
+    p.set_tab("playlist"); p.set_mini(True); qapp.processEvents()
+    assert p.mini_bar.isVisible()
+    assert not any(w.isVisible() for w in (p.title_bar, p.tab_bar, p.pages, p.status_label, p.now_strip))
+    assert all(getattr(p, n).isVisible() for n in SHARED if n not in ("live_label", "listened_label"))
+    assert p.mini_controls.isVisible() and p.list_button_mini.isVisible()
+    p.set_mini(False); qapp.processEvents()
+    assert not p.mini_bar.isVisible() and p.tab == "playlist" and p.playlist_view.isVisible()
+
+def test_back_to_normal_restores_every_slot_and_size(panel):
+    p, _ = panel
+    def snapshot():
+        out = {}
+        for n in SHARED:
+            w = getattr(p, n)
+            out[n] = (w.parent(), w.minimumSize(), w.maximumSize(), w.font().pixelSize())
+            if hasattr(w, "iconSize"):
+                out[n] += (w.iconSize(),)
+        out["rows"] = ([p.control_row.indexOf(w) for w in (p.shuffle_button, p.prev_button, p.play_button,
+                                                           p.next_button, p.repeat_button)],
+                       p.head_row.indexOf(p.heart_button), p.art_row.indexOf(p.art_label),
+                       p.page_now.layout().indexOf(p.seek_slider), p.page_now.layout().count())
+        return out
+    before = snapshot()
+    p.set_mini(True); assert snapshot() != before
+    p.set_mini(False)
+    assert snapshot() == before
+
+def test_mini_layout_follows_the_mockup(panel, qapp):
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
+    assert (p.mini_bar.width(), p.mini_bar.height()) == (680, 104)
+    assert p.layout().totalMinimumSize().width() == 680
+    assert (p.art_label.x(), p.art_label.y()) == (13, 12)
+    assert p.mini_info.width() == 206 and p.mini_volume.width() == 92 and p.list_button_mini.width() == 26
+    assert p.title_label.font().pixelSize() == 14 and p.title_label.font().bold()
+    assert p.artist_label.font().pixelSize() == 12 and p.elapsed_label.font().pixelSize() == 11
+    assert p.mini_info.x() == 13 + 80 + 12 + 1 + 12
+    right = p.list_button_mini.mapTo(p.mini_bar, p.list_button_mini.rect().topRight()).x()
+    assert right == 680 - 17 - 1
+
+def test_wider_mini_goes_to_the_info_column(panel, qapp):
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(780, 104); qapp.processEvents()
+    assert p.mini_info.width() == 306 and p.mini_volume.width() == 92
+
+def test_mini_window_buttons_stay_on_top_at_the_corner(panel, qapp):
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
+    c = p.mini_controls
+    assert c.parent() is p.mini_bar and c.geometry().right() == 679 and c.y() == 0
+    for b in (p.mini_min_button, p.mini_normal_button, p.mini_close_button):
+        assert p.mini_bar.childAt(b.mapTo(p.mini_bar, b.rect().center())) is b
+    assert p.mini_normal_button.toolTip() == "보통 보기"
+
+def test_long_title_elides_inside_the_info_column(panel, qapp, tmp_path):
+    p, _ = panel; name = "아주 긴 제목 " * 12 + ".mp3"
+    p.controller.open([str(make_songs(tmp_path, [name]))]); p.show()
+    p.set_mini(True); p.resize(680, 104); qapp.processEvents(); p.refresh()
+    assert p.title_label.text().endswith("…") and p.title_label.width() < 206
+    assert p.title_label.fontMetrics().horizontalAdvance(p.title_label.text()) <= p.title_label.width()
+    assert p.title_label.toolTip().startswith("아주 긴 제목")
+
+def test_title_elides_right_after_the_switch(panel, qapp, tmp_path):
+    from funplayer.ui.window_keeper import WindowKeeper
+    p, _ = panel; p.controller.open([str(make_songs(tmp_path, ["아주 긴 제목 " * 12 + ".mp3"]))])
+    WindowKeeper(p, p.settings).start(); p.show(); qapp.processEvents(); p.refresh()
+    p.set_mini(True)
+    assert p.title_label.fontMetrics().horizontalAdvance(p.title_label.text()) <= p.title_label.width()
+
+def test_art_is_rebuilt_at_each_mode_size(panel, tmp_path, monkeypatch):
+    import funplayer.ui.player_panel as pp
+    p, _ = panel; p.controller.open([str(make_songs(tmp_path, ABC))]); p.refresh(); calls = []
+    real = pp.rounded_art
+    monkeypatch.setattr(pp, "rounded_art", lambda *a: calls.append(a[1:3]) or real(*a))
+    p.set_mini(True)
+    assert (80, 14) in calls and p.art_label.pixmap().width() == 80
+    calls.clear(); p.set_mini(False)
+    assert (216, 28) in calls and p.art_label.pixmap().width() == 216
+
+@pytest.mark.parametrize("name", ["l", "m"])
+def test_mini_icons_use_the_mini_colours(panel, name):
+    from funplayer.core.themes import get_theme
+    from funplayer.ui.glyphs import glyph
+    from funplayer.ui.style import hero_theme, mini_theme
+    p, _ = panel; theme = get_theme(name); p.apply_theme(theme)
+    image = lambda icon, size: icon.pixmap(size, size).toImage()
+    assert image(p.prev_button.icon(), 21) == image(glyph("prev", hero_theme(theme).icon, 21), 21)
+    p.set_mini(True)
+    assert image(p.prev_button.icon(), 19) == image(glyph("prev", mini_theme(theme).icon, 19), 19)
+    assert image(p.list_button_mini.icon(), 20) == image(glyph("list", mini_theme(theme).icon, 20), 20)
+    p.apply_theme(theme)   # 미니에서 테마를 바꿔도 미니 색이다
+    assert image(p.prev_button.icon(), 19) == image(glyph("prev", mini_theme(theme).icon, 19), 19)
+    assert p.art_label.pixmap().width() == 80
+    p.set_mini(False)
+    assert image(p.prev_button.icon(), 21) == image(glyph("prev", hero_theme(theme).icon, 21), 21)
+
+def test_theme_stylesheet_gives_the_bar_its_shape():
+    from funplayer.core.themes import get_theme
+    from funplayer.ui.style import MINI_RADIUS, stylesheet
+    qss = stylesheet(get_theme("light"), "Pretendard")
+    assert MINI_RADIUS == 24 and '#miniBar QPushButton[kind="playMd"]' in qss
+    assert "#miniLine" in qss and "#miniControls QPushButton:hover" in qss

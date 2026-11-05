@@ -11,6 +11,7 @@ from PyQt5.QtGui import QColor
 from funplayer.core.themes import Theme
 
 WINDOW_RADIUS = 20
+MINI_RADIUS = 24
 EDGE = 1   # 창 테두리 두께. 안쪽 내용은 그만큼 작은 반지름으로 맞물린다
 _INNER = WINDOW_RADIUS - EDGE
 # 창 맨 아래에 닿을 수 있는 면들
@@ -83,6 +84,12 @@ def hero_theme(theme: Theme) -> Theme:
     return replace(theme, **theme.hero) if theme.hero else theme
 
 
+def mini_theme(theme: Theme) -> Theme:
+    """미니 막대에 쓰는 색 (mini가 없으면 hero를 따른다)."""
+    over = theme.mini or theme.hero
+    return replace(theme, **over) if over else theme
+
+
 def _block(s: str, c: Theme) -> str:
     """Rules for the widgets inside one themed surface (page, strip, mini bar...)."""
     q = qcolor_gradient
@@ -140,6 +147,18 @@ def _fx_block(c: Theme) -> str:
 """
 
 
+def _mini_block(c: Theme) -> str:
+    """막대만의 모양: 칸막이 선, 창 버튼, 조금 작은 슬라이더."""
+    q = qcolor_gradient
+    s = "#miniBar"
+    return f"""
+{s} #miniLine {{ background: {q(c.line)}; }}
+#miniControls QPushButton:hover {{ background: rgba(128,128,128,70); border-radius: 6px; }}
+{s} QSlider::groove:horizontal {{ height: 4px; }}
+{s} QSlider::handle:horizontal, {s} QSlider#volumeSlider::handle:horizontal {{ width: 11px; height: 11px; margin: -4px 0; border-radius: 5px; }}
+"""
+
+
 def _corners() -> str:
     """둥근 창 모서리. Qt에는 overflow가 없어 가장자리에 닿는 면마다 같이 둥글게 한다."""
     bottom = ", ".join(_BOTTOM_SURFACES)
@@ -157,8 +176,7 @@ def stylesheet(theme: Theme, family: str) -> str:
     q = qcolor_gradient
     t = theme
     hero = hero_theme(t)
-    mini_over = t.mini or t.hero
-    mini = replace(t, **mini_over) if mini_over else t
+    mini = mini_theme(t)
     fam = family.replace('"', "")
     out = [f"""
 #root {{ background: {q(t.bg)}; color: {q(t.ink)}; font-family: "{fam}"; border: {EDGE}px solid {q(t.edge)}; border-radius: {WINDOW_RADIUS}px; }}
@@ -172,7 +190,7 @@ def stylesheet(theme: Theme, family: str) -> str:
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
 #nowStrip {{ background: {q(t.strip_bg)}; border-top: 1px solid {q(t.line)}; }}
-#miniBar {{ background: {q(mini.bg)}; border: 1px solid {q(t.mini_edge)}; border-radius: 24px; }}
+#miniBar {{ background: {q(mini.bg)}; font-family: "{fam}"; border: 1px solid {q(t.mini_edge)}; border-radius: {MINI_RADIUS}px; }}
 QMenu#themed {{ background: {q(t.bar)}; color: {q(t.bar_fg)}; border: 1px solid {q(t.line)}; }}
 QMenu#themed::item {{ padding: 6px 22px; }}
 QMenu#themed::item:selected {{ background: {q(t.tint)}; color: {q(t.row_fg)}; }}
@@ -190,5 +208,6 @@ QMenu#themed::item:selected {{ background: {q(t.tint)}; color: {q(t.row_fg)}; }}
     out.append(_block("#footBar", t))
     out.append(_block("#nowStrip", t))
     out.append(_block("#miniBar", mini))
+    out.append(_mini_block(mini))
     out.append(_corners())
     return "".join(out)

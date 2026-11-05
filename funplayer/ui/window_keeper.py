@@ -6,6 +6,7 @@ from PyQt5.QtGui import QGuiApplication
 DEFAULT_SIZE = (380, 620)
 # 높이: 지금 재생 탭 + 안내 줄이 실제로 603 (상단바 44, 탭 64, 페이지 470, 안내 23, 테두리 2). 글꼴 차이 몫을 조금 더한다
 MIN_SIZE = (340, 610)
+MINI_SIZE = (680, 104)
 _QWIDGETSIZE_MAX = 16777215
 
 
@@ -53,12 +54,13 @@ class WindowKeeper(QObject):
         panel.setMaximumSize(_QWIDGETSIZE_MAX, _QWIDGETSIZE_MAX)
         panel.layout().activate()
         if mini:
-            panel.setFixedHeight(panel.sizeHint().height())
+            panel.setFixedHeight(MINI_SIZE[1])
+            panel.setMinimumWidth(MINI_SIZE[0])
             saved = self._settings.mini_geometry or self._settings.geometry
-            if saved:
-                rect = QRect(saved[0], saved[1], saved[2], panel.height())
+            if saved:   # 폭만 기억한다. 옛 버전이 저장한 작은 막대는 늘린다
+                rect = QRect(saved[0], saved[1], max(saved[2], MINI_SIZE[0]), MINI_SIZE[1])
             else:
-                rect = QRect(0, 0, DEFAULT_SIZE[0], panel.height())
+                rect = QRect(0, 0, *MINI_SIZE)
                 self._center(rect)
         else:
             saved = self._settings.geometry
@@ -71,7 +73,20 @@ class WindowKeeper(QObject):
             panel.setMinimumSize(*MIN_SIZE)
         if QGuiApplication.screenAt(rect.center()) is None:
             self._center(rect)
+        if mini:
+            self._fit_width(rect)
         panel.setGeometry(rect)
+
+    @staticmethod
+    def _fit_width(rect: QRect) -> None:
+        """막대 양 끝이 화면 밖이면 들어오게 민다 (옛 작은 창 자리에서 늘어났을 때). 두 화면에 걸친 것은 둔다."""
+        if QGuiApplication.screenAt(rect.topLeft()) and QGuiApplication.screenAt(rect.topRight()):
+            return
+        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        rect.moveLeft(max(area.left(), min(rect.left(), area.right() + 1 - rect.width())))
 
     @staticmethod
     def _center(rect: QRect) -> None:

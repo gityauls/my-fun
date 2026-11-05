@@ -84,7 +84,7 @@ def _song_radio_song(p, fake, runner, tmp_path):
     p.set_tab("radio"); p.station_view.station_activated.emit("kbs-25")
     runner.finish(len(runner.calls) - 1, result=FakeStream()); p.refresh()
     assert fake.is_live and fake.effects == fx
-    p.switch_button.click()   # MP3로
+    p.actions["switch"].trigger()   # MP3로
     assert p.controller.source == "file" and fake.loaded[-1].endswith("01 a.mp3")
     assert fake.effects == fx and calls == [fx]   # 다시 걸지도, 다른 값으로 바꾸지도 않는다
 

@@ -1,6 +1,6 @@
 import pytest
-from PyQt5.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
-from PyQt5.QtGui import QDropEvent
+from PyQt5.QtCore import QEvent, QMimeData, QPoint, QPointF, Qt, QUrl
+from PyQt5.QtGui import QContextMenuEvent, QDropEvent, QMouseEvent
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QStyle, QStyleOptionSlider
 from fakes import FakePlayer, make_songs
@@ -269,11 +269,12 @@ def test_show_track_info_falls_back_to_selected_row(rig):
     assert p.info_dialog.path_label.text().endswith("02 b.mp3")
 
 
-HIDDEN_IN_MINI = ("elapsed_label", "total_label", "repeat_button", "shuffle_button",
-                  "mute_button", "volume_slider")
+HIDDEN_IN_MINI = ("mini_button", "vol_max_label")
 LIST_PAGE = ("playlist_view", "open_button", "add_button", "list_button", "view_button", "count_label")
 SHOWN_IN_MINI = ("art_label", "title_label", "artist_label", "prev_button", "play_button",
-                 "next_button", "seek_slider", "mini_button")
+                 "next_button", "seek_slider", "elapsed_label", "total_label", "repeat_button",
+                 "shuffle_button", "mute_button", "volume_slider", "heart_button", "list_button_mini",
+                 "mini_normal_button")
 
 def test_set_mini_hides_moves_and_restores(rig):
     p, _, store, _ = rig; seen = []; p.miniChanged.connect(seen.append)
@@ -283,12 +284,13 @@ def test_set_mini_hides_moves_and_restores(rig):
     assert not any(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI + LIST_PAGE)
     assert p.status_label.isHidden()
     assert all(getattr(p, n).isVisible() for n in SHOWN_IN_MINI)
-    assert p.art_label.width() == ART_MINI and p.mini_button.toolTip() == "보통 보기"
-    assert all(p.head_row.indexOf(b) >= 0 for b in (p.prev_button, p.play_button, p.next_button))
+    assert p.art_label.width() == ART_MINI and p.mini_normal_button.toolTip() == "보통 보기"
+    assert all(p.control_row.indexOf(b) < 0 for b in (p.prev_button, p.play_button, p.next_button))
     p.set_mini(True); assert seen == [True]
     p.set_mini(False)
     assert not p.is_mini and store["player_mini"] is False and seen == [True, False]
-    assert all(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI)
+    assert all(getattr(p, n).isVisible() for n in HIDDEN_IN_MINI + SHOWN_IN_MINI[:-2])
+    assert not p.list_button_mini.isVisible() and not p.mini_normal_button.isVisible()
     assert p.art_label.width() == ART_NORMAL and p.mini_button.toolTip() == "작게 보기"
     assert [p.control_row.indexOf(b) for b in
             (p.shuffle_button, p.prev_button, p.play_button, p.next_button, p.repeat_button)] == [0, 2, 4, 6, 8]
@@ -296,7 +298,7 @@ def test_set_mini_hides_moves_and_restores(rig):
 
 def test_mini_is_short(rig):
     p, *_ = rig; p.set_mini(True); p.layout().activate()
-    assert p.sizeHint().height() < 130
+    assert p.sizeHint().height() == 104
 
 def test_mini_toggles_by_key_button_and_title_double_click(rig):
     p, *_ = rig
@@ -304,7 +306,76 @@ def test_mini_toggles_by_key_button_and_title_double_click(rig):
     p.shortcuts["Ctrl+M"].activated.emit(); assert p.is_mini
     QTest.mouseDClick(p.title_label, Qt.LeftButton); assert not p.is_mini
     p.mini_button.click(); assert p.is_mini
-    p.mini_button.click(); assert not p.is_mini
+    p.mini_normal_button.click(); assert not p.is_mini
+
+def test_mini_list_button_opens_playlist(rig):
+    p, *_ = rig
+    p.set_mini(True); p.list_button_mini.click()
+    assert not p.is_mini and p.tab == "playlist" and p.playlist_view.isVisible()
+
+def test_mini_window_buttons(rig, monkeypatch):
+    p, *_ = rig; seen = []
+    p.set_mini(True)
+    monkeypatch.setattr(p, "showMinimized", lambda: seen.append("min"))
+    monkeypatch.setattr(p, "close", lambda: seen.append("close"))
+    p.mini_min_button.click(); p.mini_close_button.click()
+    assert seen == ["min", "close"] and p.is_mini
+
+class FakeHandle:
+    def __init__(self):
+        self.moves = 0
+
+    def startSystemMove(self):
+        self.moves += 1
+        return True
+
+def drag(w, start, end):
+    QTest.mousePress(w, Qt.LeftButton, pos=start)
+    QApplication.sendEvent(w, QMouseEvent(QEvent.MouseMove, QPointF(end), QPointF(end), Qt.NoButton,
+                                          Qt.LeftButton, Qt.NoModifier))
+    QTest.mouseRelease(w, Qt.LeftButton, pos=end)
+
+def test_mini_drag_area_starts_move(rig, qapp):
+    p, *_ = rig; p.set_mini(True); p.resize(680, 104); qapp.processEvents()
+    handle = FakeHandle(); p.windowHandle = lambda: handle
+    drag(p.mini_bar, QPoint(320, 6), QPoint(321, 6))          # 끌기 거리 전이면 그대로
+    assert handle.moves == 0
+    drag(p.mini_bar, QPoint(320, 6), QPoint(340, 6))
+    assert handle.moves == 1
+
+def test_right_click_on_mini_bar_opens_source_menu(rig, qapp, monkeypatch):
+    p, *_ = rig; p.set_mini(True); p.resize(680, 104); qapp.processEvents(); seen = []
+    monkeypatch.setattr(p.source_menu, "exec_", lambda pos: seen.append(pos))
+    pos = QPoint(5, 5)
+    QApplication.sendEvent(p.mini_bar, QContextMenuEvent(QContextMenuEvent.Mouse, pos,
+                                                         p.mini_bar.mapToGlobal(pos)))
+    assert seen == [p.mini_bar.mapToGlobal(pos)]
+
+def test_mini_grips_only_on_the_sides(qapp):
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer()); p.use_window_chrome(); p.show()
+    sides = (Qt.LeftEdge, Qt.RightEdge)
+    try:
+        p.set_mini(True)
+        assert all(g.isVisible() == (e in sides) for e, g in p.grips.grips.items())
+        p.set_mini(False)
+        assert all(g.isVisible() for g in p.grips.grips.values())
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_chrome_set_after_mini_still_limits_grips(qapp):
+    p = PlayerPanel(Settings({}, lambda: None), player=FakePlayer()); p.set_mini(True); p.use_window_chrome()
+    p.show()
+    try:
+        assert not p.grips.grips[Qt.TopEdge].isVisible() and p.grips.grips[Qt.LeftEdge].isVisible()
+    finally:
+        p.shutdown(); p.deleteLater()
+
+def test_keyboard_still_reaches_shortcuts_after_switching(rig, qapp):
+    p, fake, *_ = rig; p.set_tab("playlist"); p.playlist_view.setFocus()
+    p.activateWindow(); assert QTest.qWaitForWindowActive(p)
+    p.set_mini(True); qapp.processEvents()
+    QTest.keyClick(QApplication.focusWidget() or p, Qt.Key_Space)
+    assert fake.state is State.PAUSED
 
 def test_view_menu_mini_items(rig):
     p, _, store, _ = rig; seen = []; p.miniOnTopChanged.connect(seen.append)

@@ -316,9 +316,9 @@ def test_mini_works_on_new_structure(panel_with_tracks):
     assert p.status_label.isHidden()
     assert p.pages.currentWidget().objectName() == "pageNow"
     assert p.now_strip.isHidden() and not p.tab_bar.isVisible() and p.art_label.width() == ART_MINI
-    assert p.art_label.isVisible() and p.play_button.width() == 36
+    assert p.art_label.isVisible() and p.play_button.width() == 46
     p.layout().activate()
-    assert p.sizeHint().height() < 160
+    assert p.sizeHint().height() == 104
     p.set_mini(False); p.refresh()
     assert p.tab == "playlist" and p.pages.currentWidget().objectName() == "pagePlaylist"
     assert p.art_label.width() == ART_NORMAL and p.play_button.width() == 60
