@@ -74,3 +74,22 @@ def test_drop_reorders_within_group_only(qapp):
     order = [s.id for s in sl.visible()]
     drop("kbs-25", v.topLevelItem(1))   # 묶음 줄 위: 무시
     assert [s.id for s in sl.visible()] == order
+
+def test_set_theme_recolours_in_place_and_keeps_scroll(qapp):
+    from PyQt5.QtGui import QColor
+    from funplayer.core.themes import get_theme
+    v = StationView(); sl = StationList(); sl.set_favorite("kbs-25", True)
+    v.set_stations(sl, ["favorites", "kr:big3", "user"]); v.resize(300, 200); v.show()
+    bar = v.verticalScrollBar(); assert bar.maximum() > 0
+    bar.setValue(bar.maximum() // 2); kept = bar.value()
+    item = v.topLevelItem(1); fills = []; real = v._fill; v._fill = lambda: fills.append(1)
+    t = get_theme("dark"); v.set_theme(t)
+    assert fills == [] and bar.value() == kept and v.topLevelItem(1) is item
+    assert v.topLevelItem(0).foreground(0).color() == QColor(t.fav)
+    assert item.foreground(0).color() == QColor(t.mute)
+    assert item.child(0).foreground(1).color() == QColor(t.mute)
+    v._fill = real; v._fill()                  # 다시 채워도 같은 색이다
+    assert v.topLevelItem(1).foreground(0).color() == QColor(t.mute)
+
+def test_context_menu_is_named_for_the_panel_style(qapp):
+    assert StationView().context_menu.objectName() == "themed"

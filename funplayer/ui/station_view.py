@@ -60,9 +60,16 @@ class StationView(QTreeWidget):
         self._fill()
 
     def set_theme(self, theme: Theme) -> None:
-        """묶음 글자색을 테마에 맞춘다. 목록 내용은 바뀌지 않으니 changed를 내지 않는다."""
+        """묶음 글자색을 테마에 맞춘다. 앨범 색은 곡마다 바뀌니 다시 채우지 않고 그 자리에서 칠한다
+        (스크롤과 펼침이 그대로다). 목록 내용은 바뀌지 않으니 changed를 내지 않는다."""
         self._group_color, self._fav_color = theme.mute, theme.fav
-        self._fill()
+        gray = QBrush(QColor(self._group_color))
+        for i in range(self.topLevelItemCount()):
+            top = self.topLevelItem(i)
+            favorites = top.data(0, KEY_ROLE) == "favorites"
+            top.setForeground(0, QBrush(QColor(self._fav_color)) if favorites else gray)
+            for j in range(top.childCount()):
+                top.child(j).setForeground(1, gray)
 
     def rebuild(self) -> None:
         """목록이 바뀐 뒤 다시 그린다. 펼침과 현재 줄을 지키고 changed를 낸다."""
@@ -192,6 +199,7 @@ class StationView(QTreeWidget):
 
     def _make_context_menu(self) -> None:
         menu = QMenu(self)
+        menu.setObjectName("themed")   # 패널 스타일시트의 메뉴 규칙을 받는다
         specs = [("play", "듣기", self._play_current),
                  ("favorite", "즐겨찾기", self._toggle_favorite),
                  ("rename", "이름 바꾸기…", self._rename_current),
