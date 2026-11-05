@@ -4,8 +4,9 @@ from PyQt5.QtCore import QMimeData, QModelIndex, QPoint, QRect, QRectF, QSize, Q
 from PyQt5.QtGui import QColor, QDrag, QFont, QPainter, QPainterPath
 from PyQt5.QtWidgets import QAbstractItemView, QListWidget, QStyle, QStyledItemDelegate
 
+from funplayer.core.contrast import error_color
 from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
-from funplayer.ui.colors import FAVORITE_COLOR
+from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR
 from funplayer.ui.glyphs import glyph_pixmap
 
 ROWS_MIME = "application/x-myfun-rows"
@@ -39,9 +40,11 @@ class RowDelegate(QStyledItemDelegate):
         if fg is None:
             return plain
         color = fg.color() if hasattr(fg, "color") else QColor(fg)
-        # 즐겨찾기는 테마 색으로 (고른 줄에서는 하트가 표시하므로 줄 글자색). 회색·붉은 글은 그대로
+        # 즐겨찾기는 테마 색으로 (고른 줄에서는 하트가 표시하므로 줄 글자색). 회색 글은 그대로
         if color == QColor(FAVORITE_COLOR):
             return plain if highlighted else QColor(t.fav)
+        if color == QColor(ERROR_COLOR):   # 고정 붉은색은 어두운 테마에서 읽히지 않는다
+            return QColor(error_color(t.tint if highlighted else t.bg))
         return color
 
     def paint(self, p: QPainter, option, index: QModelIndex) -> None:

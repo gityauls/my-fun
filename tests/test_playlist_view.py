@@ -1,3 +1,4 @@
+import pytest
 import os
 from PyQt5.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt5.QtGui import QDropEvent
@@ -47,6 +48,7 @@ def test_drop_files_emits_local_paths(qapp, tmp_path):
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication, QListWidgetItem
+from funplayer.core.contrast import MIN_TEXT, contrast, error_color
 from funplayer.core.themes import THEMES, get_theme
 from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR
 from funplayer.ui.playlist_view import ROLE_CURRENT, ROLE_FAVORITE, ROLE_NUMBER, ROLE_TITLE, ROW_HEIGHT
@@ -79,7 +81,7 @@ def test_row_height_and_text_kept(qapp):
 def test_foreground_role_shows_in_row(qapp):
     v = rows_view(); d = v.itemDelegate(); t = get_theme("light")
     index = v.model().index
-    assert d.text_color(index(2, 0), False) == QColor(ERROR_COLOR)
+    assert d.text_color(index(2, 0), False) == QColor(error_color(t.bg))
     assert d.text_color(index(3, 0), False) == QColor(Qt.gray)
     assert d.text_color(index(1, 0), False) == QColor(t.fav)     # 즐겨찾기 색은 테마를 따른다
     assert d.text_color(index(1, 0), True) == QColor(t.row_fg)
@@ -110,3 +112,11 @@ def test_paints_in_all_themes(qapp):
     v = rows_view()
     for t in THEMES:
         v.set_theme(t); v.viewport().grab()
+
+
+@pytest.mark.parametrize("theme", THEMES, ids=lambda t: t.id)
+def test_red_row_is_readable_on_every_theme(qapp, theme):
+    v = rows_view(); v.set_theme(theme)
+    d = v.itemDelegate(); index = v.model().index(2, 0)
+    assert contrast(d.text_color(index, False).name(), theme.bg) >= MIN_TEXT
+    assert contrast(d.text_color(index, True).name(), theme.tint) >= MIN_TEXT
