@@ -1,13 +1,14 @@
 import pytest
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPixmap
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtGui import QColor, QFont, QPixmap
+from PyQt5.QtWidgets import QApplication, QWidget
 
 from fakes import FakePlayer, FakeRunner
 from funplayer.core.settings import Settings
 from funplayer.core.themes import THEME_IDS, album_theme, get_theme
 from funplayer.ui import player_panel
 from funplayer.ui.cover import rounded_art
+from funplayer.ui.fonts import load_fonts
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.settings_dialog import SettingsDialog
 from test_panel_tabs import build  # noqa: F401  (fixtures below reuse it)
@@ -197,3 +198,42 @@ def test_live_switch_recolours_parts(panel_with_tracks):
     p.set_mini(True)
     p.set_theme_id("dark")
     assert pixel(p.mini_bar, 100, 3) != get_theme("mid").bar.upper()
+
+
+def _count(image, color: str) -> int:
+    want = QColor(color).rgb()
+    return sum(image.pixel(x, y) == want for x in range(image.width()) for y in range(image.height()))
+
+
+@pytest.fixture
+def seg_font(panel):
+    # offscreen 플랫폼에는 한글 글꼴이 없어 글자가 그려지지 않는다: 동봉 글꼴을 입힌다
+    family = load_fonts()
+    for b in panel.fx_strip.mode_buttons.values():
+        font = QFont(b.font()); font.setFamily(family); font.setPixelSize(16); b.setFont(font)
+    return panel
+
+
+@pytest.mark.parametrize("theme_id", THEME_IDS)
+def test_selected_listen_segment_uses_on_acc(seg_font, theme_id):
+    panel = seg_font
+    panel.set_theme_id(theme_id); panel.set_tab("fx")
+    t = panel._applied_theme
+    buttons = panel.fx_strip.mode_buttons
+    buttons["off"].setChecked(True); QApplication.processEvents()
+    on = buttons["off"].grab().toImage(); off = buttons["speaker"].grab().toImage()
+    assert _count(on, t.on_acc) > 3     # 고른 칸 글자는 강조색 위 글자색이다
+    assert _count(off, t.ink) > 3       # 나머지 칸은 본문 글자색
+    if QColor(t.on_acc) != QColor(t.ink):
+        assert _count(on, t.ink) == 0
+
+
+def test_selected_listen_segment_is_bold(seg_font):
+    panel = seg_font
+    panel.set_tab("fx")
+    b = panel.fx_strip.mode_buttons["speaker"]
+    t = panel._applied_theme
+    b.setChecked(False); QApplication.processEvents()
+    thin = _count(b.grab().toImage(), t.ink)
+    b.setChecked(True); QApplication.processEvents()
+    assert _count(b.grab().toImage(), t.on_acc) > thin

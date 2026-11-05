@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPainter, QPalette
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout,
                              QHBoxLayout, QLabel, QPushButton, QRadioButton, QSizePolicy,
                              QSlider, QStyle, QStyleOptionButton, QVBoxLayout, QWidget)
@@ -19,7 +19,16 @@ BARS = 24
 
 
 class _SegRadio(QRadioButton):
-    """세 칸 묶음의 한 칸: 표시 단추(동그라미)는 숨기고 글자를 가운데에 그린다. 칠은 QSS가 한다."""
+    """세 칸 묶음의 한 칸: 표시 단추(동그라미)는 숨기고 글자를 가운데에 그린다. 칠은 QSS가 한다.
+    글자는 직접 그려서 QSS의 :checked 글자색·굵기가 닿지 않으니 테마 색을 따로 받는다."""
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(text, parent)
+        self._colors = (QColor(), QColor())
+
+    def set_colors(self, normal: str, checked: str) -> None:
+        self._colors = (QColor(normal), QColor(checked))
+        self.update()
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
@@ -27,8 +36,10 @@ class _SegRadio(QRadioButton):
         self.initStyleOption(opt)
         opt.text = ""   # 칠만 스타일에 맡기고 글자는 아래에서 가운데로 그린다
         self.style().drawControl(QStyle.CE_RadioButton, opt, p, self)
-        p.setFont(self.font())
-        p.setPen(self.palette().color(QPalette.WindowText))
+        font = self.font()
+        font.setBold(self.isChecked())
+        p.setFont(font)
+        p.setPen(self._colors[self.isChecked()])
         p.drawText(self.rect(), Qt.AlignCenter, self.text())
         p.end()
 
@@ -180,8 +191,10 @@ class FxStrip(QWidget):
         return label
 
     def set_theme(self, theme: Theme) -> None:
-        """스펙트럼 색만 여기서 바꾼다. 나머지 글자·단추 색은 패널 스타일시트(#pageFx)가 입힌다."""
+        """스펙트럼과 듣는 곳 칸의 글자색만 여기서 바꾼다. 나머지는 패널 스타일시트(#pageFx)가 입힌다."""
         self.spectrum.set_colors(theme.spec or (theme.g1,), theme.acc_t)
+        for button in self.mode_buttons.values():
+            button.set_colors(theme.ink, theme.on_acc)
 
     def _fit_min_width(self, button: QPushButton) -> None:
         # 글자에 맞춘 최소 폭 (스타일의 기본 최소폭 75~80px을 덮어쓴다, 패널과 같은 방식)
