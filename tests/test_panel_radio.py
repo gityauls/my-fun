@@ -9,7 +9,7 @@ from funplayer.core.settings import Settings
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
 from funplayer.radio import RadioState
-from funplayer.ui.colors import INFO_COLOR
+from funplayer.ui.style import hero_theme
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.radio_dialogs import AddUrlDialog
 
@@ -88,12 +88,12 @@ def test_one_click_starts_station_and_live_row(rpanel):
 def test_live_color_follows_radio_state(rpanel):
     p, fake, runner = rpanel; p.set_tab("radio")
     p.station_view.station_activated.emit("kbs-25"); p.refresh()
-    assert INFO_COLOR in p.live_label.styleSheet()
+    assert hero_theme(p.theme).mute in p.live_label.styleSheet()
     runner.finish(0, result=FakeStream()); p.refresh()
-    assert "#C5221F" in p.live_label.styleSheet()
+    assert hero_theme(p.theme).acc_t in p.live_label.styleSheet()
     # B에 연결하는 동안 플레이어는 아직 라이브지만 표시는 라디오 상태를 따른다
     p.station_view.station_activated.emit("kbs-21"); p.refresh()
-    assert fake.is_live and INFO_COLOR in p.live_label.styleSheet()
+    assert fake.is_live and hero_theme(p.theme).mute in p.live_label.styleSheet()
 
 
 def test_failure_is_gray_hint(rpanel):
@@ -229,7 +229,7 @@ def test_lost_signal_reaches_radio(rpanel):
     p, fake, runner = rpanel; connect(p, runner)
     fake.stream_lost = True; fake.on_lost(); QApplication.processEvents()
     assert p.radio.state is RadioState.RETRYING and len(runner.timers) == 1
-    p.refresh(); assert "#C5221F" in p.live_label.styleSheet()
+    p.refresh(); assert hero_theme(p.theme).acc_t in p.live_label.styleSheet()
 
 
 def test_mini_hides_radio_rows(rpanel):
@@ -267,7 +267,7 @@ def test_mini_live_mark_uses_the_bar_accent(rpanel):
     p.set_mini(True)
     assert mini_theme(p.theme).acc_t in p.live_label.styleSheet()   # 어두운 막대에서도 보이게
     p.set_mini(False)
-    assert "#C5221F" in p.live_label.styleSheet()
+    assert hero_theme(p.theme).acc_t in p.live_label.styleSheet()
 
 
 def test_radio_mini_shows_radio_art(rpanel, monkeypatch):
@@ -349,7 +349,7 @@ def test_restore_radio_session_no_network(qapp, tmp_path):
         assert p.tab_bar.currentIndex() == 2 and p.station_view.isVisible()
         assert p.controller.status == "이어 듣기: MBC FM4U" and runner.pending == [] and runner.calls == []
         assert fake.loaded == [] and p.title_label.toolTip() == "MBC FM4U"
-        p.set_tab("now"); assert p.live_label.isVisible() and INFO_COLOR in p.live_label.styleSheet()
+        p.set_tab("now"); assert p.live_label.isVisible() and hero_theme(p.theme).mute in p.live_label.styleSheet()
         assert p.play_button.toolTip() == "재생"
     finally:
         p.shutdown(); p.deleteLater()

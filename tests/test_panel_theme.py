@@ -4,6 +4,7 @@ from PyQt5.QtGui import QColor, QFont, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from fakes import FakePlayer, FakeRunner
+from funplayer.core.contrast import MIN_TEXT, contrast, error_color, surface_colors
 from funplayer.core.settings import Settings
 from funplayer.core.themes import THEME_IDS, album_theme, get_theme
 from funplayer.ui import player_panel
@@ -11,6 +12,7 @@ from funplayer.ui.cover import rounded_art
 from funplayer.ui.fonts import load_fonts
 from funplayer.ui.player_panel import PlayerPanel
 from funplayer.ui.settings_dialog import SettingsDialog
+from funplayer.ui.style import hero_theme, mini_theme
 from test_panel_tabs import build  # noqa: F401  (fixtures below reuse it)
 from test_panel_tabs import panel, panel_on_radio, panel_with_tracks  # noqa: F401
 
@@ -237,3 +239,60 @@ def test_selected_listen_segment_is_bold(seg_font):
     thin = _count(b.grab().toImage(), t.ink)
     b.setChecked(True); QApplication.processEvents()
     assert _count(b.grab().toImage(), t.on_acc) > thin
+
+
+# ---- 라이브·안내 글자색은 테마를 따른다 ----
+
+ALL_THEMES = [get_theme(i) for i in THEME_IDS]
+ALBUMS = [album_theme(a) for a in ("#E02020", "#20C040", "#2040FF", None)]
+MARK_MIN = 3.0     # 굵은 상태 표시. 시안의 강조색을 그대로 쓴다
+SURFACES = (lambda t: t, hero_theme, mini_theme)
+
+
+def _worst(color: str, surface: str) -> float:
+    return min(contrast(color, c) for c in surface_colors(surface))
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES + ALBUMS, ids=lambda t: t.id + t.bg[:7])
+def test_status_colors_readable_on_status_background(theme):
+    assert _worst(theme.mute, theme.bg) >= MIN_TEXT
+    assert _worst(error_color(theme.bg), theme.bg) >= MIN_TEXT
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES + ALBUMS, ids=lambda t: t.id + t.bg[:7])
+@pytest.mark.parametrize("face", SURFACES, ids=("base", "hero", "mini"))
+def test_error_color_readable_on_every_surface(theme, face):
+    bg = face(theme).bg
+    assert _worst(error_color(bg), bg) >= MIN_TEXT
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES + ALBUMS, ids=lambda t: t.id + t.bg[:7])
+def test_error_differs_from_info(theme):
+    err, info = QColor(error_color(theme.bg)), QColor(theme.mute)
+    assert err.red() - max(err.green(), err.blue()) > 60 > abs(info.red() - max(info.green(), info.blue()))
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES + ALBUMS, ids=lambda t: t.id + t.bg[:7])
+@pytest.mark.parametrize("face", (hero_theme, mini_theme), ids=("hero", "mini"))
+def test_live_and_connecting_marks_readable(theme, face):
+    c = face(theme)
+    assert _worst(c.acc_t, c.bg) >= MARK_MIN and _worst(c.mute, c.bg) >= MARK_MIN
+
+
+@pytest.mark.parametrize("theme_id", THEME_IDS)
+def test_live_mark_follows_theme_and_mode(panel_on_radio, theme_id):
+    p = panel_on_radio
+    p.set_theme_id(theme_id)
+    assert p.live_label.styleSheet() == f"color: {hero_theme(p._applied_theme).acc_t};"
+    p.set_mini(True)
+    assert p.live_label.styleSheet() == f"color: {mini_theme(p._applied_theme).acc_t};"
+    p.set_mini(False)
+
+
+def test_status_recolours_at_once_on_theme_change(panel):
+    panel.controller.on_player_error("소리 장치를 열 수 없습니다"); panel.refresh()
+    panel.set_theme_id("dark")
+    assert error_color(get_theme("dark").bg) in panel.status_label.styleSheet()
+    panel.controller.notify("안내"); panel.refresh()
+    panel.set_theme_id("i")
+    assert panel.status_label.styleSheet() == f"color: {get_theme('i').mute};"

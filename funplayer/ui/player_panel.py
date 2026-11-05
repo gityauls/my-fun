@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 
 from funplayer import coverfind, musicbrainz
 from funplayer.controller import PlayerController
+from funplayer.core.contrast import error_color
 from funplayer.core.renamer import RenameError, RenameLog
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
@@ -31,7 +32,7 @@ from funplayer.engine.tagwrite import TagWriteError
 from funplayer.radio import DUP_STATION_MSG, RadioController, RadioState
 from funplayer.ui.bridge import PlayerBridge
 from funplayer.core.playlist import path_key
-from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR, INFO_COLOR
+from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR
 from funplayer.ui.cover import load_cover, radio_art_for, rounded_art
 from funplayer.ui.fx_strip import BARS, FxStrip
 from funplayer.ui.glyphs import glyph, glyph_pixmap
@@ -91,7 +92,6 @@ TABS = ("now", "playlist", "radio", "fx")
 TAB_TITLES = ("지금 재생", "재생목록", "라디오", "음향 효과")
 TAB_ICONS = ("music", "list", "radio", "sliders")
 LIVE_TEXT = "● LIVE"
-LIVE_COLOR = "#C5221F"
 LISTENED_PREFIX = "들은 시간 "
 DOMESTIC_INFO_PATH = "방송사 웹 재생 주소 (들을 때마다 새로 받음)"
 
@@ -238,6 +238,9 @@ class PlayerPanel(QWidget):
         self.fx_strip.set_theme(applied)   # 음향 효과 쪽은 hero가 아니라 기본 색이다
         self._apply_icons()
         self._render_art()
+        self._live_color = self._status_error = None   # 색이 테마를 따르니 기억을 비우고 새로 입힌다
+        self._refresh_live(self.controller.source == "radio")
+        self._refresh_status_color()
         self._sync_pages_min(force=True)
 
     def set_theme_id(self, id: str) -> None:
@@ -1809,11 +1812,18 @@ class PlayerPanel(QWidget):
         self.shuffle_button.setEnabled(not on_radio)
         if self._tab != "radio":
             self._update_count()   # 방송 수는 탭 바꿀 때와 목록이 바뀔 때만 센다
-        if c.status_error != self._status_error:
-            self._status_error = c.status_error
-            color = ERROR_COLOR if c.status_error else INFO_COLOR
-            self.status_label.setStyleSheet(f"color: {color};")
+        self._refresh_status_color()
         self._set_elided(self.status_label, c.status)
+
+    def _refresh_status_color(self) -> None:
+        """안내 줄은 창 바탕(bg) 위에 놓인다. 오류는 색이 비슷해 보여도 구분되게 굵게 쓴다."""
+        error = self.controller.status_error
+        if error == self._status_error:
+            return
+        self._status_error = error
+        theme = self._applied_theme
+        look = f"color: {error_color(theme.bg)}; font-weight: 700;" if error else f"color: {theme.mute};"
+        self.status_label.setStyleSheet(look)
 
     def _refresh_icons(self) -> bool:
         """재생·소리·하트·반복 그림을 상태에 맞춘다 (바뀔 때만 다시 그린다). 재생 중인지 돌려준다."""
@@ -1855,8 +1865,8 @@ class PlayerPanel(QWidget):
         if not on_radio:
             return
         # 색은 라디오 상태를 따른다 (B에 연결하는 동안 플레이어는 아직 라이브다)
-        live = self._hero.acc_t if self.is_mini else LIVE_COLOR   # 막대는 어두운 테마가 많다 (시안도 강조색)
-        color = live if r.state in (RadioState.LIVE, RadioState.RETRYING) else INFO_COLOR
+        hero = self._hero   # 지금 놓인 면(지금 재생 또는 미니 막대)의 색
+        color = hero.acc_t if r.state in (RadioState.LIVE, RadioState.RETRYING) else hero.mute
         if color != self._live_color:
             self._live_color = color
             self.live_label.setStyleSheet(f"color: {color};")

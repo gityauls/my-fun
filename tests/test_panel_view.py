@@ -4,7 +4,8 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 from fakes import FakePlayer, make_songs
 from funplayer.core.settings import Settings
-from funplayer.ui.player_panel import ART_NORMAL, ERROR_COLOR, INFO_COLOR, PlayerPanel
+from funplayer.core.contrast import error_color
+from funplayer.ui.player_panel import ART_NORMAL, PlayerPanel
 
 ABC = ["01 a.mp3", "02 bad.mp3", "03 c.mp3"]
 
@@ -96,9 +97,10 @@ def test_buttons_follow_saved_settings(qapp):
 def test_status_color(panel, tmp_path):
     p, _ = panel
     p.controller.on_player_error("소리 장치를 열 수 없습니다"); p.refresh()
-    assert ERROR_COLOR in p.status_label.styleSheet()
+    assert error_color(p.theme.bg) in p.status_label.styleSheet()
+    assert "font-weight: 700" in p.status_label.styleSheet()
     p.controller.open([str(make_songs(tmp_path, ["01 a.mp3"]))]); p.controller.remove_duplicates(); p.refresh()
-    assert p.status_label.text() == "중복 곡이 없습니다" and INFO_COLOR in p.status_label.styleSheet()
+    assert p.status_label.text() == "중복 곡이 없습니다" and p.theme.mute in p.status_label.styleSheet()
 
 def test_gray_row_returns_to_default_in_place_after_playing(panel, tmp_path):
     from funplayer.engine.decoder import DecodeError
