@@ -52,6 +52,7 @@ run.bat                                  # 실행 (콘솔 없음)
 .venv\Scripts\python.exe -m funplayer    # 실행 (콘솔 로그 보기)
 .venv\Scripts\python.exe -m pytest       # 테스트 (offscreen)
 ```
+- exe 빌드: `.venv/Scripts/python.exe -m PyInstaller --noconfirm my-fun.spec` → `dist/my-fun.exe`. 사용 설명서는 `docs/사용설명서.html`.
 - 가상환경: `.venv` (Python 3.14, PyQt5 5.15.11). 1단계 계획의 첫 작업에서 만든다.
 - 설정: `%APPDATA%\my-fun\settings.json`
 - 로그: `%APPDATA%\my-fun\logs\funplayer.log`
