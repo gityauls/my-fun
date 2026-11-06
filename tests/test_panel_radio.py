@@ -274,6 +274,7 @@ def test_mini_live_mark_uses_the_bar_accent(rpanel):
 def test_radio_mini_shows_radio_art(rpanel, monkeypatch):
     import funplayer.ui.player_panel as pp
     p, fake, runner = rpanel; connect(p, runner); calls = []; real = pp.radio_art_for
+    p._station_src = None   # 로고가 없는 방송의 기본 그림을 본다
     monkeypatch.setattr(pp, "radio_art_for", lambda *a: calls.append(a[1:]) or real(*a))
     p.set_mini(True)
     assert (80, 14) in calls and p.art_label.pixmap().width() == 80

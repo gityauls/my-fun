@@ -38,7 +38,7 @@ def test_context_menu_favorite_rename_remove_restore(qapp, monkeypatch):
     v = StationView(); sl = StationList(); v.set_stations(sl, ["favorites", "kr:big3"]); changed = []
     v.changed.connect(lambda: changed.append(1))
     v.setCurrentItem(v.topLevelItem(0).child(0)); v.context_menu.aboutToShow.emit()
-    assert [a.text() for a in v.context_menu.actions()] == ["듣기", "즐겨찾기", "이름 바꾸기…", "지우기", "", "기본 방송 다시 보이기"]
+    assert [a.text() for a in v.context_menu.actions()] == ["듣기", "즐겨찾기", "이름 바꾸기…", "방송 그림 바꾸기…", "지우기", "", "기본 방송 다시 보이기"]
     v.actions["favorite"].trigger(); assert v.topLevelItem(0).text(0) == "★ 즐겨찾기" and sl.is_favorite("kbs-21")
     monkeypatch.setattr(sv, "ask_name", lambda parent, current: "1R")
     v.setCurrentItem(v.topLevelItem(0).child(0)); v.actions["rename"].trigger(); assert sl.get("kbs-21").name == "1R"

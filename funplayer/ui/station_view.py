@@ -116,6 +116,7 @@ class StationView(QTreeWidget):
     """방송국 목록: 묶음(접고 펴기)과 방송 줄. 목록은 StationList가 갖고, 여기서는 고친 뒤 신호만 보낸다."""
 
     station_activated = pyqtSignal(str)
+    art_requested = pyqtSignal(str)
     changed = pyqtSignal()
     open_groups_changed = pyqtSignal(list)
 
@@ -286,6 +287,7 @@ class StationView(QTreeWidget):
         specs = [("play", "듣기", self._play_current),
                  ("favorite", "즐겨찾기", self._toggle_favorite),
                  ("rename", "이름 바꾸기…", self._rename_current),
+                 ("art", "방송 그림 바꾸기…", self._art_current),
                  ("remove", "지우기", self._remove_current),
                  None,
                  ("restore", "기본 방송 다시 보이기", self._restore)]
@@ -312,7 +314,7 @@ class StationView(QTreeWidget):
 
     def _update_actions(self) -> None:
         sid = self._current_id()
-        for key in ("play", "favorite", "rename", "remove"):
+        for key in ("play", "favorite", "rename", "art", "remove"):
             self.actions[key].setEnabled(bool(sid))
         self.actions["favorite"].setChecked(bool(sid and self._stations and self._stations.is_favorite(sid)))
 
@@ -326,6 +328,11 @@ class StationView(QTreeWidget):
         if sid and self._stations:
             self._stations.set_favorite(sid, not self._stations.is_favorite(sid))
             self.rebuild()
+
+    def _art_current(self) -> None:
+        sid = self._current_id()
+        if sid:
+            self.art_requested.emit(sid)
 
     def _rename_current(self) -> None:
         sid = self._current_id()

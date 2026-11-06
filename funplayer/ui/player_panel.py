@@ -56,6 +56,8 @@ from funplayer.ui.station_view import StationView
 from funplayer.ui.style import EDGE, MINI_RADIUS, WINDOW_RADIUS, hero_theme, mini_theme, stylesheet
 from funplayer.ui.ticker_label import TickerLabel
 from funplayer.ui.egg_overlay import EggOverlay
+from funplayer.ui.station_art import StationArt
+from funplayer.ui.station_art_dialog import StationArtDialog
 from funplayer.ui.title_bar import EdgeGrips, TitleBar, WindowDragArea
 from funplayer.ui.window_keeper import MINI_SIZE
 from funplayer.ui.worker import QtRunner
@@ -89,6 +91,10 @@ MINI_ARROW_WIDTH = 18
 MINI_ARROW_GAP = 4
 MINI_ARROW_ICON = 16
 MINI_VOLUME_WIDTH = 92
+MINI_SOURCE_ICON = 15
+MINI_SOURCE_GAP = 6
+MINI_RADIO_TITLE_HEIGHT = 26
+QWIDGETSIZE_MAX = 16777215
 MINI_LIFT = 8   # 조작부는 창 버튼 자리를 비우려고 살짝 아래에 놓는다
 # 공용 위젯의 보기별 치수: (이름, 보통 크기, 미니 크기, 보통 그림, 미니 그림)
 MODE_BUTTONS = (
@@ -146,7 +152,8 @@ class PlayerPanel(QWidget):
     def __init__(self, settings: Settings, player=None, parent=None, *,
                  session_path: str | None = None, read_info=None, media_keys=None,
                  stations_path: str | None = None, runner=None, write_tags=None, clear_tags=None,
-                 rename_log_path: str | None = None, has_cover=None, find_cover=None) -> None:
+                 rename_log_path: str | None = None, has_cover=None, find_cover=None,
+                 station_art_dir: str | None = None) -> None:
         super().__init__(parent)
         self._player = player if player is not None else AudioPlayer()
         self.controller = PlayerController(
@@ -174,6 +181,8 @@ class PlayerPanel(QWidget):
         self._cover_key: object = object()
         self._cover_src = None
         self._art_radio = False
+        self.station_art = StationArt(station_art_dir)
+        self._station_src = None
         self._strip_art = QPixmap()
         self._dragging = False
         self._list_version = -1
@@ -188,6 +197,7 @@ class PlayerPanel(QWidget):
         self._find_cover = find_cover or (lambda artist, title: coverfind.default_finder().find(artist, title))
         self._icon_key: tuple[str, bool] | None = None
         self._play_key: bool | None = None
+        self._source_key: tuple | None = None
         self._mute_key: bool | None = None
         self._heart_key: bool | None = None
         self._track_fav_key: tuple | None = None
@@ -359,8 +369,10 @@ class PlayerPanel(QWidget):
         radius = ART_MINI_RADIUS if self.is_mini else ART_RADIUS
         theme = self._applied_theme
         if self._art_radio:
-            art = radio_art_for(theme, size, radius)
-            self._strip_art = radio_art_for(theme, STRIP_ART, STRIP_RADIUS)
+            src = self._station_src
+            art = radio_art_for(theme, size, radius) if src is None else rounded_art(src, size, radius, theme)
+            self._strip_art = (radio_art_for(theme, STRIP_ART, STRIP_RADIUS) if src is None
+                               else rounded_art(src, STRIP_ART, STRIP_RADIUS, theme))
         else:
             art = rounded_art(self._cover_src, size, radius, theme)
             self._strip_art = rounded_art(self._cover_src, STRIP_ART, STRIP_RADIUS, theme)
@@ -670,6 +682,9 @@ class PlayerPanel(QWidget):
         win = QHBoxLayout(controls)
         win.setContentsMargins(0, 4, 10, 0)
         win.setSpacing(0)
+        self.mini_song_button = self._mini_window_button(win, "곡 듣기", MINI_SOURCE_ICON)
+        self.mini_radio_button = self._mini_window_button(win, "라디오 듣기", MINI_SOURCE_ICON)
+        win.addSpacing(MINI_SOURCE_GAP)
         self.mini_min_button = self._mini_window_button(win, "최소화", 14)
         self.mini_normal_button = self._mini_window_button(win, "보통 보기", 12)
         self.mini_close_button = self._mini_window_button(win, "닫기", 14)
@@ -822,6 +837,7 @@ class PlayerPanel(QWidget):
         self.fx_strip.changed.connect(self._fx_changed)
         sv = self.station_view
         sv.station_activated.connect(self._play_station)
+        sv.art_requested.connect(self._show_station_art)
         sv.changed.connect(self._stations_changed)
         sv.open_groups_changed.connect(self._open_groups_changed)
         self.add_url_button.clicked.connect(self.add_url)
@@ -833,6 +849,8 @@ class PlayerPanel(QWidget):
         self.mini_theme_next_button.clicked.connect(lambda _=False: self.step_theme(1))
         self.mini_button.clicked.connect(self.toggle_mini)
         self.list_button_mini.clicked.connect(self._open_list_from_mini)
+        self.mini_song_button.clicked.connect(lambda _=False: self._go_source(False))
+        self.mini_radio_button.clicked.connect(lambda _=False: self._go_source(True))
         self.mini_min_button.clicked.connect(lambda _=False: self.showMinimized())
         self.mini_normal_button.clicked.connect(lambda _=False: self.set_mini(False))
         self.mini_close_button.clicked.connect(lambda _=False: self.close())
@@ -958,7 +976,8 @@ class PlayerPanel(QWidget):
         menu = self.source_menu = QMenu(self)
         self._add_action(menu, "stop", "정지", self.stop)
         self._add_action(menu, "switch", "라디오로", self._switch_source)
-        for w in (self.play_button, self.title_label, self.mini_bar):
+        self._add_action(menu, "station_art", "방송 그림 바꾸기…", self._change_current_art)
+        for w in (self.play_button, self.title_label, self.mini_bar, self.art_label):
             w.setContextMenuPolicy(Qt.CustomContextMenu)
             w.customContextMenuRequested.connect(
                 lambda pos, w=w: self.source_menu.exec_(w.mapToGlobal(pos)))
@@ -1115,7 +1134,7 @@ class PlayerPanel(QWidget):
 
     def _open_list_from_mini(self) -> None:
         self.set_mini(False)
-        self.set_tab("playlist")
+        self.set_tab("radio" if self.controller.source == "radio" else "playlist")
 
     def _place_shared(self, mini: bool) -> None:
         """공용 위젯을 지금 재생 페이지와 미니 막대 사이로 옮기고 크기를 그 자리에 맞춘다."""
@@ -1234,6 +1253,12 @@ class PlayerPanel(QWidget):
         self._sync_spectrum_timer()
         self.actions["switch"].setText("MP3로" if on_radio else "라디오로")
         self.actions["switch"].setEnabled(self.controller.can_switch_source)
+        self.actions["station_art"].setVisible(on_radio and self.radio.current is not None)
+        self._sync_source_buttons(on_radio)
+        # 방송 이름과 LIVE를 붙인다. 방송이 곡 이름을 보내 주면 그 줄은 그대로 쓴다
+        tight = mini and on_radio and not self.controller.subtitle
+        self.artist_label.setVisible(not tight)
+        self.title_label.setMaximumHeight(MINI_RADIO_TITLE_HEIGHT if tight else QWIDGETSIZE_MAX)
         # 탐색 줄: 라디오면 막대와 시간 대신 라이브 줄이다
         for w in (self.seek_slider, self.elapsed_label, self.total_label):
             w.setVisible(not on_radio)
@@ -1270,6 +1295,40 @@ class PlayerPanel(QWidget):
         # 목록을 보고 있었으면 지금 나오는 쪽 목록이 보이게 (지금 재생·음향 효과 탭은 그대로)
         if self._tab in ("playlist", "radio"):
             self.set_tab("radio" if self.controller.source == "radio" else "playlist")
+        self.refresh()
+
+    def _change_current_art(self) -> None:
+        if self.radio.current is not None:
+            self._show_station_art(self.radio.current.id)
+
+    def _go_source(self, radio: bool) -> None:
+        if (self.controller.source == "radio") != radio:
+            self._switch_source()
+
+    def _sync_source_buttons(self, on_radio: bool) -> None:
+        """듣는 쪽은 진하게 밑줄, 넘어갈 수 있는 쪽은 눌리게, 넘어갈 곳이 없으면 흐리게."""
+        can = self.controller.can_switch_source
+        key = (on_radio, can, self._hero)
+        if key == self._source_key:
+            return
+        self._source_key = key
+        hero = self._hero
+        for b, name, mine in ((self.mini_song_button, "music", not on_radio),
+                              (self.mini_radio_button, "radio", on_radio)):
+            self._set_glyph(b, name, hero.icon if mine else hero.mute)
+            b.setStyleSheet(f"border-bottom: 2px solid {hero.icon};" if mine else "")
+            b.setEnabled(mine or can)
+
+    def _show_station_art(self, station_id: str) -> None:
+        station = self.stations.get(station_id)
+        if station is None:
+            return
+        dialog = StationArtDialog(self.station_art, station_id, station.name, self)
+        dialog.changed.connect(self._station_art_changed)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        dialog.open()
+
+    def _station_art_changed(self) -> None:
         self.refresh()
 
     def _play_station(self, station_id: str) -> None:
@@ -1543,7 +1602,8 @@ class PlayerPanel(QWidget):
 
     def show_track_info(self) -> None:
         if self.controller.source == "radio" and self.radio.current is not None:
-            self._show_info(self._station_info(), radio_art(INFO_ART_SIZE))
+            logo = self.station_art.pixmap(self.radio.current.id)
+            self._show_info(self._station_info(), radio_art(INFO_ART_SIZE) if logo is None else logo)
             return
         i = self.controller.playlist.index
         if i is None:
@@ -1822,10 +1882,12 @@ class PlayerPanel(QWidget):
         if on_radio:
             # 라디오 그림은 방송이 바뀔 때만 다시 그린다
             station = self.radio.current
-            key = ("radio", station.id if station is not None else None)
+            station_id = station.id if station is not None else None
+            key = ("radio", station_id, self.station_art.version)
             if key != self._cover_key:
                 self._cover_key = key
                 self._cover_src = None
+                self._station_src = self.station_art.pixmap(station_id)
                 self._art_radio = True
                 self._art_changed()
         else:

@@ -170,6 +170,7 @@ def test_theme_change_updates_art_without_cover(panel_with_tracks):
 
 def test_theme_change_updates_radio_art(panel_on_radio):
     p = panel_on_radio
+    p._station_src = None   # 로고가 없는 방송의 기본 그림을 본다
     p.set_theme_id("dark")
     before = p.art_label.pixmap().toImage()
     p.set_theme_id("d")
