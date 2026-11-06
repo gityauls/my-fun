@@ -35,8 +35,11 @@ class SpectrumView(QWidget):
 
     def bar_color(self, i: int, n: int) -> str:
         """n개 막대 중 i번째 막대의 색: 색 수만큼 똑같이 나눈다."""
+        return self._colors[self._color_index(i, n)]
+
+    def _color_index(self, i: int, n: int) -> int:
         k = len(self._colors)
-        return self._colors[min(k - 1, i * k // max(1, n))]
+        return min(k - 1, i * k // max(1, n))
 
     def set_levels(self, levels, peaks) -> None:
         self.levels = [self._clip(v) for v in levels][: self.bars]
@@ -68,7 +71,7 @@ class SpectrumView(QWidget):
             peak = self.peaks[i] if i < len(self.peaks) else 0.0
             if level > 0:
                 bh = max(1.0, level * h)
-                p.fillRect(QRectF(x, h - bh, bw, bh), self._qcolors[min(len(self._qcolors) - 1, i * len(self._qcolors) // self.bars)])
+                p.fillRect(QRectF(x, h - bh, bw, bh), self._qcolors[self._color_index(i, self.bars)])
             if peak > 0:
                 y = min(h - PEAK_HEIGHT, h - peak * h)
                 p.fillRect(QRectF(x, y, bw, PEAK_HEIGHT), self._peak_color)

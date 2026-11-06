@@ -82,7 +82,7 @@ def test_foreground_role_shows_in_row(qapp):
     v = rows_view(); d = v.itemDelegate(); t = get_theme("light")
     index = v.model().index
     assert d.text_color(index(2, 0), False) == QColor(error_color(t.bg))
-    assert d.text_color(index(3, 0), False) == QColor(Qt.gray)
+    assert d.text_color(index(3, 0), False) == QColor(t.mute)    # 없는 곡도 테마에서 읽혀야 한다
     assert d.text_color(index(1, 0), False) == QColor(t.fav)     # 즐겨찾기 색은 테마를 따른다
     assert d.text_color(index(1, 0), True) == QColor(t.row_fg)
     assert d.text_color(index(0, 0), False) == QColor(t.ink)

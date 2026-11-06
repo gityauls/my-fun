@@ -53,9 +53,9 @@ def test_favorite_action_reflects_state(qapp):
 def test_set_current_marks_row(qapp):
     v = StationView(); v.set_stations(StationList(), ["kr:big3"]); v.set_current("kbs-25")
     row = v.topLevelItem(0).child(4)
-    assert row.text(0).startswith("▶ ") and row.font(0).bold()
-    v.rebuild(); assert v.topLevelItem(0).child(4).text(0).startswith("▶ ")
-    v.set_current(None); assert not v.topLevelItem(0).child(4).text(0).startswith("▶ ")
+    assert row.data(0, ROLE_CURRENT) and not row.text(0).startswith("▶ ")
+    v.rebuild(); assert v.topLevelItem(0).child(4).data(0, ROLE_CURRENT)
+    v.set_current(None); assert not v.topLevelItem(0).child(4).data(0, ROLE_CURRENT)
 
 def test_open_groups_reported(qapp):
     v = StationView(); v.set_stations(StationList(), ["kr:big3"]); got = []

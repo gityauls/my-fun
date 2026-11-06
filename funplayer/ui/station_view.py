@@ -215,14 +215,6 @@ class StationView(QTreeWidget):
         return item.data(0, Qt.UserRole) if item is not None else None
 
     def _mark(self, row: QTreeWidgetItem, on: bool) -> None:
-        text = row.text(0)
-        if on and not text.startswith("▶ "):
-            row.setText(0, "▶ " + text)
-        elif not on and text.startswith("▶ "):
-            row.setText(0, text[2:])
-        font = row.font(0)
-        font.setBold(on)
-        row.setFont(0, font)
         row.setData(0, ROLE_CURRENT, on)
 
     def select(self, station_id: str) -> None:
@@ -237,7 +229,7 @@ class StationView(QTreeWidget):
         self.scrollToItem(item)
 
     def set_current(self, station_id: str | None) -> None:
-        """재생 중인 방송 줄을 표시한다 (글자에 ▶, 화면에 막대와 LIVE). None이면 모두 뗀다."""
+        """재생 중인 방송 줄을 표시한다 (막대와 LIVE 칩). None이면 모두 뗀다."""
         self._playing = station_id
         for i in range(self.topLevelItemCount()):
             top = self.topLevelItem(i)

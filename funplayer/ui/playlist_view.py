@@ -23,6 +23,9 @@ _HEART = 13
 _EQ_HEIGHTS = (7, 12, 9)
 
 
+DIM_ALPHA = 170   # 고른 줄의 바탕은 테마마다 밝기가 달라 글자색을 흐리게 쓴다
+
+
 class RowDelegate(QStyledItemDelegate):
     """줄 하나: 번호(지금 곡은 막대 3개), 제목, 즐겨찾기 하트. 글자색은 ForegroundRole을 따른다."""
 
@@ -40,11 +43,16 @@ class RowDelegate(QStyledItemDelegate):
         if fg is None:
             return plain
         color = fg.color() if hasattr(fg, "color") else QColor(fg)
-        # 즐겨찾기는 테마 색으로 (고른 줄에서는 하트가 표시하므로 줄 글자색). 회색 글은 그대로
+        # 즐겨찾기는 테마 색으로 (고른 줄에서는 하트가 표시하므로 줄 글자색)
         if color == QColor(FAVORITE_COLOR):
             return plain if highlighted else QColor(t.fav)
         if color == QColor(ERROR_COLOR):   # 고정 붉은색은 어두운 테마에서 읽히지 않는다
             return QColor(error_color(t.tint if highlighted else t.bg))
+        if color == QColor(Qt.gray):   # 없거나 깨진 곡: 고정 회색은 어두운 테마에서 읽히지 않는다
+            if not highlighted:
+                return QColor(t.mute)
+            plain.setAlpha(DIM_ALPHA)
+            return plain
         return color
 
     @staticmethod

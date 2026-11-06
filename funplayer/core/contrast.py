@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import colorsys
+import functools
 import re
 
 MIN_TEXT = 4.5
@@ -34,6 +35,7 @@ def surface_colors(css: str) -> list[str]:
     return colors[1:-1] or colors
 
 
+@functools.lru_cache(maxsize=64)   # 목록을 그릴 때 줄마다 불린다. 면이 같으면 값도 같다
 def error_color(surface: str) -> str:
     """이 면(CSS 색 또는 그라데이션)의 모든 색과 대비가 MIN_TEXT 이상인 붉은색. 가장 덜 바래는 값을 고른다."""
     colors = surface_colors(surface)

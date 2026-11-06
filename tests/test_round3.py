@@ -259,3 +259,26 @@ def test_mini_is_not_on_top_by_default_but_a_saved_choice_stands(make):
     on_top = lambda p: bool(p.windowFlags() & Qt.WindowStaysOnTopHint)
     p, _ = make({"player_mini": True}); assert not on_top(p)
     q, _ = make({"player_mini": True, "player_mini_on_top": True}); assert on_top(q)
+
+
+# ---- 코드 검증 ----
+
+@pytest.mark.parametrize("t", THEMES, ids=lambda t: t.id)
+def test_missing_track_text_is_readable_on_every_theme(qapp, t):
+    from PyQt5.QtCore import QModelIndex
+    from PyQt5.QtGui import QColor, QStandardItem, QStandardItemModel
+    from funplayer.ui.playlist_view import RowDelegate
+    model = QStandardItemModel()
+    item = QStandardItem("곡"); item.setData(QColor(Qt.gray), Qt.ForegroundRole); model.appendRow(item)
+    d = RowDelegate(); d.theme = t
+    plain = d.text_color(model.index(0, 0), False)
+    assert plain.name() == QColor(t.mute).name() and contrast(plain.name(), t.bg) >= 3.5
+    dim = d.text_color(model.index(0, 0), True)
+    assert dim.name() == QColor(t.row_fg).name() and dim.alpha() < 255
+
+
+def test_old_settings_keys_are_ignored(qapp):
+    p = PlayerPanel(Settings({"player_fx_visible": True, "player_fx_open": False}, lambda: None),
+                    player=FakePlayer())
+    assert p.tab == "now"
+    p.shutdown(); p.deleteLater()

@@ -186,7 +186,7 @@ class PlayerPanel(QWidget):
         self._settings = settings
         self.settings = settings   # 공개 이름(같은 객체)
         self.is_mini = False   # settings.mini는 창(Task 10)이 적용한다
-        self.chrome = False    # 테두리 없는 창인가 (__main__이 켠다. 6단계에서 끼울 때는 그대로 둔다)
+        self.chrome = False    # 테두리 없는 창인가 (__main__이 켠다)
         self.grips: EdgeGrips | None = None
         self._pages_min_key: tuple | None = None
 
@@ -1034,7 +1034,7 @@ class PlayerPanel(QWidget):
     # ---- 창 ----
 
     def use_window_chrome(self) -> None:
-        """테두리 없는 둥근 창으로 바꾼다. 안 부르면 보통 창이다 (6단계에서 캘린더에 끼울 때)."""
+        """테두리 없는 둥근 창으로 바꾼다. 안 부르면 보통 창이다 (테스트)."""
         if self.chrome:
             return
         shown = self.isVisible()

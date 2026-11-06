@@ -228,8 +228,8 @@ class FxStrip(QWidget):
         return label
 
     def set_theme(self, theme: Theme) -> None:
-        self.enabled_box.set_theme(theme)
         """스펙트럼과 듣는 곳 칸의 글자색만 여기서 바꾼다. 나머지는 패널 스타일시트(#pageFx)가 입힌다."""
+        self.enabled_box.set_theme(theme)
         self.spectrum.set_colors(theme.spec or (theme.g1,), theme.acc_t)
         for button in self.mode_buttons.values():
             button.set_colors(theme.ink, theme.on_acc)

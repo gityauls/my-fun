@@ -21,7 +21,7 @@ DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_last_source": "file", "player_last_station": "", "player_tab": "now",
             "player_theme": "light",
             "player_radio_open": ["favorites", "kr:big3", "user"],
-            "player_fx": {}, "player_fx_visible": False, "player_fx_open": True,
+            "player_fx": {},
             "player_rename_on_save": False, "player_favorites": []}
 
 LAST_SOURCES = ("file", "radio")
@@ -234,23 +234,6 @@ class Settings:
     def fx(self, value: dict) -> None:
         self._set("player_fx", dict(value))
 
-    @property
-    def fx_visible(self) -> bool:
-        value = self._store.get("player_fx_visible")
-        return value if isinstance(value, bool) else DEFAULTS["player_fx_visible"]
-
-    @fx_visible.setter
-    def fx_visible(self, value: bool) -> None:
-        self._set("player_fx_visible", bool(value))
-
-    @property
-    def fx_open(self) -> bool:
-        value = self._store.get("player_fx_open")
-        return value if isinstance(value, bool) else DEFAULTS["player_fx_open"]
-
-    @fx_open.setter
-    def fx_open(self, value: bool) -> None:
-        self._set("player_fx_open", bool(value))
 
     @property
     def rename_on_save(self) -> bool:

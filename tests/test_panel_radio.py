@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QApplication
 from fakes import FakePlayer, FakeRunner, FakeStream, make_songs
 from funplayer.core.m3u import write_playlist
 from funplayer.core.settings import Settings
+from funplayer.ui.playlist_view import ROLE_CURRENT
 from funplayer.engine.decoder import DecodeError
 from funplayer.engine.player import State
 from funplayer.radio import RadioState
@@ -82,7 +83,7 @@ def test_one_click_starts_station_and_live_row(rpanel):
     assert p.live_label.isVisible() and p.listened_label.isVisible()
     assert not p.elapsed_label.isVisible() and not p.total_label.isVisible()
     assert p.play_button.toolTip() == "일시정지"
-    assert station_item(p.station_view, "kbs-25").text(0).startswith("▶ ")
+    assert station_item(p.station_view, "kbs-25").data(0, ROLE_CURRENT)
 
 
 def test_live_color_follows_radio_state(rpanel):
@@ -157,7 +158,7 @@ def test_playlist_tab_play_button_returns_to_track(rpanel, tmp_path):
     p.refresh(); p.set_tab("now")
     assert p.seek_slider.isVisible() and p.elapsed_label.isVisible() and not p.live_label.isVisible()
     assert p.repeat_button.isEnabled() and p.shuffle_button.isEnabled()
-    assert not station_item(p.station_view, "kbs-25").text(0).startswith("▶ ")
+    assert not station_item(p.station_view, "kbs-25").data(0, ROLE_CURRENT)
 
 
 def test_space_on_radio_tab_stops_station(rpanel):
