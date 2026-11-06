@@ -1,7 +1,7 @@
 # Third-party assets
 
-- App icon (my-fun.ico, my-fun.png): cassette picture chosen by the project owner, speech bubble added.
-  The source and licence of the cassette picture are not recorded.
+- App icon (my-fun.ico, my-fun.png): cassette picture received from ChatGPT; speech bubble and lettering added by the project owner.
+  Whether ChatGPT generated the picture or found it on the web is not recorded.
 - Lucide icons (path data in funplayer/ui/glyphs.py): ISC License.
   Source: https://lucide.dev
 
