@@ -135,6 +135,38 @@ def test_arrows_fit_at_the_narrowest_window(make, qapp):
     assert p.theme_next_button.geometry().right() < p.page_now.width()
 
 
+def test_arrows_are_in_proportion_to_each_cover_with_room_around_them(make, qapp):
+    p, _ = make(); p.show(); qapp.processEvents()
+    art = p.art_label.geometry()
+    assert p.theme_prev_button.iconSize().width() == art.width() // 6
+    assert art.left() - p.theme_prev_button.geometry().right() - 1 == 8
+    assert p.theme_next_button.geometry().left() - art.right() - 1 == 8
+
+    p.set_mini(True); qapp.processEvents()
+    art = p.art_label.geometry()
+    assert p.mini_theme_prev_button.iconSize().width() == 16
+    assert p.mini_theme_prev_button.x() == 6     # 막대 끝에서 떨어진다
+    assert art.left() - p.mini_theme_prev_button.geometry().right() - 1 == 4
+    assert p.mini_theme_next_button.geometry().left() - art.right() - 1 == 4
+
+
+def test_mini_equalizer_sits_between_names_and_heart_and_is_fed(make, qapp):
+    p, _ = make(); p.show(); p.set_mini(True); qapp.processEvents()
+    eq = p.mini_spectrum
+    assert eq.isVisible() and (eq.width(), eq.height()) == (106, 44)
+    left = eq.mapTo(p.mini_bar, eq.rect().topLeft()).x()
+    title = p.title_label
+    assert title.mapTo(p.mini_bar, title.rect().topRight()).x() < left
+    heart = p.heart_button
+    assert left + 106 <= heart.mapTo(p.mini_bar, heart.rect().topLeft()).x()
+    assert heart.mapTo(p.mini_bar, heart.rect().topRight()).x() < p.shuffle_button.mapTo(p.mini_bar, p.shuffle_button.rect().topLeft()).x()
+    p._player.latest_block = lambda: np.sin(np.linspace(0, 400, 4096)).reshape(-1, 1).repeat(2, axis=1)
+    p._spectrum_playing = lambda: True
+    assert p._spectrum_timer.isActive()
+    p._spectrum_tick()
+    assert any(eq.levels) and not any(p.now_spectrum.levels)
+
+
 # ---- 이퀄라이저 ----
 
 def test_equalizer_sits_between_title_and_seek(make, qapp):

@@ -22,6 +22,21 @@ def make(qapp):
 
 on_top = lambda p: bool(p.windowFlags() & Qt.WindowStaysOnTopHint)
 
+WIDE = QRect(0, 0, 1600, 900)
+
+
+@pytest.fixture
+def wide(monkeypatch):
+    """offscreen 화면(800x600)은 미니 막대(830)보다 좁아서, 보통 모니터 크기로 바꿔 놓고 잰다."""
+    import funplayer.ui.window_keeper as wk
+    screen = FakeScreen(WIDE)
+
+    class Gui:
+        primaryScreen = staticmethod(lambda: screen)
+        screenAt = staticmethod(lambda pt: screen if WIDE.contains(pt) else None)
+
+    monkeypatch.setattr(wk, "QGuiApplication", Gui)
+
 def test_first_start_uses_default_size(make):
     p, _ = make({})
     assert p.size() == QSize(380, 680) == QSize(*DEFAULT_SIZE) and not p.is_mini and not on_top(p)
@@ -75,33 +90,33 @@ def test_offscreen_geometry_is_centered(make):
     p, _ = make({"player_geometry": [5000, 5000, 380, 660]})
     assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 660)
 
-def test_starts_in_mini_on_top_at_saved_place(make):
-    p, _ = make({"player_mini": True, "player_mini_on_top": True, "player_mini_geometry": [30, 40, 700, 104]}); g = p.geometry()
-    assert p.is_mini and on_top(p) and (g.x(), g.y(), g.width()) == (30, 40, 700)
+def test_starts_in_mini_on_top_at_saved_place(make, wide):
+    p, _ = make({"player_mini": True, "player_mini_on_top": True, "player_mini_geometry": [30, 40, 850, 104]}); g = p.geometry()
+    assert p.is_mini and on_top(p) and (g.x(), g.y(), g.width()) == (30, 40, 850)
     assert p.minimumHeight() == p.maximumHeight() == p.sizeHint().height() == 104
 
-def test_old_mini_geometry_raised(make):
+def test_old_mini_geometry_raised(make, wide):
     p, _ = make({"player_mini": True, "player_mini_geometry": [5, 5, 304, 100]})
     g = p.geometry()
-    assert (g.x(), g.y(), g.width(), g.height()) == (5, 5, 680, 104) and (680, 104) == MINI_SIZE
-    assert p.minimumWidth() == 680
+    assert (g.x(), g.y(), g.width(), g.height()) == (5, 5, 830, 104) and (830, 104) == MINI_SIZE
+    assert p.minimumWidth() == 830
 
-def test_mini_width_is_kept_per_mode(make):
-    store = {"player_mini_geometry": [5, 5, 720, 104]}; p, k = make(store)
-    p.set_mini(True); assert p.width() == 720
-    p.resize(740, 104); p.set_mini(False); assert store["player_mini_geometry"][2] == 740
-    p.set_mini(True); assert p.width() == 740
+def test_mini_width_is_kept_per_mode(make, wide):
+    store = {"player_mini_geometry": [5, 5, 870, 104]}; p, k = make(store)
+    p.set_mini(True); assert p.width() == 870
+    p.resize(890, 104); p.set_mini(False); assert store["player_mini_geometry"][2] == 890
+    p.set_mini(True); assert p.width() == 890
 
 def test_offscreen_mini_recentres(make):
     p, _ = make({"player_mini": True, "player_mini_geometry": [5000, 5000, 304, 100]})
-    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(680, 104)
+    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(830, 104)
 
 @pytest.mark.parametrize("x", [-200, 500])
-def test_full_mini_width_lies_on_the_screen(make, x):
-    area = QGuiApplication.primaryScreen().availableGeometry()
+def test_full_mini_width_lies_on_the_screen(make, wide, x):
+    area = WIDE
     p, _ = make({"player_mini": True, "player_mini_geometry": [area.left() + x, 40, 304, 100]})
     g = p.geometry()
-    assert area.left() <= g.left() and g.right() <= area.right() and g.width() == 680
+    assert area.left() <= g.left() and g.right() <= area.right() and g.width() == 830
 
 def test_chrome_survives_on_top_toggle(qapp):
     s = Settings({"player_mini_on_top": True}, lambda: None)
@@ -109,7 +124,7 @@ def test_chrome_survives_on_top_toggle(qapp):
     WindowKeeper(p, s).start(); p.show(); qapp.processEvents()
     try:
         p.set_mini(True); qapp.processEvents()
-        assert on_top(p) and p.isVisible() and p.size() == QSize(680, 104)
+        assert on_top(p) and p.isVisible() and p.size() == QSize(830, 104)
         assert p.windowFlags() & Qt.FramelessWindowHint and p.windowFlags() & Qt.WindowMinimizeButtonHint
         assert p.testAttribute(Qt.WA_TranslucentBackground)
     finally:
@@ -143,14 +158,14 @@ def test_back_to_normal_keeps_layout_minimum_height(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents(); p.set_mini(False); qapp.processEvents()
     assert p.minimumHeight() == MIN_SIZE[1] >= p.layout().totalMinimumSize().height() > 200
 
-def test_mini_start_without_mini_place_uses_normal_place(make):
+def test_mini_start_without_mini_place_uses_normal_place(make, wide):
     p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 660]}); g = p.geometry()
-    assert p.is_mini and (g.x(), g.y(), g.width()) == (50, 60, 680)
+    assert p.is_mini and (g.x(), g.y(), g.width()) == (50, 60, 830)
 
-def test_mini_start_without_any_place_uses_default_width_centered(make):
+def test_mini_start_without_any_place_uses_default_width_centered(make, wide):
     p, _ = make({"player_mini": True})
-    screen = QGuiApplication.primaryScreen().availableGeometry()
-    assert p.is_mini and p.width() == 680 and p.geometry().center().x() in (screen.center().x(), screen.center().x() + 1)
+    screen = WIDE
+    assert p.is_mini and p.width() == 830 and p.geometry().center().x() in (screen.center().x(), screen.center().x() + 1)
 
 class FakeScreen:
     def __init__(self, geometry, available=None):

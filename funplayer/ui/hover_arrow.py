@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QPushButton
 
 from funplayer.ui.glyphs import glyph_pixmap
 
-ICON_SIZE = 24
+ICON_SIZE = 36   # 표지 216의 6분의 1
 OPACITY = 0.6
 
 

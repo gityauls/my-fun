@@ -204,8 +204,8 @@ def test_spectrum_timer_only_when_visible(fpanel):
     assert not p._spectrum_timer.isActive()
     p.shortcuts["Ctrl+E"].activated.emit()
     assert p._spectrum_timer.isActive() and p._spectrum_timer.interval() == 40
-    p.set_mini(True)
-    assert not p._spectrum_timer.isActive()
+    p.set_mini(True)   # 미니 막대에도 이퀄라이저가 있다
+    assert p._spectrum_timer.isActive()
     p.set_mini(False)
     assert p._spectrum_timer.isActive()
     p.shortcuts["Ctrl+E"].activated.emit()   # 지금 재생 탭에도 막대가 있다

@@ -63,20 +63,26 @@ VOLUME_STEP = 5
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 216
-ARROW_WIDTH = 34      # 표지 양옆 빈 칸. 가장 좁은 창에서도 들어간다
+ARROW_WIDTH = 52      # 표지 양옆 단추. 가장 좁은 창(양옆 61)에서도 간격과 함께 들어간다
+ARROW_GAP = 8
 NOW_BARS = 32
 NOW_SPECTRUM_MIN = 40
+MINI_BARS = 16
+MINI_SPECTRUM_SIZE = (106, 44)
 ART_MINI = 80
 ART_RADIUS = 28
 ART_MINI_RADIUS = 14
 PLAY_SIZE = 60
-NOW_MARGINS = (26, 18, 26, 16)
+NOW_SIDE = 26
+NOW_TOP = 18
+NOW_BOTTOM = 16
 TITLE_PX = 19
-# 시안의 미니 칸 (폭은 테두리 1px 안쪽부터 잰다. 테마 단추 16 x 2 + 그림 80 + 곡 정보 187 + 조작 172 + 소리 92 + 목록 26)
-MINI_MARGINS = (0, 0, 17, 0)
+# 시안의 미니 칸 (폭은 테두리 1px 안쪽부터 잰다. 테마 단추 18 x 2 + 간격 4 x 2 + 그림 80 + 곡 정보 319 + 조작 172 + 소리 92 + 목록 26)
+MINI_MARGINS = (6, 0, 17, 0)
 MINI_GAP = 12
-MINI_INFO_WIDTH = 187
-MINI_ARROW_WIDTH = 16
+MINI_INFO_WIDTH = 319
+MINI_ARROW_WIDTH = 18
+MINI_ARROW_GAP = 4
 MINI_ARROW_ICON = 16
 MINI_VOLUME_WIDTH = 92
 MINI_LIFT = 8   # 조작부는 창 버튼 자리를 비우려고 살짝 아래에 놓는다
@@ -196,6 +202,7 @@ class PlayerPanel(QWidget):
         self._spectrum_timer.timeout.connect(self._spectrum_tick)
         self._big_decay = Decay(BARS)
         self._now_decay = Decay(NOW_BARS)
+        self._mini_decay = Decay(MINI_BARS)
         self._spectrum_last: float | None = None
         self._build()
         self._wire()
@@ -238,9 +245,10 @@ class PlayerPanel(QWidget):
         self.now_spectrum.set_colors(hero.spec or (hero.g1,), hero.acc_t)
         self.theme_prev_button.set_color(hero.icon)
         self.theme_next_button.set_color(hero.icon)
-        mini_icon = mini_theme(applied).icon
-        self.mini_theme_prev_button.set_color(mini_icon)
-        self.mini_theme_next_button.set_color(mini_icon)
+        mini = mini_theme(applied)
+        self.mini_spectrum.set_colors(mini.spec or (mini.g1,), mini.acc_t)
+        self.mini_theme_prev_button.set_color(mini.icon)
+        self.mini_theme_next_button.set_color(mini.icon)
         self._apply_icons()
         self._render_art()
         self._live_color = self._status_error = None   # 색이 테마를 따르니 기억을 비우고 새로 입힌다
@@ -429,8 +437,12 @@ class PlayerPanel(QWidget):
 
     def _build_now_page(self) -> QWidget:
         page = self.page_now = self._page("pageNow")
-        lay = self._now_layout = QVBoxLayout(page)
-        lay.setContentsMargins(*NOW_MARGINS)
+        # 표지 줄은 양옆 단추가 쓰도록 페이지 끝까지 쓰고, 나머지 줄만 안쪽 여백을 둔다
+        outer = self._now_layout = QVBoxLayout(page)
+        outer.setContentsMargins(0, NOW_TOP, 0, NOW_BOTTOM)
+        outer.setSpacing(0)
+        lay = QVBoxLayout()
+        lay.setContentsMargins(NOW_SIDE, 0, NOW_SIDE, 0)
         lay.setSpacing(0)
 
         self.art_label = ClickLabel()
@@ -440,7 +452,7 @@ class PlayerPanel(QWidget):
         self.theme_prev_button = HoverArrow("chevL", "이전 테마")
         self.theme_next_button = HoverArrow("chevR", "다음 테마")
         self.art_row = QHBoxLayout()
-        self.art_row.setSpacing(0)
+        self.art_row.setSpacing(ARROW_GAP)
         self.art_row.addStretch(1)
         self.art_row.addWidget(self.theme_prev_button)
         self.art_row.addWidget(self.art_label, 0, Qt.AlignCenter)
@@ -448,8 +460,9 @@ class PlayerPanel(QWidget):
         self.art_row.addStretch(1)
         for b in (self.theme_prev_button, self.theme_next_button):
             b.setFixedSize(ARROW_WIDTH, ART_NORMAL)
-        lay.addLayout(self.art_row)
-        lay.addSpacing(18)
+        outer.addLayout(self.art_row)
+        outer.addSpacing(18)
+        outer.addLayout(lay, 1)
 
         self.title_label = self._label(px=TITLE_PX, cls=TickerLabel)
         font = self.title_label.font()
@@ -582,7 +595,7 @@ class PlayerPanel(QWidget):
         row.setContentsMargins(*MINI_MARGINS)
         row.setSpacing(MINI_GAP)
         art_box = QHBoxLayout()   # 그림은 _place_shared가 두 단추 사이에 넣는다
-        art_box.setSpacing(0)
+        art_box.setSpacing(MINI_ARROW_GAP)
         self.mini_theme_prev_button = HoverArrow("chevL", "이전 테마", MINI_ARROW_ICON)
         self.mini_theme_next_button = HoverArrow("chevR", "다음 테마", MINI_ARROW_ICON)
         for b in (self.mini_theme_prev_button, self.mini_theme_next_button):
@@ -596,13 +609,19 @@ class PlayerPanel(QWidget):
         col = QVBoxLayout(info)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        self.mini_spectrum = SpectrumView(MINI_BARS)
+        self.mini_spectrum.setFixedSize(*MINI_SPECTRUM_SIZE)
+        top = QHBoxLayout()
+        top.setSpacing(MINI_GAP)
+        top.addLayout(names, 1)
+        top.addWidget(self.mini_spectrum)
         seek_row = QHBoxLayout()
         seek_row.setSpacing(7)
         seek_row.addStretch()   # 라디오일 때 LIVE와 들은 시간을 양 끝으로 민다
         col.addStretch(1)
-        col.addLayout(title_row)
+        col.addLayout(top)
         col.addSpacing(7)
         col.addLayout(seek_row)
         col.addStretch(1)
@@ -643,9 +662,9 @@ class PlayerPanel(QWidget):
         plain = Qt.Alignment()
         self._mini_slots = [
             (self.art_label, art_box, 1, 0, plain),
-            (self.title_label, title_row, 0, 1, plain),
-            (self.heart_button, title_row, 1, 0, plain),
-            (self.artist_label, col, 2, 0, plain),
+            (self.title_label, names, 0, 0, plain),
+            (self.artist_label, names, 1, 0, plain),
+            (self.heart_button, top, 2, 0, plain),
             (self.elapsed_label, seek_row, 0, 0, plain),
             (self.live_label, seek_row, 1, 0, plain),
             (self.seek_slider, seek_row, 2, 1, plain),
@@ -937,8 +956,8 @@ class PlayerPanel(QWidget):
         return c.state is State.PLAYING
 
     def _spectrum_wanted(self) -> bool:
-        # 막대가 있는 탭이 실제로 보일 때만 (패널·창이 숨겨졌거나 최소화되면 계산하지 않는다)
-        return (self._tab in ("now", "fx") and not self.is_mini and self.isVisible()
+        # 막대가 실제로 보일 때만 (패널·창이 숨겨졌거나 최소화되면 계산하지 않는다)
+        return ((self.is_mini or self._tab in ("now", "fx")) and self.isVisible()
                 and not self.window().isMinimized())
 
     def _sync_spectrum_timer(self) -> None:
@@ -965,7 +984,9 @@ class PlayerPanel(QWidget):
         last, self._spectrum_last = self._spectrum_last, now
         dt = 0.0 if last is None else min(max(now - last, 0.0), SPECTRUM_MAX_DT)
         block = self._player.latest_block() if self._spectrum_playing() else None
-        if self._tab == "now":
+        if self.is_mini:
+            view, decay, bars = self.mini_spectrum, self._mini_decay, MINI_BARS
+        elif self._tab == "now":
             view, decay, bars = self.now_spectrum, self._now_decay, NOW_BARS
         else:
             view, decay, bars = self.fx_strip.spectrum, self._big_decay, BARS

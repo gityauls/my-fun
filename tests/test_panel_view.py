@@ -225,25 +225,25 @@ def test_back_to_normal_restores_every_slot_and_size(panel):
     assert snapshot() == before
 
 def test_mini_layout_follows_the_mockup(panel, qapp):
-    p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
-    assert (p.mini_bar.width(), p.mini_bar.height()) == (680, 104)
-    assert p.layout().totalMinimumSize().width() == 680
-    assert (p.art_label.x(), p.art_label.y()) == (16, 12)
-    assert p.mini_info.width() == 187 and p.mini_volume.width() == 92 and p.list_button_mini.width() == 26
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(830, 104); qapp.processEvents()
+    assert (p.mini_bar.width(), p.mini_bar.height()) == (830, 104)
+    assert p.layout().totalMinimumSize().width() == 830
+    assert (p.art_label.x(), p.art_label.y()) == (28, 12)
+    assert p.mini_info.width() == 319 and p.mini_volume.width() == 92 and p.list_button_mini.width() == 26
     assert p.title_label.font().pixelSize() == 14 and p.title_label.font().bold()
     assert p.artist_label.font().pixelSize() == 12 and p.elapsed_label.font().pixelSize() == 11
-    assert p.mini_info.x() == 16 + 80 + 16 + 12 + 1 + 12
+    assert p.mini_info.x() == 6 + 18 + 4 + 80 + 4 + 18 + 12 + 1 + 12
     right = p.list_button_mini.mapTo(p.mini_bar, p.list_button_mini.rect().topRight()).x()
-    assert right == 680 - 17 - 1
+    assert right == 830 - 17 - 1
 
 def test_wider_mini_goes_to_the_info_column(panel, qapp):
-    p, _ = panel; p.show(); p.set_mini(True); p.resize(780, 104); qapp.processEvents()
-    assert p.mini_info.width() == 287 and p.mini_volume.width() == 92
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(930, 104); qapp.processEvents()
+    assert p.mini_info.width() == 419 and p.mini_volume.width() == 92
 
 def test_mini_window_buttons_stay_on_top_at_the_corner(panel, qapp):
-    p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
+    p, _ = panel; p.show(); p.set_mini(True); p.resize(830, 104); qapp.processEvents()
     c = p.mini_controls
-    assert c.parent() is p.mini_bar and c.geometry().right() == 679 and c.y() == 0
+    assert c.parent() is p.mini_bar and c.geometry().right() == 829 and c.y() == 0
     for b in (p.mini_min_button, p.mini_normal_button, p.mini_close_button):
         assert p.mini_bar.childAt(b.mapTo(p.mini_bar, b.rect().center())) is b
     assert p.mini_normal_button.toolTip() == "보통 보기"
@@ -251,8 +251,8 @@ def test_mini_window_buttons_stay_on_top_at_the_corner(panel, qapp):
 def test_long_title_scrolls_inside_the_info_column(panel, qapp, tmp_path):
     p, _ = panel; name = "아주 긴 제목 " * 12 + ".mp3"
     p.controller.open([str(make_songs(tmp_path, [name]))]); p.show()
-    p.set_mini(True); p.resize(680, 104); qapp.processEvents(); p.refresh()
-    assert p.title_label.moving and p.title_label.width() < 206
+    p.set_mini(True); p.resize(830, 104); qapp.processEvents(); p.refresh()
+    assert p.title_label.moving and p.title_label.width() < 319
     assert p.title_label.toolTip().startswith("아주 긴 제목")
 
 def test_title_scrolls_right_after_the_switch(panel, qapp, tmp_path):
