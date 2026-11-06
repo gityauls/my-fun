@@ -6,6 +6,8 @@ from contextlib import contextmanager
 
 import numpy as np
 
+from datetime import datetime
+
 from PyQt5.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
@@ -18,6 +20,7 @@ from funplayer import coverfind, musicbrainz
 from funplayer.controller import PlayerController
 from funplayer.core.contrast import error_color
 from funplayer.core.renamer import RenameError, RenameLog
+from funplayer.core.easter import MidnightOnce, TapCounter
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
@@ -52,6 +55,7 @@ from funplayer.ui.spectrum_view import SpectrumView
 from funplayer.ui.station_view import StationView
 from funplayer.ui.style import EDGE, MINI_RADIUS, WINDOW_RADIUS, hero_theme, mini_theme, stylesheet
 from funplayer.ui.ticker_label import TickerLabel
+from funplayer.ui.egg_overlay import EggOverlay
 from funplayer.ui.title_bar import EdgeGrips, TitleBar, WindowDragArea
 from funplayer.ui.window_keeper import MINI_SIZE
 from funplayer.ui.worker import QtRunner
@@ -129,6 +133,12 @@ SHORTCUTS: list[tuple[str, str]] = [
 ]
 
 
+ART_TAP_MS = 350      # 표지 한 번 누름과 연타를 가르는 시간
+COVER_TAPS, COVER_TAP_SECONDS = 5, 2.5
+TITLE_TAPS, TITLE_TAP_SECONDS = 7, 3.5
+NEXT_TAPS, NEXT_TAP_SECONDS = 7, 10.0
+
+
 class PlayerPanel(QWidget):
     miniChanged = pyqtSignal(bool)
     miniOnTopChanged = pyqtSignal(bool)
@@ -204,7 +214,17 @@ class PlayerPanel(QWidget):
         self._now_decay = Decay(NOW_BARS)
         self._mini_decay = Decay(MINI_BARS)
         self._spectrum_last: float | None = None
+        self._now = datetime.now
+        self._cover_taps = TapCounter(COVER_TAPS, COVER_TAP_SECONDS)
+        self._title_taps = TapCounter(TITLE_TAPS, TITLE_TAP_SECONDS)
+        self._next_taps = TapCounter(NEXT_TAPS, NEXT_TAP_SECONDS)
+        self._midnight = MidnightOnce()
+        # 표지 연타가 곡 정보 창에 막히지 않게 한 번 누름은 잠깐 기다렸다 연다
+        self._art_tap_timer = QTimer(self)
+        self._art_tap_timer.setSingleShot(True)
+        self._art_tap_timer.setInterval(ART_TAP_MS)
         self._build()
+        self.egg_overlay = EggOverlay(self, self.art_label, lambda: self.is_mini)
         self._wire()
         self.setAcceptDrops(True)
 
@@ -805,7 +825,8 @@ class PlayerPanel(QWidget):
         sv.changed.connect(self._stations_changed)
         sv.open_groups_changed.connect(self._open_groups_changed)
         self.add_url_button.clicked.connect(self.add_url)
-        self.art_label.clicked.connect(self.show_track_info)
+        self.art_label.clicked.connect(self._art_tapped)
+        self._art_tap_timer.timeout.connect(self.show_track_info)
         self.theme_prev_button.clicked.connect(lambda _=False: self.step_theme(-1))
         self.theme_next_button.clicked.connect(lambda _=False: self.step_theme(1))
         self.mini_theme_prev_button.clicked.connect(lambda _=False: self.step_theme(-1))
@@ -821,6 +842,7 @@ class PlayerPanel(QWidget):
         bar.miniClicked.connect(self.toggle_mini)
         bar.minimizeClicked.connect(self.showMinimized)
         bar.closeClicked.connect(self.close)
+        bar.titleTapped.connect(self._title_tapped)
         # 지금 재생·음향 효과 탭에는 [보기] 버튼이 없어 상단바에서도 연다
         bar.menu_requested.connect(lambda pos: self.view_menu.exec_(pos))
 
@@ -1672,7 +1694,25 @@ class PlayerPanel(QWidget):
 
     def next(self) -> None:
         self.controller.next()
+        if self._next_taps.tap(time.monotonic()):
+            self.egg_overlay.play("ham")
         self.refresh()
+
+    def _art_tapped(self) -> None:
+        if self._cover_taps.tap(time.monotonic()):
+            self._art_tap_timer.stop()
+            self.egg_overlay.play("tape")
+        else:
+            self._art_tap_timer.start()
+
+    def _title_tapped(self) -> None:
+        if self._title_taps.tap(time.monotonic()):
+            self.egg_overlay.play("fuzz")
+
+    def _midnight_tick(self) -> None:
+        now = self._now()
+        if self._midnight.due(now, self._spectrum_playing()) and self.egg_overlay.play("ufo"):
+            self._midnight.done(now)
 
     def seek_back(self) -> None:
         self.controller.seek_by(-1)
@@ -1769,6 +1809,7 @@ class PlayerPanel(QWidget):
     # ---- 갱신 ----
 
     def refresh(self) -> None:
+        self._midnight_tick()
         c = self.controller
         state = c.state
         duration = c.duration
@@ -2001,4 +2042,6 @@ class PlayerPanel(QWidget):
         self.media_keys.disable()
         self._timer.stop()
         self._spectrum_timer.stop()
+        self._art_tap_timer.stop()
+        self.egg_overlay.stop()
         self._player.close()

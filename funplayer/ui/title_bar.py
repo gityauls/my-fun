@@ -52,6 +52,7 @@ class TitleBar(WindowDragArea):
     minimizeClicked = pyqtSignal()
     closeClicked = pyqtSignal()
     menu_requested = pyqtSignal(QPoint)
+    titleTapped = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -97,6 +98,12 @@ class TitleBar(WindowDragArea):
 
     def contextMenuEvent(self, event) -> None:
         self.menu_requested.emit(event.globalPos())
+
+    def mousePressEvent(self, event) -> None:
+        # 글자는 마우스를 통과시키니 상단바가 대신 잰다. 빠른 연타의 두 번째 누름도 여기로 온다
+        if event.button() == Qt.LeftButton and self.title_label.geometry().contains(event.pos()):
+            self.titleTapped.emit()
+        super().mousePressEvent(event)
 
 
 class _Grip(QWidget):
