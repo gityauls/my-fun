@@ -200,6 +200,7 @@ def test_fx_state_survives_restart(qapp):
 
 def test_spectrum_timer_only_when_visible(fpanel):
     p, *_ = fpanel
+    p.set_tab("playlist")
     assert not p._spectrum_timer.isActive()
     p.shortcuts["Ctrl+E"].activated.emit()
     assert p._spectrum_timer.isActive() and p._spectrum_timer.interval() == 40
@@ -207,7 +208,9 @@ def test_spectrum_timer_only_when_visible(fpanel):
     assert not p._spectrum_timer.isActive()
     p.set_mini(False)
     assert p._spectrum_timer.isActive()
-    p.shortcuts["Ctrl+E"].activated.emit()
+    p.shortcuts["Ctrl+E"].activated.emit()   # 지금 재생 탭에도 막대가 있다
+    assert p.tab == "now" and p._spectrum_timer.isActive()
+    p.set_tab("radio")
     assert not p._spectrum_timer.isActive()
 
 

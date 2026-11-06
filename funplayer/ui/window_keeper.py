@@ -3,9 +3,10 @@ from __future__ import annotations
 from PyQt5.QtCore import QObject, QPoint, QRect, QSize, Qt
 from PyQt5.QtGui import QGuiApplication
 
-DEFAULT_SIZE = (380, 620)
-# 높이: 맑은 고딕으로 잰 지금 재생 탭 + 안내 줄 594 (상단바 44, 탭 64, 페이지 463, 안내 21, 테두리 2)
-MIN_SIZE = (340, 594)
+DEFAULT_SIZE = (380, 680)
+# 높이: 맑은 고딕으로 잰 지금 재생 탭 + 안내 줄은 643이다. 몇 픽셀 여유를 둔다
+MIN_SIZE = (340, 650)
+MAX_SIZE = (460, 780)   # 보통 창은 이 안에서만 늘어난다. 작게 보기의 폭은 묶지 않는다
 MINI_SIZE = (680, 104)
 _QWIDGETSIZE_MAX = 16777215
 
@@ -33,7 +34,7 @@ class WindowKeeper(QObject):
 
     def _store(self, mini: bool) -> None:
         panel = self._panel
-        g = panel.normalGeometry() if panel.isMaximized() else panel.geometry()
+        g = panel.geometry()
         rect = [g.x(), g.y(), g.width(), g.height()]
         if mini:
             self._settings.mini_geometry = rect
@@ -42,8 +43,6 @@ class WindowKeeper(QObject):
 
     def _on_mini(self, on: bool) -> None:
         self._store(not on)
-        if on and self._panel.isMaximized():
-            self._panel.showNormal()
         self._apply(on)
         self._apply_on_top()
 
@@ -66,11 +65,13 @@ class WindowKeeper(QObject):
             saved = self._settings.geometry
             if saved:
                 rect = QRect(*saved)
-                rect.setSize(rect.size().expandedTo(QSize(*MIN_SIZE)))   # 옛 버전이 저장한 작은 창
+                # 옛 버전이 저장한 작거나 큰 창
+                rect.setSize(rect.size().expandedTo(QSize(*MIN_SIZE)).boundedTo(QSize(*MAX_SIZE)))
             else:
                 rect = QRect(0, 0, *DEFAULT_SIZE)
                 self._center(rect)
             panel.setMinimumSize(*MIN_SIZE)
+            panel.setMaximumSize(*MAX_SIZE)
         if QGuiApplication.screenAt(rect.center()) is None:
             self._center(rect)
         if mini:

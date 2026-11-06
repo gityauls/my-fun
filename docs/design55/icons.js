@@ -15,5 +15,5 @@ const P={
  volH:'<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
  min:'<path d="M5 12h14"/>',max:'<rect x="5" y="5" width="14" height="14" rx="1.5"/>',x:'<path d="M18 6 6 18M6 6l12 12"/>',
  shrink:'<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
- chev:'<path d="m6 9 6 6 6-6"/>',chevR:'<path d="m9 18 6-6-6-6"/>'
+ chev:'<path d="m6 9 6 6 6-6"/>',chevL:'<path d="m15 18-6-6 6-6"/>',chevR:'<path d="m9 18 6-6-6-6"/>'
 };

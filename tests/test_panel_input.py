@@ -383,11 +383,11 @@ def test_view_menu_mini_items(rig):
         "설정…", "", "곡 정보…\tCtrl+I", "작게 보기\tCtrl+M", "",
         "작게 볼 때 항상 위", "멀티미디어 키 사용"]
     p.view_menu.aboutToShow.emit()
-    assert not p.actions["mini"].isChecked() and p.actions["mini_on_top"].isChecked()
+    assert not p.actions["mini"].isChecked() and not p.actions["mini_on_top"].isChecked()
     p.actions["mini"].trigger(); assert p.is_mini
     p.view_menu.aboutToShow.emit(); assert p.actions["mini"].isChecked()
     p.actions["mini_on_top"].trigger()
-    assert store["player_mini_on_top"] is False and seen == [False]
+    assert store["player_mini_on_top"] is True and seen == [True]
 
 def test_shortcuts_still_work_in_mini(rig):
     p, fake, *_ = rig; p.set_mini(True)

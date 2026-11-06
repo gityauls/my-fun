@@ -54,8 +54,7 @@ def move(w, pos, buttons=Qt.LeftButton):
 # ---- 상단바 ----
 
 @pytest.mark.parametrize("name,signal", [("settings_btn", "settingsClicked"), ("mini_btn", "miniClicked"),
-                                         ("min_btn", "minimizeClicked"),
-                                         ("max_btn", "maximizeClicked"), ("close_btn", "closeClicked")])
+                                         ("min_btn", "minimizeClicked"), ("close_btn", "closeClicked")])
 def test_titlebar_buttons_emit(host, name, signal):
     _, bar, _ = host
     spy = QSignalSpy(getattr(bar, signal))
@@ -69,10 +68,7 @@ def test_titlebar_shape_and_tips(host):
     assert bar.title_label.text() == "my-fun"
     assert bar.mini_btn.toolTip() == "작게 보기" and bar.settings_btn.toolTip() == "설정"
     assert (bar.close_btn.width(), bar.close_btn.height()) == (30, 28)
-    bar.set_maximized(True)
-    on_max = bar.max_btn.toolTip()
-    bar.set_maximized(False)
-    assert on_max != bar.max_btn.toolTip()
+    assert not hasattr(bar, "max_btn")   # 창은 정해진 크기 안에서만 늘어난다
 
 
 def test_titlebar_theme_changes_icons(host):
@@ -100,21 +96,6 @@ def test_titlebar_small_move_or_other_button_does_not_drag(host):
     QTest.mousePress(bar, Qt.RightButton, pos=QPoint(100, 20))
     move(bar, QPoint(150, 20), Qt.RightButton)
     assert handle.moves == 0
-
-
-def test_titlebar_does_not_move_maximized_window(host):
-    win, bar, handle = host
-    win.isMaximized = lambda: True
-    QTest.mousePress(bar, Qt.LeftButton, pos=QPoint(100, 20))
-    move(bar, QPoint(150, 20))
-    assert handle.moves == 0
-
-
-def test_titlebar_double_click_maximizes(host):
-    _, bar, handle = host
-    spy = QSignalSpy(bar.maximizeClicked)
-    QTest.mouseDClick(bar, Qt.LeftButton, pos=QPoint(100, 20))
-    assert len(spy) == 1 and handle.moves == 0
 
 
 def test_titlebar_right_click_requests_menu(host):
@@ -227,64 +208,6 @@ def test_titlebar_buttons_act_on_panel_without_chrome(panel):
     assert seen == ["close"]
 
 
-def test_maximize_toggle_and_square_corners(panel, qapp):
-    panel.show(); qapp.processEvents()
-    assert panel.corner_radius() == 20
-    panel.title_bar.max_btn.click(); qapp.processEvents()
-    assert panel.isMaximized() and panel.corner_radius() == 0
-    assert panel.root.property("square") == "true"
-    tip = panel.title_bar.max_btn.toolTip()
-    panel.title_bar.max_btn.click(); qapp.processEvents()
-    assert not panel.isMaximized() and panel.corner_radius() == 20
-    assert panel.root.property("square") == "false"
-    assert panel.title_bar.max_btn.toolTip() != tip
-
-
-def test_maximize_is_limited_to_available_area_and_restored(panel, qapp):
-    panel.show(); qapp.processEvents()
-    panel.toggle_maximize(); qapp.processEvents()
-    area = panel.screen().availableGeometry()
-    assert panel.maximumSize() == area.size()
-    assert panel.width() <= area.width() and panel.height() <= area.height()
-    panel.toggle_maximize(); qapp.processEvents()
-    assert panel.maximumHeight() == panel.maximumWidth() == 16777215
-
-
-def test_system_maximize_goes_through_the_same_path(panel, qapp):
-    panel.show(); qapp.processEvents()
-    panel.showMaximized(); qapp.processEvents()   # Win+위 화살표처럼 패널 밖에서 오는 최대화
-    assert panel.root.property("square") == "true"
-    assert panel.screen().availableGeometry().contains(panel.frameGeometry())
-    panel.showNormal(); qapp.processEvents()
-    assert panel.root.property("square") == "false" and panel.maximumHeight() == 16777215
-
-
-def test_grips_step_aside_while_maximized(panel, qapp):
-    panel.use_window_chrome(); panel.show(); qapp.processEvents()
-    panel.toggle_maximize(); qapp.processEvents()
-    assert all(w.isHidden() for w in panel.grips.grips.values())
-    panel.toggle_maximize(); qapp.processEvents()
-    assert not any(w.isHidden() for w in panel.grips.grips.values())
-
-
-def test_square_corners_really_change_the_rule(panel, qapp):
-    panel.show(); panel.apply_theme(get_theme("dark")); qapp.processEvents()
-    bar_color = "#191a2a"
-    assert panel.grab().toImage().pixelColor(1, 1).name() != bar_color      # 둥근 모서리 바깥
-    panel.toggle_maximize(); qapp.processEvents()
-    assert panel.grab().toImage().pixelColor(0, 0).name() == bar_color      # 네모 모서리까지 상단바
-    panel.toggle_maximize(); qapp.processEvents()
-    assert panel.grab().toImage().pixelColor(1, 1).name() != bar_color
-
-
-def test_maximize_over_taskbar_is_pulled_back(panel, qapp):
-    panel.show(); qapp.processEvents()
-    area = panel.screen().availableGeometry()
-    panel.frameGeometry = lambda: area.adjusted(0, 0, 0, 40)   # 작업 표시줄까지 덮은 자리
-    panel.showMaximized(); qapp.processEvents()
-    assert panel.maximumSize() == area.size()
-
-
 def test_right_click_opens_view_menu(panel):
     seen = []
     panel.view_menu.exec_ = seen.append
@@ -325,7 +248,7 @@ def test_refresh_does_not_repolish(panel, monkeypatch):
 def test_stylesheet_rounds_and_squares(t):
     css = stylesheet(t)
     assert "border-top-left-radius: 19px" in css and "border-bottom-right-radius: 19px" in css
-    assert '#root[square="true"]' in css and "border-radius: 20px" in css
+    assert "border-radius: 20px" in css
 
 
 def test_settings_button_sits_left_of_mini_with_its_icon(host):

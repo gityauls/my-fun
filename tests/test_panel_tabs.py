@@ -180,8 +180,9 @@ def test_fx_strip_lives_in_fx_page(panel):
     panel.set_tab("fx"); assert panel.fx_strip.isVisible()
 
 
-def test_spectrum_runs_only_on_fx_tab(panel_playing):
-    panel_playing.set_tab("now"); assert not panel_playing._spectrum_wanted()
+def test_spectrum_runs_only_on_tabs_with_bars(panel_playing):
+    panel_playing.set_tab("playlist"); assert not panel_playing._spectrum_wanted()
+    panel_playing.set_tab("now"); assert panel_playing._spectrum_wanted()
     panel_playing.set_tab("fx");  assert panel_playing._spectrum_wanted()
     assert panel_playing._spectrum_timer.isActive()
 
@@ -264,9 +265,10 @@ def test_status_shows_on_every_tab_and_takes_no_space_when_empty(panel, tab):
     assert panel.status_label.isHidden()
 
 
-def test_status_sits_above_strip(panel):
+def test_strip_sits_under_tabs_and_status_under_pages(panel):
     lay = panel.root.layout()
-    assert lay.indexOf(panel.pages) < lay.indexOf(panel.status_label) < lay.indexOf(panel.now_strip)
+    assert (lay.indexOf(panel.tab_bar) < lay.indexOf(panel.now_strip) < lay.indexOf(panel.pages)
+            < lay.indexOf(panel.status_label))
 
 
 def test_live_row_on_radio(panel_on_radio):
@@ -307,7 +309,7 @@ def test_art_rebuilt_on_track_change_only(panel_with_tracks, monkeypatch):
     p = panel_with_tracks; calls = []; real = pp.rounded_art
     monkeypatch.setattr(pp, "rounded_art", lambda *a: calls.append(a[1]) or real(*a))
     p.next(); p.refresh()
-    assert sorted(calls) == [40, ART_NORMAL]
+    assert sorted(calls) == [56, ART_NORMAL]
 
 
 def test_mini_works_on_new_structure(panel_with_tracks):

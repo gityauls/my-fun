@@ -22,7 +22,7 @@ from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
 from funplayer.core.taginfo import TrackInfo
-from funplayer.core.themes import Theme, accent_from_pixels, album_theme, get_theme
+from funplayer.core.themes import THEMES, Theme, accent_from_pixels, album_theme, get_theme
 from funplayer.core.tracks import SUPPORTED_EXTS
 from funplayer.core.timefmt import format_time
 from funplayer.engine.decoder import SAMPLE_RATE
@@ -36,6 +36,7 @@ from funplayer.ui.colors import ERROR_COLOR, FAVORITE_COLOR
 from funplayer.ui.cover import load_cover, radio_art_for, rounded_art
 from funplayer.ui.fx_strip import BARS, FxStrip
 from funplayer.ui.glyphs import glyph, glyph_pixmap
+from funplayer.ui.hover_arrow import HoverArrow
 from funplayer.ui.icon_tabs import IconTabs
 from funplayer.ui.icons import radio_art
 from funplayer.ui.settings_dialog import SettingsDialog
@@ -47,8 +48,10 @@ from funplayer.ui.now_strip import ART_RADIUS as STRIP_RADIUS, ART_SIZE as STRIP
 from funplayer.ui.playlist_view import (ROLE_CURRENT, ROLE_FAVORITE, ROLE_NUMBER, ROLE_TITLE,
                                         PlaylistView)
 from funplayer.ui.radio_dialogs import AddUrlDialog
+from funplayer.ui.spectrum_view import SpectrumView
 from funplayer.ui.station_view import StationView
 from funplayer.ui.style import EDGE, MINI_RADIUS, WINDOW_RADIUS, hero_theme, mini_theme, stylesheet
+from funplayer.ui.ticker_label import TickerLabel
 from funplayer.ui.title_bar import EdgeGrips, TitleBar, WindowDragArea
 from funplayer.ui.window_keeper import MINI_SIZE
 from funplayer.ui.worker import QtRunner
@@ -57,20 +60,24 @@ REFRESH_MS = 200
 SPECTRUM_MS = 40
 SPECTRUM_MAX_DT = 0.2
 VOLUME_STEP = 5
-_QWIDGETSIZE_MAX = 16777215
 REPEAT_TIPS = {"off": "반복: 끔", "all": "반복: 전체", "one": "반복: 한 곡"}
 SHUFFLE_TIPS = {False: "무작위: 끔", True: "무작위: 켬"}
 ART_NORMAL = 216
+ARROW_WIDTH = 34      # 표지 양옆 빈 칸. 가장 좁은 창에서도 들어간다
+NOW_BARS = 32
+NOW_SPECTRUM_MIN = 40
 ART_MINI = 80
 ART_RADIUS = 28
 ART_MINI_RADIUS = 14
 PLAY_SIZE = 60
 NOW_MARGINS = (26, 18, 26, 16)
 TITLE_PX = 19
-# 시안의 미니 칸 (폭은 테두리 1px 안쪽부터 잰다. 그림 80 + 곡 정보 206 + 조작 172 + 소리 92 + 목록 26)
-MINI_MARGINS = (13, 0, 17, 0)
+# 시안의 미니 칸 (폭은 테두리 1px 안쪽부터 잰다. 테마 단추 16 x 2 + 그림 80 + 곡 정보 187 + 조작 172 + 소리 92 + 목록 26)
+MINI_MARGINS = (0, 0, 17, 0)
 MINI_GAP = 12
-MINI_INFO_WIDTH = 206
+MINI_INFO_WIDTH = 187
+MINI_ARROW_WIDTH = 16
+MINI_ARROW_ICON = 16
 MINI_VOLUME_WIDTH = 92
 MINI_LIFT = 8   # 조작부는 창 버튼 자리를 비우려고 살짝 아래에 놓는다
 # 공용 위젯의 보기별 치수: (이름, 보통 크기, 미니 크기, 보통 그림, 미니 그림)
@@ -175,7 +182,6 @@ class PlayerPanel(QWidget):
         self.is_mini = False   # settings.mini는 창(Task 10)이 적용한다
         self.chrome = False    # 테두리 없는 창인가 (__main__이 켠다. 6단계에서 끼울 때는 그대로 둔다)
         self.grips: EdgeGrips | None = None
-        self._maximized = False
         self._pages_min_key: tuple | None = None
 
         self._bridge = PlayerBridge(self._player, self)
@@ -184,11 +190,12 @@ class PlayerPanel(QWidget):
         self._bridge.lost.connect(self._on_lost, Qt.QueuedConnection)
 
         self.media_keys = media_keys if media_keys is not None else MediaKeys(self)
-        # 스펙트럼: 음향 효과 탭이 보일 때만 도는 별도 타이머 (_apply_visibility가 켜고 끈다)
+        # 스펙트럼: 지금 재생·음향 효과 탭이 보일 때만 도는 별도 타이머 (_apply_visibility가 켜고 끈다)
         self._spectrum_timer = QTimer(self)
         self._spectrum_timer.setInterval(SPECTRUM_MS)
         self._spectrum_timer.timeout.connect(self._spectrum_tick)
         self._big_decay = Decay(BARS)
+        self._now_decay = Decay(NOW_BARS)
         self._spectrum_last: float | None = None
         self._build()
         self._wire()
@@ -227,6 +234,13 @@ class PlayerPanel(QWidget):
         self.playlist_view.set_theme(applied)
         self.station_view.set_theme(applied)
         self.fx_strip.set_theme(applied)   # 음향 효과 쪽은 hero가 아니라 기본 색이다
+        hero = hero_theme(applied)
+        self.now_spectrum.set_colors(hero.spec or (hero.g1,), hero.acc_t)
+        self.theme_prev_button.set_color(hero.icon)
+        self.theme_next_button.set_color(hero.icon)
+        mini_icon = mini_theme(applied).icon
+        self.mini_theme_prev_button.set_color(mini_icon)
+        self.mini_theme_next_button.set_color(mini_icon)
         self._apply_icons()
         self._render_art()
         self._live_color = self._status_error = None   # 색이 테마를 따르니 기억을 비우고 새로 입힌다
@@ -264,6 +278,13 @@ class PlayerPanel(QWidget):
             return False
         self._album_accent = accent
         return True
+
+    def step_theme(self, delta: int) -> None:
+        """표지 옆 단추: 테마를 앞뒤로 넘기고 바로 저장한다. 끝에 닿으면 처음으로 돈다."""
+        ids = [t.id for t in THEMES]
+        chosen = ids[(ids.index(self.theme.id) + delta) % len(ids)]
+        self.set_theme_id(chosen)
+        self.settings.theme = chosen
 
     def show_settings(self, modal: bool = True) -> SettingsDialog:
         dialog = self.settings_dialog = SettingsDialog(self.theme.id, self)
@@ -350,8 +371,8 @@ class PlayerPanel(QWidget):
         return page
 
     @staticmethod
-    def _label(text: str = "", px: int = 12, role: str = "") -> QLabel:
-        label = QLabel(text)
+    def _label(text: str = "", px: int = 12, role: str = "", cls=QLabel) -> QLabel:
+        label = cls(text)
         font = QFont(label.font())
         font.setPixelSize(px)
         label.setFont(font)
@@ -379,6 +400,10 @@ class PlayerPanel(QWidget):
             self.tab_bar.addTab(name, title)
         root.addWidget(self.tab_bar)
 
+        self.now_strip = NowStrip()
+        self.now_strip.hide()
+        root.addWidget(self.now_strip)
+
         self.pages = QStackedWidget()
         # 쌓인 페이지 중 가장 큰 것이 창 최소 크기를 정하지 않게 한다 (숨은 음향 효과 칸이 창을 넓히면 안 된다)
         self.pages.setMinimumSize(1, 1)
@@ -400,10 +425,6 @@ class PlayerPanel(QWidget):
         self.status_label.hide()
         root.addWidget(self.status_label)
 
-        self.now_strip = NowStrip()
-        self.now_strip.hide()
-        root.addWidget(self.now_strip)
-
         outer.addWidget(self._build_mini_bar())
 
     def _build_now_page(self) -> QWidget:
@@ -416,18 +437,27 @@ class PlayerPanel(QWidget):
         self.art_label.setFixedSize(ART_NORMAL, ART_NORMAL)
         self.art_label.setToolTip("곡 정보")
         self.art_label.setCursor(Qt.PointingHandCursor)
+        self.theme_prev_button = HoverArrow("chevL", "이전 테마")
+        self.theme_next_button = HoverArrow("chevR", "다음 테마")
         self.art_row = QHBoxLayout()
+        self.art_row.setSpacing(0)
+        self.art_row.addStretch(1)
+        self.art_row.addWidget(self.theme_prev_button)
         self.art_row.addWidget(self.art_label, 0, Qt.AlignCenter)
+        self.art_row.addWidget(self.theme_next_button)
+        self.art_row.addStretch(1)
+        for b in (self.theme_prev_button, self.theme_next_button):
+            b.setFixedSize(ARROW_WIDTH, ART_NORMAL)
         lay.addLayout(self.art_row)
         lay.addSpacing(18)
 
-        self.title_label = self._label(px=TITLE_PX)
+        self.title_label = self._label(px=TITLE_PX, cls=TickerLabel)
         font = self.title_label.font()
         font.setBold(True)
         self.title_label.setFont(font)
         self.title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.title_label.setMinimumWidth(0)
-        self.artist_label = self._label(px=13, role="mute")
+        self.artist_label = self._label(px=13, role="mute", cls=TickerLabel)
         self.artist_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.artist_label.setMinimumWidth(0)
         titles = QVBoxLayout()
@@ -443,7 +473,14 @@ class PlayerPanel(QWidget):
         self.mini_button = self._tool("작게 보기", 26, 16)
         self.head_row.addWidget(self.mini_button, 0, Qt.AlignVCenter)
         lay.addLayout(self.head_row)
-        lay.addSpacing(16)
+        lay.addSpacing(12)
+
+        # 창을 세로로 늘리면 이 칸이 함께 커져서 조작부 아래가 비지 않는다
+        self.now_spectrum = SpectrumView(NOW_BARS)
+        self.now_spectrum.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.now_spectrum.setMinimumHeight(NOW_SPECTRUM_MIN)
+        lay.addWidget(self.now_spectrum, 1)
+        lay.addSpacing(12)
 
         self.seek_slider = JumpSlider(Qt.Horizontal)
         self.seek_slider.setRange(0, 0)
@@ -482,7 +519,7 @@ class PlayerPanel(QWidget):
             ctl.addStretch(1)
             ctl.addWidget(w)
         lay.addLayout(ctl)
-        lay.addStretch(1)
+        lay.addSpacing(8)
 
         self.mute_button = self._tool("음소거", 26, 19)
         self.volume_slider = JumpSlider(Qt.Horizontal)
@@ -544,6 +581,14 @@ class PlayerPanel(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(*MINI_MARGINS)
         row.setSpacing(MINI_GAP)
+        art_box = QHBoxLayout()   # 그림은 _place_shared가 두 단추 사이에 넣는다
+        art_box.setSpacing(0)
+        self.mini_theme_prev_button = HoverArrow("chevL", "이전 테마", MINI_ARROW_ICON)
+        self.mini_theme_next_button = HoverArrow("chevR", "다음 테마", MINI_ARROW_ICON)
+        for b in (self.mini_theme_prev_button, self.mini_theme_next_button):
+            b.setFixedSize(MINI_ARROW_WIDTH, ART_MINI)
+            art_box.addWidget(b)
+        row.addLayout(art_box)
         row.addWidget(self._mini_line(62))
 
         info = self.mini_info = QWidget()
@@ -597,7 +642,7 @@ class PlayerPanel(QWidget):
 
         plain = Qt.Alignment()
         self._mini_slots = [
-            (self.art_label, row, 0, 0, plain),
+            (self.art_label, art_box, 1, 0, plain),
             (self.title_label, title_row, 0, 1, plain),
             (self.heart_button, title_row, 1, 0, plain),
             (self.artist_label, col, 2, 0, plain),
@@ -742,6 +787,10 @@ class PlayerPanel(QWidget):
         sv.open_groups_changed.connect(self._open_groups_changed)
         self.add_url_button.clicked.connect(self.add_url)
         self.art_label.clicked.connect(self.show_track_info)
+        self.theme_prev_button.clicked.connect(lambda _=False: self.step_theme(-1))
+        self.theme_next_button.clicked.connect(lambda _=False: self.step_theme(1))
+        self.mini_theme_prev_button.clicked.connect(lambda _=False: self.step_theme(-1))
+        self.mini_theme_next_button.clicked.connect(lambda _=False: self.step_theme(1))
         self.mini_button.clicked.connect(self.toggle_mini)
         self.list_button_mini.clicked.connect(self._open_list_from_mini)
         self.mini_min_button.clicked.connect(lambda _=False: self.showMinimized())
@@ -752,7 +801,6 @@ class PlayerPanel(QWidget):
         bar.settingsClicked.connect(self.show_settings)
         bar.miniClicked.connect(self.toggle_mini)
         bar.minimizeClicked.connect(self.showMinimized)
-        bar.maximizeClicked.connect(self.toggle_maximize)
         bar.closeClicked.connect(self.close)
         # 지금 재생·음향 효과 탭에는 [보기] 버튼이 없어 상단바에서도 연다
         bar.menu_requested.connect(lambda pos: self.view_menu.exec_(pos))
@@ -889,8 +937,8 @@ class PlayerPanel(QWidget):
         return c.state is State.PLAYING
 
     def _spectrum_wanted(self) -> bool:
-        # 음향 효과 탭이 실제로 보일 때만 (패널·창이 숨겨졌거나 최소화되면 계산하지 않는다)
-        return (self._tab == "fx" and not self.is_mini and self.isVisible()
+        # 막대가 있는 탭이 실제로 보일 때만 (패널·창이 숨겨졌거나 최소화되면 계산하지 않는다)
+        return (self._tab in ("now", "fx") and not self.is_mini and self.isVisible()
                 and not self.window().isMinimized())
 
     def _sync_spectrum_timer(self) -> None:
@@ -917,8 +965,10 @@ class PlayerPanel(QWidget):
         last, self._spectrum_last = self._spectrum_last, now
         dt = 0.0 if last is None else min(max(now - last, 0.0), SPECTRUM_MAX_DT)
         block = self._player.latest_block() if self._spectrum_playing() else None
-        strip = self.fx_strip
-        view, decay, bars = strip.spectrum, self._big_decay, BARS
+        if self._tab == "now":
+            view, decay, bars = self.now_spectrum, self._now_decay, NOW_BARS
+        else:
+            view, decay, bars = self.fx_strip.spectrum, self._big_decay, BARS
         if block is None or len(block) == 0:
             levels = np.zeros(bars)
         else:
@@ -955,7 +1005,8 @@ class PlayerPanel(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange:
             self._sync_spectrum_timer()
-            self._sync_maximized()
+            if self.isMaximized():   # Win+위 화살표처럼 패널 밖에서 오는 최대화
+                QTimer.singleShot(0, self._undo_maximize)
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._retry_media_keys()
 
@@ -970,56 +1021,17 @@ class PlayerPanel(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.chrome = True
         self.grips = EdgeGrips(self)
-        self.grips.set_suspended(self._maximized)
         self.grips.set_enabled_edges(self.is_mini)
         if shown:
             self.show()
 
     def corner_radius(self) -> int:
-        if self.is_mini:
-            return MINI_RADIUS
-        return 0 if self.isMaximized() else WINDOW_RADIUS
+        return MINI_RADIUS if self.is_mini else WINDOW_RADIUS
 
-    def toggle_maximize(self) -> None:
-        if self.is_mini:
-            return
+    def _undo_maximize(self) -> None:
+        """이 창은 정해진 크기 안에서만 늘어난다."""
         if self.isMaximized():
             self.showNormal()
-        else:
-            self._limit_to_work_area()
-            self.showMaximized()
-
-    def _limit_to_work_area(self) -> None:
-        # 테두리 없는 창은 최대화할 때 작업 표시줄을 덮을 수 있다
-        self.setMaximumSize(self.screen().availableGeometry().size())
-
-    def _check_work_area(self) -> None:
-        """Win+위 화살표처럼 toggle_maximize를 거치지 않은 최대화도 작업 표시줄을 덮지 않게."""
-        if (self.isMaximized() and not self.is_mini
-                and not self.screen().availableGeometry().contains(self.frameGeometry())):
-            self._limit_to_work_area()
-
-    def _sync_maximized(self) -> None:
-        """최대화가 어디서 왔든 (상단바, Win+위 화살표) 여기를 지난다. 상태가 바뀔 때만 다시 칠한다."""
-        on = self.isMaximized()
-        if on == self._maximized:
-            return
-        self._maximized = on
-        if not self.is_mini:   # 작게 보기의 고정 높이는 WindowKeeper가 맡는다
-            if not on:
-                self.setMaximumSize(_QWIDGETSIZE_MAX, _QWIDGETSIZE_MAX)
-            else:
-                QTimer.singleShot(0, self._check_work_area)   # 최대화한 자리가 정해진 뒤에 본다
-        self.title_bar.set_maximized(on)
-        if self.grips is not None:
-            self.grips.set_suspended(on)
-        edge = 0 if on else EDGE
-        self._body.setContentsMargins(edge, edge, edge, edge)
-        self.root.setProperty("square", "true" if on else "false")   # "maximized"는 QWidget이 이미 쓰는 이름이다
-        pages = [self.pages.widget(i) for i in range(self.pages.count())]
-        for w in (self.root, self.title_bar, *pages, self.now_strip,
-                  *self.findChildren(QWidget, "footBar")):
-            self._repolish(w)
 
     def _retry_media_keys(self) -> None:
         # 다른 프로그램(예: 동영상 재생 중인 Chrome)이 놓아 준 키를 창이 활성화될 때 조용히 다시 건다
@@ -1743,8 +1755,8 @@ class PlayerPanel(QWidget):
 
         on_radio = c.source == "radio"
         self._apply_visibility()
-        self._set_elided(self.title_label, c.title)
-        self._set_elided(self.artist_label, c.subtitle)
+        self._set_ticker(self.title_label, c.title)
+        self._set_ticker(self.artist_label, c.subtitle)
         if on_radio:
             # 라디오 그림은 방송이 바뀔 때만 다시 그린다
             station = self.radio.current
@@ -1889,6 +1901,11 @@ class PlayerPanel(QWidget):
             for b, on in ((self.repeat_button, mode != "off"), (self.shuffle_button, shuffle)):
                 b.setProperty("active", "true" if on else "false")
                 self._repolish(b)
+
+    @staticmethod
+    def _set_ticker(label: TickerLabel, text: str) -> None:
+        label.setToolTip(text)
+        label.setText(text)
 
     @staticmethod
     def _set_elided(label: QLabel, text: str) -> None:

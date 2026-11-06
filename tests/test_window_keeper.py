@@ -24,11 +24,11 @@ on_top = lambda p: bool(p.windowFlags() & Qt.WindowStaysOnTopHint)
 
 def test_first_start_uses_default_size(make):
     p, _ = make({})
-    assert p.size() == QSize(380, 620) == QSize(*DEFAULT_SIZE) and not p.is_mini and not on_top(p)
+    assert p.size() == QSize(380, 680) == QSize(*DEFAULT_SIZE) and not p.is_mini and not on_top(p)
 
 def test_restores_saved_normal_geometry(make):
-    p, _ = make({"player_geometry": [50, 60, 400, 640]})
-    assert p.geometry() == QRect(50, 60, 400, 640)
+    p, _ = make({"player_geometry": [50, 60, 400, 660]})
+    assert p.geometry() == QRect(50, 60, 400, 660)
 
 def test_old_saved_size_is_raised_to_minimum(make):
     p, _ = make({"player_geometry": [10, 10, 300, 480]})
@@ -60,7 +60,7 @@ def test_stack_minimum_follows_the_shown_page(make, qapp):
     assert p.pages.minimumHeight() == p.page_now.minimumSizeHint().height() > 400
 
 def test_on_top_toggle_keeps_chrome_flags(qapp):
-    s = Settings({"player_mini": True}, lambda: None)
+    s = Settings({"player_mini": True, "player_mini_on_top": True}, lambda: None)
     p = PlayerPanel(s, player=FakePlayer()); p.use_window_chrome()
     k = WindowKeeper(p, s); k.start(); p.show(); qapp.processEvents()
     try:
@@ -72,11 +72,11 @@ def test_on_top_toggle_keeps_chrome_flags(qapp):
         p.shutdown(); p.deleteLater()
 
 def test_offscreen_geometry_is_centered(make):
-    p, _ = make({"player_geometry": [5000, 5000, 380, 640]})
-    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 640)
+    p, _ = make({"player_geometry": [5000, 5000, 380, 660]})
+    assert QGuiApplication.screenAt(p.geometry().center()) is not None and p.size() == QSize(380, 660)
 
 def test_starts_in_mini_on_top_at_saved_place(make):
-    p, _ = make({"player_mini": True, "player_mini_geometry": [30, 40, 700, 104]}); g = p.geometry()
+    p, _ = make({"player_mini": True, "player_mini_on_top": True, "player_mini_geometry": [30, 40, 700, 104]}); g = p.geometry()
     assert p.is_mini and on_top(p) and (g.x(), g.y(), g.width()) == (30, 40, 700)
     assert p.minimumHeight() == p.maximumHeight() == p.sizeHint().height() == 104
 
@@ -104,7 +104,7 @@ def test_full_mini_width_lies_on_the_screen(make, x):
     assert area.left() <= g.left() and g.right() <= area.right() and g.width() == 680
 
 def test_chrome_survives_on_top_toggle(qapp):
-    s = Settings({}, lambda: None)
+    s = Settings({"player_mini_on_top": True}, lambda: None)
     p = PlayerPanel(s, player=FakePlayer()); p.use_window_chrome()
     WindowKeeper(p, s).start(); p.show(); qapp.processEvents()
     try:
@@ -116,23 +116,24 @@ def test_chrome_survives_on_top_toggle(qapp):
         p.shutdown(); p.deleteLater()
 
 def test_toggle_saves_each_mode_and_restores_other(make):
-    store = {"player_geometry": [50, 60, 400, 640]}; p, _ = make(store)
+    store = {"player_geometry": [50, 60, 400, 660], "player_mini_on_top": True}; p, _ = make(store)
     p.set_mini(True)
-    assert store["player_geometry"] == [50, 60, 400, 640] and on_top(p)
+    assert store["player_geometry"] == [50, 60, 400, 660] and on_top(p)
     p.move(70, 80); g = p.geometry(); p.set_mini(False)   # 보이는 창의 move는 틀 기준이라 안쪽 자리로 비교
     assert store["player_mini_geometry"][:2] == [g.x(), g.y()] and g.x() >= 70
-    assert p.geometry() == QRect(50, 60, 400, 640)
-    assert not on_top(p) and p.maximumHeight() == 16777215
+    assert p.geometry() == QRect(50, 60, 400, 660)
+    assert not on_top(p) and p.maximumHeight() == 780
 
 def test_on_top_option(make):
-    p, _ = make({"player_mini": True}); assert on_top(p)
+    p, _ = make({"player_mini": True}); assert not on_top(p)   # 기본은 다른 창 아래로 내려간다
+    p.actions["mini_on_top"].trigger(); assert on_top(p)
     p.actions["mini_on_top"].trigger(); assert p.is_mini and not on_top(p)
     p.actions["mini_on_top"].trigger(); assert on_top(p)
     p.set_mini(False); assert not on_top(p)
 
 def test_save_writes_current_mode(make):
-    store = {}; p, k = make(store); p.setGeometry(20, 30, 390, 640); k.save()
-    assert store["player_geometry"] == [20, 30, 390, 640]
+    store = {}; p, k = make(store); p.setGeometry(20, 30, 390, 660); k.save()
+    assert store["player_geometry"] == [20, 30, 390, 660]
 
 def test_runtime_mini_is_as_short_as_its_content(make, qapp):
     p, _ = make({}); p.set_mini(True); qapp.processEvents()
@@ -143,24 +144,13 @@ def test_back_to_normal_keeps_layout_minimum_height(make, qapp):
     assert p.minimumHeight() == MIN_SIZE[1] >= p.layout().totalMinimumSize().height() > 200
 
 def test_mini_start_without_mini_place_uses_normal_place(make):
-    p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 640]}); g = p.geometry()
+    p, _ = make({"player_mini": True, "player_geometry": [50, 60, 400, 660]}); g = p.geometry()
     assert p.is_mini and (g.x(), g.y(), g.width()) == (50, 60, 680)
 
 def test_mini_start_without_any_place_uses_default_width_centered(make):
     p, _ = make({"player_mini": True})
     screen = QGuiApplication.primaryScreen().availableGeometry()
     assert p.is_mini and p.width() == 680 and p.geometry().center().x() in (screen.center().x(), screen.center().x() + 1)
-
-def test_maximized_window_saves_and_leaves_normal_place(make, qapp):
-    store = {}; p, k = make(store)
-    # offscreen 화면(800x600)에 넉넉히 들어가는 크기로 낮춰 놓고 잰다
-    p.setMinimumHeight(500); p.setGeometry(50, 60, 400, 500); qapp.processEvents(); k.save()
-    p.showMaximized(); qapp.processEvents(); assert p.isMaximized()
-    k.save(); assert store["player_geometry"] == [50, 60, 400, 500]
-    p.set_mini(True); qapp.processEvents()
-    assert not p.isMaximized() and store["player_geometry"] == [50, 60, 400, 500]
-    g = p.geometry(); assert (g.x(), g.y(), g.width(), g.height()) == (50, 60, 680, 104)
-
 
 class FakeScreen:
     def __init__(self, geometry, available=None):

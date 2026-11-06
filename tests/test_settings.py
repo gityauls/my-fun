@@ -13,7 +13,7 @@ def test_defaults():
     assert DEFAULTS == {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
                         "player_repeat": "off", "player_shuffle": False,
                         "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
-                        "player_mini_on_top": True, "player_media_keys": True,
+                        "player_mini_on_top": False, "player_media_keys": True,
                         "player_geometry": None, "player_mini_geometry": None,
                         "player_last_source": "file", "player_last_station": "",
                         "player_tab": "now", "player_theme": "light",
@@ -75,7 +75,7 @@ def test_save_failure_is_logged(tmp_path, caplog):
 
 def test_stage2b_defaults():
     s = Settings({}, lambda: None)
-    assert (s.last_track, s.last_position, s.mini, s.mini_on_top, s.media_keys) == ("", 0.0, False, True, True)
+    assert (s.last_track, s.last_position, s.mini, s.mini_on_top, s.media_keys) == ("", 0.0, False, False, True)
     assert s.geometry is None and s.mini_geometry is None
 
 @pytest.mark.parametrize("raw", [None, "x", True, -3, float("nan"), float("inf"), [1]])
@@ -91,7 +91,7 @@ def test_bad_geometry_is_none(raw):
 def test_bool_and_text_keys_ignore_wrong_types():
     s = Settings({"player_mini": 1, "player_mini_on_top": "no", "player_media_keys": 0,
                   "player_last_track": 5}, lambda: None)
-    assert (s.mini, s.mini_on_top, s.media_keys, s.last_track) == (False, True, True, "")
+    assert (s.mini, s.mini_on_top, s.media_keys, s.last_track) == (False, False, True, "")
 
 def test_stage2b_round_trip():
     store, saves = {}, []

@@ -15,8 +15,7 @@ from funplayer.ui.glyphs import glyph, glyph_pixmap
 TITLE_HEIGHT = 44
 APP_ICON_SIZE = 18
 BUTTON_SIZE = (30, 28)
-MAX_TIPS = {False: "최대화", True: "이전 크기로"}
-_ICONS = (("settings_btn", "settings", 15), ("mini_btn", "shrink", 15), ("min_btn", "min", 16), ("max_btn", "max", 14), ("close_btn", "x", 16))
+_ICONS = (("settings_btn", "settings", 15), ("mini_btn", "shrink", 15), ("min_btn", "min", 16), ("close_btn", "x", 16))
 
 
 class WindowDragArea(QWidget):
@@ -37,9 +36,8 @@ class WindowDragArea(QWidget):
         if (press is not None and event.buttons() & Qt.LeftButton
                 and (event.pos() - press).manhattanLength() >= QApplication.startDragDistance()):
             self._press = None
-            window = self.window()
-            handle = window.windowHandle()
-            if handle is not None and not window.isMaximized():
+            handle = self.window().windowHandle()
+            if handle is not None:
                 handle.startSystemMove()
         super().mouseMoveEvent(event)
 
@@ -52,7 +50,6 @@ class TitleBar(WindowDragArea):
     settingsClicked = pyqtSignal()
     miniClicked = pyqtSignal()
     minimizeClicked = pyqtSignal()
-    maximizeClicked = pyqtSignal()
     closeClicked = pyqtSignal()
     menu_requested = pyqtSignal(QPoint)
 
@@ -78,7 +75,6 @@ class TitleBar(WindowDragArea):
         self.settings_btn = self._button(buttons, "설정", self.settingsClicked)
         self.mini_btn = self._button(buttons, "작게 보기", self.miniClicked)
         self.min_btn = self._button(buttons, "최소화", self.minimizeClicked)
-        self.max_btn = self._button(buttons, MAX_TIPS[False], self.maximizeClicked)
         self.close_btn = self._button(buttons, "닫기", self.closeClicked)
         self.set_theme(get_theme(DEFAULT_THEME))
 
@@ -98,15 +94,6 @@ class TitleBar(WindowDragArea):
             b = getattr(self, attr)
             b.setIcon(glyph(name, theme.bar_fg, size))
             b.setIconSize(QSize(size, size))
-
-    def set_maximized(self, on: bool) -> None:
-        self.max_btn.setToolTip(MAX_TIPS[bool(on)])
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self._press = None
-            self.maximizeClicked.emit()
-        super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event) -> None:
         self.menu_requested.emit(event.globalPos())
@@ -138,7 +125,6 @@ class EdgeGrips(QObject):
         self._window = window
         self._thick = thickness
         self._horizontal_only = False
-        self._suspended = False
         top, bottom, left, right = Qt.TopEdge, Qt.BottomEdge, Qt.LeftEdge, Qt.RightEdge
         specs = ((top, Qt.SizeVerCursor), (bottom, Qt.SizeVerCursor),
                  (left, Qt.SizeHorCursor), (right, Qt.SizeHorCursor),
@@ -150,17 +136,9 @@ class EdgeGrips(QObject):
 
     def set_enabled_edges(self, horizontal_only: bool) -> None:
         self._horizontal_only = bool(horizontal_only)
-        self._sync_visible()
-
-    def set_suspended(self, on: bool) -> None:
-        """최대화한 창은 크기를 끌어 바꾸지 않는다."""
-        self._suspended = bool(on)
-        self._sync_visible()
-
-    def _sync_visible(self) -> None:
         sides = (Qt.LeftEdge, Qt.RightEdge)
         for edges, grip in self.grips.items():
-            grip.setVisible(not self._suspended and (not self._horizontal_only or edges in sides))
+            grip.setVisible(not self._horizontal_only or edges in sides)
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self._window and event.type() == QEvent.Resize:

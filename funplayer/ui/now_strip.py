@@ -1,4 +1,4 @@
-"""Now-playing strip at the bottom of the non-now tabs (stage 5.5)."""
+"""Now-playing strip under the tab bar on the non-now tabs (stage 5.5)."""
 from __future__ import annotations
 
 from PyQt5.QtCore import QSize, Qt, pyqtSignal
@@ -9,13 +9,15 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QPushButton, QSi
 from funplayer.core.themes import DEFAULT_THEME, Theme, get_theme
 from funplayer.ui.glyphs import glyph
 from funplayer.ui.style import css_color
+from funplayer.ui.ticker_label import TickerLabel
 
-ART_SIZE = 40
-ART_RADIUS = 9
-BAR_HEIGHT = 3
-ROW_HEIGHT = 58
-ICON_SIZE = 18
-PLAY_SIZE = 36
+ART_SIZE = 56
+ART_RADIUS = 12
+BAR_HEIGHT = 4
+ROW_HEIGHT = 82
+ICON_SIZE = 20
+PLAY_SIZE = 48
+NAV_SIZE = (36, 40)
 
 
 class ClickLabel(QLabel):
@@ -89,12 +91,12 @@ class NowStrip(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.progress = _Progress()
-        root.addWidget(self.progress)
         row = QHBoxLayout()
         row.setContentsMargins(12, 0, 12, 0)
         row.setSpacing(8)
         root.addLayout(row, 1)
+        self.progress = _Progress()
+        root.addWidget(self.progress)
 
         self.art_label = ClickLabel()
         self.art_label.setFixedSize(ART_SIZE, ART_SIZE)
@@ -106,16 +108,16 @@ class NowStrip(QWidget):
         texts = QVBoxLayout()
         texts.setSpacing(0)
         texts.setAlignment(Qt.AlignVCenter)
-        self.title_label = self._text_label(13, True)
-        self.sub_label = self._text_label(11, False)
+        self.title_label = self._text_label(15, True)
+        self.sub_label = self._text_label(12, False)
         self.sub_label.setProperty("role", "mute")
         texts.addWidget(self.title_label)
         texts.addWidget(self.sub_label)
         row.addLayout(texts, 1)
 
-        self.prev_button = self._button("이전 곡", 34)
-        self.toggle_button = self._button("재생", PLAY_SIZE, "playSm")
-        self.next_button = self._button("다음 곡", 34)
+        self.prev_button = self._button("이전 곡", NAV_SIZE)
+        self.toggle_button = self._button("재생", (PLAY_SIZE, PLAY_SIZE), "playSm")
+        self.next_button = self._button("다음 곡", NAV_SIZE)
         for b in (self.prev_button, self.toggle_button, self.next_button):
             row.addWidget(b)
         self.prev_button.clicked.connect(self.prevClicked)
@@ -124,8 +126,8 @@ class NowStrip(QWidget):
         self._icons()
 
     @staticmethod
-    def _text_label(px: int, bold: bool) -> QLabel:
-        label = QLabel()
+    def _text_label(px: int, bold: bool) -> TickerLabel:
+        label = TickerLabel()
         font = QFont(label.font())
         font.setPixelSize(px)
         font.setBold(bold)
@@ -135,10 +137,10 @@ class NowStrip(QWidget):
         return label
 
     @staticmethod
-    def _button(tip: str, size: int, kind: str = "") -> QPushButton:
+    def _button(tip: str, size: tuple[int, int], kind: str = "") -> QPushButton:
         b = QPushButton()
         b.setToolTip(tip)
-        b.setFixedSize(size, size)
+        b.setFixedSize(*size)
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         b.setFocusPolicy(Qt.TabFocus)
         if kind:
@@ -176,11 +178,7 @@ class NowStrip(QWidget):
         self.progress.set_ratio(ratio)
 
     @staticmethod
-    def _set_text(label: QLabel, text: str) -> None:
+    def _set_text(label: TickerLabel, text: str) -> None:
         if label.toolTip() != text:
             label.setToolTip(text)
-        shown = text
-        if label.isVisible():
-            shown = label.fontMetrics().elidedText(text, Qt.ElideRight, label.width())
-        if label.text() != shown:
-            label.setText(shown)
+        label.setText(text)

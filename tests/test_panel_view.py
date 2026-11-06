@@ -75,7 +75,7 @@ def test_long_title_does_not_widen_panel(panel, tmp_path):
     stem = "x" * 150
     p.controller.open([str(make_songs(tmp_path, [stem + ".mp3"]))]); p.refresh()
     assert p.minimumSizeHint().width() < 380 and p.width() == 380
-    assert p.title_label.text().endswith("…") and p.title_label.toolTip() == stem
+    assert p.title_label.text() == stem and p.title_label.overflowing and p.title_label.toolTip() == stem
 
 def test_repeat_and_shuffle_buttons(panel):
     p, _ = panel
@@ -228,17 +228,17 @@ def test_mini_layout_follows_the_mockup(panel, qapp):
     p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
     assert (p.mini_bar.width(), p.mini_bar.height()) == (680, 104)
     assert p.layout().totalMinimumSize().width() == 680
-    assert (p.art_label.x(), p.art_label.y()) == (13, 12)
-    assert p.mini_info.width() == 206 and p.mini_volume.width() == 92 and p.list_button_mini.width() == 26
+    assert (p.art_label.x(), p.art_label.y()) == (16, 12)
+    assert p.mini_info.width() == 187 and p.mini_volume.width() == 92 and p.list_button_mini.width() == 26
     assert p.title_label.font().pixelSize() == 14 and p.title_label.font().bold()
     assert p.artist_label.font().pixelSize() == 12 and p.elapsed_label.font().pixelSize() == 11
-    assert p.mini_info.x() == 13 + 80 + 12 + 1 + 12
+    assert p.mini_info.x() == 16 + 80 + 16 + 12 + 1 + 12
     right = p.list_button_mini.mapTo(p.mini_bar, p.list_button_mini.rect().topRight()).x()
     assert right == 680 - 17 - 1
 
 def test_wider_mini_goes_to_the_info_column(panel, qapp):
     p, _ = panel; p.show(); p.set_mini(True); p.resize(780, 104); qapp.processEvents()
-    assert p.mini_info.width() == 306 and p.mini_volume.width() == 92
+    assert p.mini_info.width() == 287 and p.mini_volume.width() == 92
 
 def test_mini_window_buttons_stay_on_top_at_the_corner(panel, qapp):
     p, _ = panel; p.show(); p.set_mini(True); p.resize(680, 104); qapp.processEvents()
@@ -248,20 +248,19 @@ def test_mini_window_buttons_stay_on_top_at_the_corner(panel, qapp):
         assert p.mini_bar.childAt(b.mapTo(p.mini_bar, b.rect().center())) is b
     assert p.mini_normal_button.toolTip() == "보통 보기"
 
-def test_long_title_elides_inside_the_info_column(panel, qapp, tmp_path):
+def test_long_title_scrolls_inside_the_info_column(panel, qapp, tmp_path):
     p, _ = panel; name = "아주 긴 제목 " * 12 + ".mp3"
     p.controller.open([str(make_songs(tmp_path, [name]))]); p.show()
     p.set_mini(True); p.resize(680, 104); qapp.processEvents(); p.refresh()
-    assert p.title_label.text().endswith("…") and p.title_label.width() < 206
-    assert p.title_label.fontMetrics().horizontalAdvance(p.title_label.text()) <= p.title_label.width()
+    assert p.title_label.moving and p.title_label.width() < 206
     assert p.title_label.toolTip().startswith("아주 긴 제목")
 
-def test_title_elides_right_after_the_switch(panel, qapp, tmp_path):
+def test_title_scrolls_right_after_the_switch(panel, qapp, tmp_path):
     from funplayer.ui.window_keeper import WindowKeeper
     p, _ = panel; p.controller.open([str(make_songs(tmp_path, ["아주 긴 제목 " * 12 + ".mp3"]))])
     WindowKeeper(p, p.settings).start(); p.show(); qapp.processEvents(); p.refresh()
-    p.set_mini(True)
-    assert p.title_label.fontMetrics().horizontalAdvance(p.title_label.text()) <= p.title_label.width()
+    p.set_mini(True); qapp.processEvents()
+    assert p.title_label.moving
 
 def test_art_is_rebuilt_at_each_mode_size(panel, tmp_path, monkeypatch):
     import funplayer.ui.player_panel as pp

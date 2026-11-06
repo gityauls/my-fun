@@ -8,16 +8,18 @@ from dataclasses import replace
 
 from PyQt5.QtGui import QColor
 
+from funplayer.core.contrast import contrast
 from funplayer.core.themes import Theme
 
 FONT_FAMILY = "Malgun Gothic"
 SWITCH_WIDTH, SWITCH_HEIGHT = 34, 19
+STRIP_MIN_CONTRAST = 7
 WINDOW_RADIUS = 20
 MINI_RADIUS = 24
 EDGE = 1   # 창 테두리 두께. 안쪽 내용은 그만큼 작은 반지름으로 맞물린다
 _INNER = WINDOW_RADIUS - EDGE
 # 창 맨 아래에 닿을 수 있는 면들
-_BOTTOM_SURFACES = ("#pageNow", "#pagePlaylist", "#pageRadio", "#pageFx", "#footBar", "#nowStrip")
+_BOTTOM_SURFACES = ("#pageNow", "#pagePlaylist", "#pageRadio", "#pageFx", "#footBar")
 
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 _GRAD = re.compile(r"^linear-gradient\((.*)\)$", re.S)
@@ -106,7 +108,7 @@ def _block(s: str, c: Theme) -> str:
 {s} QPushButton[kind="play"], {s} QPushButton[kind="playMd"], {s} QPushButton[kind="playSm"] {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {q(c.g1)}, stop:1 {q(c.g2)}); color: {q(c.on_acc)}; }}
 {s} QPushButton[kind="play"] {{ border-radius: 30px; }}
 {s} QPushButton[kind="playMd"] {{ border-radius: 23px; }}
-{s} QPushButton[kind="playSm"] {{ border-radius: 18px; }}
+{s} QPushButton[kind="playSm"] {{ border-radius: 24px; }}
 {s} QPushButton[kind="fav"] {{ color: {q(c.fav)}; }}
 {s} QPushButton[active="true"] {{ color: {q(c.acc_t)}; }}
 {s} QSlider::groove:horizontal {{ height: 5px; border-radius: 2px; background: {q(c.track)}; }}
@@ -163,14 +165,16 @@ def _mini_block(c: Theme) -> str:
 def _corners() -> str:
     """둥근 창 모서리. Qt에는 overflow가 없어 가장자리에 닿는 면마다 같이 둥글게 한다."""
     bottom = ", ".join(_BOTTOM_SURFACES)
-    square = ", ".join(f'#root[square="true"] {s}' for s in ("#titleBar", *_BOTTOM_SURFACES))
     return f"""
 #titleBar {{ border-top-left-radius: {_INNER}px; border-top-right-radius: {_INNER}px; }}
 {bottom} {{ border-bottom-left-radius: {_INNER}px; border-bottom-right-radius: {_INNER}px; }}
 #pageNow[flush="true"] {{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; }}
-#root[square="true"] {{ border: none; border-radius: 0; }}
-{square} {{ border-radius: 0; }}
 """
+
+
+def strip_surface(t: Theme) -> str:
+    """재생 띠 바탕: 연한 강조색. 어두운 띠 글자에 묻히는 테마(I, K)는 기본 띠 색이다."""
+    return t.tint if contrast(t.ink, t.tint) >= STRIP_MIN_CONTRAST else t.strip_bg
 
 
 def stylesheet(theme: Theme) -> str:
@@ -189,7 +193,7 @@ def stylesheet(theme: Theme) -> str:
 #tabs QToolButton:checked {{ color: {q(t.tab_on)}; font-weight: 700; }}
 #pill {{ font-size: 10px; font-weight: 700; color: {q(t.on_acc)}; background: {q(t.acc)}; padding: 1px 6px; border-radius: 5px; }}
 #footBar {{ background: {q(t.bg)}; border-top: 1px solid {q(t.line)}; }}
-#nowStrip {{ background: {q(t.strip_bg)}; border-top: 1px solid {q(t.line)}; }}
+#nowStrip {{ background: {q(strip_surface(t))}; }}
 #miniBar {{ background: {q(mini.bg)}; font-family: "{FONT_FAMILY}"; border: 1px solid {q(t.mini_edge)}; border-radius: {MINI_RADIUS}px; }}
 QMenu#themed {{ background: {q(t.bar)}; color: {q(t.bar_fg)}; border: 1px solid {q(t.line)}; }}
 QMenu#themed::item {{ padding: 6px 22px; }}

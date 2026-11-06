@@ -13,7 +13,7 @@ def art():
 
 def test_shape_and_set_track(qapp):
     s = NowStrip()
-    assert s.objectName() == "nowStrip" and s.minimumHeight() == 61
+    assert s.objectName() == "nowStrip" and s.minimumHeight() == 86
     s.set_track(art(), "제목", "가수", True, 0.25)
     assert s.title_label.text() == "제목" and s.sub_label.text() == "가수"
     assert s.toggle_button.toolTip() == "일시정지" and s.toggle_button.property("kind") == "playSm"

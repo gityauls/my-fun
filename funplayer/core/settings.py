@@ -16,7 +16,7 @@ REPEAT_MODES = ("off", "all", "one")
 DEFAULTS = {"player_volume": 70, "player_muted": False, "player_seek_step": 5,
             "player_repeat": "off", "player_shuffle": False,
             "player_last_track": "", "player_last_position": 0.0, "player_mini": False,
-            "player_mini_on_top": True, "player_media_keys": True,
+            "player_mini_on_top": False, "player_media_keys": True,
             "player_geometry": None, "player_mini_geometry": None,
             "player_last_source": "file", "player_last_station": "", "player_tab": "now",
             "player_theme": "light",

@@ -56,7 +56,7 @@ def test_main_smoke(qapp, monkeypatch, tmp_path):
         assert (tmp_path / "my-fun" / "logs" / "funplayer.log").exists()
         import json
         data = json.loads((tmp_path / "my-fun" / "settings.json").read_text(encoding="utf-8"))
-        assert data["player_geometry"][2:] == [380, 620]
+        assert data["player_geometry"][2:] == [380, 680]
         assert seen["chrome"] and order == ["chrome", "keeper"]   # 창 틀은 자리를 잡기 전에 정한다
     finally:
         _cleanup()
