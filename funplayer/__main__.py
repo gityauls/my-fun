@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import QApplication
 
 from funplayer.core.settings import JsonStore, Settings
@@ -42,10 +43,22 @@ def _log_excepthook(exc_type, exc_value, exc_tb) -> None:
     logger.error("Unhandled exception", exc_info=(exc_type, exc_value, exc_tb))
 
 
+def app_icon() -> QIcon:
+    return QIcon(str(Path(__file__).parent / "assets" / "my-fun.ico"))
+
+
+def use_own_taskbar_group() -> None:
+    """python으로 실행해도 작업표시줄이 파이썬 아이콘이 아니라 my-fun 아이콘을 쓰게 한다."""
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("my-fun.player")
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_logging(app_dir() / "logs")
     sys.excepthook = _log_excepthook
+    use_own_taskbar_group()
     app = QApplication.instance() or QApplication(argv or sys.argv)
+    app.setWindowIcon(app_icon())
     app.setStyle("Fusion")
     app.setFont(QFont(FONT_FAMILY, 9))
     store = JsonStore(app_dir() / "settings.json")

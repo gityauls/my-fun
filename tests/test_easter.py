@@ -258,3 +258,11 @@ def test_shutdown_ends_a_scene(qapp):
     p.shutdown()
     assert p.egg_overlay.key is None
     p.deleteLater()
+
+
+# ---- 앱 아이콘 ----
+
+def test_app_icon_has_every_size_windows_asks_for(qapp):
+    from funplayer.__main__ import app_icon
+    sizes = {s.width() for s in app_icon().availableSizes()}
+    assert {16, 24, 32, 48, 64, 128, 256} <= sizes

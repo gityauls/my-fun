@@ -1,5 +1,7 @@
 # Third-party assets
 
+- App icon (my-fun.ico, my-fun.png): cassette picture chosen by the project owner, speech bubble added.
+  The source and licence of the cassette picture are not recorded.
 - Lucide icons (path data in funplayer/ui/glyphs.py): ISC License.
   Source: https://lucide.dev
 
