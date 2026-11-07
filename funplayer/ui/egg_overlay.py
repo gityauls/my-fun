@@ -8,7 +8,7 @@ from PyQt5.QtCore import QPoint, QRect, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import QGraphicsOpacityEffect, QWidget
 
-from funplayer.ui.egg_sprites import GRID, INK, SCENES, draw_ufo, lift
+from funplayer.ui.egg_sprites import GRID, INK, SCENES, draw_moon, draw_ufo, lift
 
 TICK_MS = 33
 SPRITE = 192         # 보통 창에서 캐릭터 크기 (격자의 3배)
@@ -17,6 +17,10 @@ SPRITE_MINI = 96     # 미니 막대 (1.5배)
 MINI_SPOT = 300      # 미니 막대에서 캐릭터의 왼쪽 끝: 이퀄라이저 위
 COVER_UP, COVER_SHRINK = -140, .3
 MINI_COVER_UP, MINI_COVER_SHRINK = -24, .45
+MOON_SIZE = (153, 177)
+MOON_SIZE_MINI = (81, 94)
+MOON_MINI_PATH = (.675, .29)   # 미니 막대에서 걷는 구간: 폭에 대한 비율
+MOON_FADE = .4                 # 미니 막대에서 나타나고 사라지는 시간
 BUBBLE_PAD = (10, 4)
 BUBBLE_EDGE = 6
 
@@ -81,7 +85,19 @@ class EggOverlay(QWidget):
             return None
         return QRect(self._art.mapTo(self.parentWidget(), QPoint(0, 0)), self._art.size())
 
+    def _moon_rect(self) -> QRect:
+        w, h = self.width(), self.height()
+        done = min(1.0, (self._clock() - self._start) / SCENES["moon"].length)
+        if self._is_mini():
+            sw, sh = MOON_SIZE_MINI
+            start, end = MOON_MINI_PATH
+            return QRect(round(w * (start + (end - start) * done)), (h - sh) // 2, sw, sh)
+        sw, sh = MOON_SIZE
+        return QRect(round(w - (w + sw) * done), round(h * .36), sw, sh)
+
     def sprite_rect(self) -> QRect:
+        if self.key == "moon":
+            return self._moon_rect()
         w, h = self.width(), self.height()
         art = self._art_rect()
         if self._is_mini():
@@ -107,7 +123,9 @@ class EggOverlay(QWidget):
         bh = fm.height() + pad_y * 2
         s = self.sprite_rect()
         if self._is_mini():
-            x, y = s.right() + 8, (self.height() - bh) // 2
+            # 문워크는 재생 단추 쪽으로 걸어가므로 말풍선을 뒤쪽 빈 곳에 둔다
+            x = s.left() - bw - 8 if self.key == "moon" else s.right() + 8
+            y = (self.height() - bh) // 2
         else:
             x = s.center().x() - bw // 2
             y = s.top() + (280 if self.key == "ufo" else -24 if self.key != "fuzz" else -10)
@@ -121,6 +139,9 @@ class EggOverlay(QWidget):
             return
         scene = SCENES[self.key]
         t = min(self._clock() - self._start, scene.length - .01)
+        if self.key == "moon":
+            self._paint_moon(t, scene)
+            return
         self._frame.fill(Qt.transparent)
         grid = QPainter(self._frame)
         cover = self._cover if self._art.isVisible() else None
@@ -135,6 +156,16 @@ class EggOverlay(QWidget):
             self._paint_cover(p, cover, lift(t))
         p.setRenderHint(QPainter.SmoothPixmapTransform, False)
         p.drawImage(self.sprite_rect(), self._frame)
+        if t >= scene.say_at:
+            self._paint_bubble(p, scene.say)
+        p.end()
+
+    def _paint_moon(self, t: float, scene) -> None:
+        p = QPainter(self)
+        if self._is_mini():
+            p.setOpacity(min(1.0, min(t, scene.length - t) / MOON_FADE))
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        draw_moon(p, t, self.sprite_rect())
         if t >= scene.say_at:
             self._paint_bubble(p, scene.say)
         p.end()

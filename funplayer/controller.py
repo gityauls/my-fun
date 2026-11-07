@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from funplayer.core import renamer, taginfo
 from funplayer.core.effects import FxSettings
-from funplayer.core.genre import preset_for_genre
+from funplayer.core.genre import DANCE_PRESET, preset_for_genre
 from funplayer.core.m3u import PLAYLIST_EXTS, is_playlist, read_playlist, write_playlist
 from funplayer.core.playlist import Playlist, path_key
 from funplayer.core.settings import REPEAT_MODES, Settings
@@ -80,6 +80,7 @@ class PlayerController:
         self._sent_fx: FxSettings | None = None
         self._synced_key = self._UNSET                # 마지막으로 효과를 보낸 곡/방송의 키
         self.source = "file"                          # 지금 나오는 쪽: "file" 또는 "radio"
+        self.dance_starts = 0                         # 처음부터 튼 댄스곡 수 (같은 곡도 매번 센다)
         self.playlist = Playlist(rng)
         self.playlist.set_shuffle(settings.shuffle)
         self.status = ""
@@ -709,6 +710,8 @@ class PlayerController:
                         if not (duration > 0 and duration - start_at < RESUME_TAIL):
                             self._player.seek(start_at)   # 재생 전에 옮겨 0:00이 잠깐 들리지 않게
                     self._player.play()
+                    if self.genre_preset == DANCE_PRESET and not (i == first and start_at > 0):
+                        self.dance_starts += 1
                     return
             if len(tried) == len(self.playlist):
                 break

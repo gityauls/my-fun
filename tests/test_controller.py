@@ -1187,3 +1187,29 @@ def test_rename_many_and_undo_many(tmp_path):
     back = c.undo_many(out.done)
     assert len(back.done) == 2 and (folder / "01 a.mp3").exists() and (folder / "03 c.mp3").exists()
     assert c.last_rename() is None
+
+
+def dance_controller(genre):
+    return PlayerController(FakePlayer(), Settings({}, lambda: None),
+                            read_info=lambda p: TrackInfo(p, genre=genre))
+
+
+def test_dance_songs_are_counted_each_time_they_start(tmp_path):
+    c = dance_controller("Dance")
+    c.open([str(make_songs(tmp_path, ["a.mp3", "b.mp3"]))])
+    assert c.dance_starts == 1
+    c.play_index(0)
+    assert c.dance_starts == 2
+
+
+def test_other_genres_are_not_counted(tmp_path):
+    c = dance_controller("Ballad")
+    c.open([str(make_songs(tmp_path, ["a.mp3"]))])
+    assert c.dance_starts == 0
+
+
+def test_resuming_mid_song_is_not_a_new_start(tmp_path):
+    c = dance_controller("Dance")
+    c.open([str(make_songs(tmp_path, ["a.mp3"]))])
+    c._play_index(0, 30.0)
+    assert c.dance_starts == 1

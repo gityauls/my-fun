@@ -23,6 +23,32 @@ class TapCounter:
         return True
 
 
+class DanceDay:
+    """하루 댄스곡 재생 횟수. 껐다 켜도 이어지도록 저장할 값을 내준다."""
+
+    NEED = 5
+
+    def __init__(self, saved: dict) -> None:
+        day, count = saved.get("day"), saved.get("count")
+        self.day = day if isinstance(day, str) else ""
+        self.count = count if isinstance(count, int) and not isinstance(count, bool) else 0
+        self.shown = saved.get("shown") is True
+
+    def add(self, today: date, plays: int = 1) -> None:
+        if self.day != today.isoformat():
+            self.day, self.count, self.shown = today.isoformat(), 0, False
+        self.count += plays
+
+    def due(self, today: date) -> bool:
+        return self.day == today.isoformat() and self.count >= self.NEED and not self.shown
+
+    def done(self) -> None:
+        self.shown = True
+
+    def saved(self) -> dict:
+        return {"day": self.day, "count": self.count, "shown": self.shown}
+
+
 class MidnightOnce:
     """자정 정각의 1분 동안 재생 중이면 하루 한 번 때가 된다."""
 

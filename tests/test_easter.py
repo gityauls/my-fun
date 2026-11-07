@@ -1,5 +1,5 @@
 """숨은 장면: 발동 조건, 그림, 덮개, 패널 연결."""
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
@@ -7,7 +7,7 @@ from PyQt5.QtGui import QImage, QMouseEvent, QPainter, QPixmap
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QWidget
 
-from funplayer.core.easter import MidnightOnce, TapCounter
+from funplayer.core.easter import DanceDay, MidnightOnce, TapCounter
 from funplayer.core.settings import Settings
 from funplayer.ui.egg_overlay import EggOverlay
 from funplayer.ui.egg_sprites import GRID, SCENES
@@ -151,6 +151,8 @@ def test_scene_and_speech_stay_inside_the_window(stage, key, size):
     parent.resize(*size)
     art.move((size[0] - 216) // 2, 127)
     over.play(key)
+    if key == "moon":   # 화면 밖에서 들어오므로 가운데를 지날 때 본다
+        clock.now += SCENES[key].length / 2
     assert over.sprite_rect().left() >= 0 and over.sprite_rect().right() < size[0]
     assert parent.rect().contains(over.bubble_rect())
 
@@ -258,6 +260,101 @@ def test_shutdown_ends_a_scene(qapp):
     p.shutdown()
     assert p.egg_overlay.key is None
     p.deleteLater()
+
+
+# ---- 문워크 ----
+
+DAY = date(2026, 11, 7)
+
+
+def test_dance_day_is_due_at_five_and_only_once():
+    d = DanceDay({})
+    d.add(DAY, 4)
+    assert not d.due(DAY)
+    d.add(DAY)
+    assert d.due(DAY)
+    d.done()
+    d.add(DAY)
+    assert not d.due(DAY)
+
+
+def test_dance_day_starts_over_the_next_day():
+    d = DanceDay({"day": "2026-11-06", "count": 9, "shown": True})
+    assert not d.due(DAY)
+    d.add(DAY)
+    assert d.count == 1 and not d.shown
+
+
+def test_dance_day_survives_a_restart():
+    d = DanceDay({})
+    d.add(DAY, 5)
+    d.done()
+    assert not DanceDay(d.saved()).due(DAY)
+
+
+@pytest.mark.parametrize("saved", [{"day": 3, "count": "x", "shown": 1}, {"count": True}])
+def test_dance_day_ignores_broken_saved_values(saved):
+    d = DanceDay(saved)
+    assert (d.day, d.count, d.shown) == ("", 0, False)
+
+
+def dancing(store=None):
+    store = {} if store is None else store
+    p = PlayerPanel(Settings(store, lambda: None), player=FakePlayer())
+    p.resize(380, 680)
+    p.show()
+    p._now = lambda: datetime(2026, 11, 7, 12, 0, 0)
+    return p, store
+
+
+def test_fifth_dance_song_brings_the_moonwalk_and_saves_it(qapp):
+    p, store = dancing()
+    p.controller.dance_starts = 4
+    p.refresh()
+    assert p.egg_overlay.key is None and store["player_dance_day"]["count"] == 4
+    p.controller.dance_starts = 5
+    p.refresh()
+    assert p.egg_overlay.key == "moon" and store["player_dance_day"]["shown"] is True
+    p.shutdown()
+    p.deleteLater()
+
+
+def test_moonwalk_waits_for_a_hidden_window(qapp):
+    p, _ = dancing()
+    p.controller.dance_starts = 5
+    p.hide()
+    p.refresh()
+    assert p.egg_overlay.key is None
+    p.show()
+    p.refresh()
+    assert p.egg_overlay.key == "moon"
+    p.shutdown()
+    p.deleteLater()
+
+
+def test_moonwalk_does_not_return_after_a_restart(qapp):
+    store = {"player_dance_day": {"day": "2026-11-07", "count": 5, "shown": True}}
+    p, _ = dancing(store)
+    p.controller.dance_starts = 1
+    p.refresh()
+    assert p.egg_overlay.key is None
+    p.shutdown()
+    p.deleteLater()
+
+
+def test_moonwalk_crosses_the_window_right_to_left(stage):
+    from funplayer.ui.egg_overlay import MOON_SIZE
+    parent, _, over, clock = stage
+    over.play("moon")
+    assert over.sprite_rect().left() == parent.width()
+    clock.now += SCENES["moon"].length
+    assert over.sprite_rect().left() == -MOON_SIZE[0]
+
+
+def test_moonwalk_picture_has_every_frame(qapp):
+    from funplayer.ui.egg_sprites import MOON_FRAMES, MOON_STRIP
+    img = QImage(str(MOON_STRIP))
+    assert not img.isNull() and img.width() % MOON_FRAMES == 0
 
 
 # ---- 앱 아이콘 ----

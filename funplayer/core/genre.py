@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+DANCE_PRESET = "댄스"
+
 # 위에서부터 보며 낱말이 들어 있으면 그 프리셋이다(먼저 맞는 것)
 _GENRE_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("알앤비", ("r&b", "rnb", "r & b", "rhythm and blues", "알앤비", "soul", "소울",
               "urban", "어반", "funk")),
     ("힙합", ("hip", "rap", "랩", "힙합", "trap")),
     ("일렉트로닉", ("electro", "edm", "house", "techno", "trance", "일렉", "하우스")),
-    ("댄스", ("dance", "댄스", "disco", "디스코", "라틴", "latin")),
+    (DANCE_PRESET, ("dance", "댄스", "disco", "디스코", "라틴", "latin")),
     ("발라드", ("ballad", "발라드")),
     ("록", ("rock", "락", "록", "metal", "메탈", "punk", "grunge")),
     ("재즈", ("jazz", "재즈", "swing")),

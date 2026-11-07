@@ -20,7 +20,7 @@ from funplayer import coverfind, musicbrainz
 from funplayer.controller import PlayerController
 from funplayer.core.contrast import error_color
 from funplayer.core.renamer import RenameError, RenameLog
-from funplayer.core.easter import MidnightOnce, TapCounter
+from funplayer.core.easter import DanceDay, MidnightOnce, TapCounter
 from funplayer.core.settings import Settings
 from funplayer.core.spectrum import Decay, band_levels
 from funplayer.core.stations import StationList, load_stations, save_stations
@@ -229,6 +229,8 @@ class PlayerPanel(QWidget):
         self._title_taps = TapCounter(TITLE_TAPS, TITLE_TAP_SECONDS)
         self._next_taps = TapCounter(NEXT_TAPS, NEXT_TAP_SECONDS)
         self._midnight = MidnightOnce()
+        self._dance_day = DanceDay(settings.dance_day)
+        self._dance_seen = 0
         # 표지 연타가 곡 정보 창에 막히지 않게 한 번 누름은 잠깐 기다렸다 연다
         self._art_tap_timer = QTimer(self)
         self._art_tap_timer.setSingleShot(True)
@@ -778,8 +780,7 @@ class PlayerPanel(QWidget):
         lay.setContentsMargins(18, 12, 18, 12)
         self.fx_strip = FxStrip()
         self.fx_strip.set_value(self.controller.effects)
-        lay.addWidget(self.fx_strip)
-        lay.addStretch(1)
+        lay.addWidget(self.fx_strip, 1)
         return page
 
     def _place_foot(self) -> None:
@@ -1774,6 +1775,17 @@ class PlayerPanel(QWidget):
         if self._midnight.due(now, self._spectrum_playing()) and self.egg_overlay.play("ufo"):
             self._midnight.done(now)
 
+    def _dance_tick(self) -> None:
+        today = self._now().date()
+        starts = self.controller.dance_starts
+        if starts != self._dance_seen:
+            self._dance_day.add(today, starts - self._dance_seen)
+            self._dance_seen = starts
+            self.settings.dance_day = self._dance_day.saved()
+        if self._dance_day.due(today) and self.egg_overlay.play("moon"):   # 창이 숨어 있으면 다음에 다시 본다
+            self._dance_day.done()
+            self.settings.dance_day = self._dance_day.saved()
+
     def seek_back(self) -> None:
         self.controller.seek_by(-1)
         self.refresh()
@@ -1870,6 +1882,7 @@ class PlayerPanel(QWidget):
 
     def refresh(self) -> None:
         self._midnight_tick()
+        self._dance_tick()
         c = self.controller
         state = c.state
         duration = c.duration

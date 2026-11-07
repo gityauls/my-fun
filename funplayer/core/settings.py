@@ -234,6 +234,15 @@ class Settings:
     def fx(self, value: dict) -> None:
         self._set("player_fx", dict(value))
 
+    @property
+    def dance_day(self) -> dict:
+        value = self._store.get("player_dance_day")
+        return value if isinstance(value, dict) else {}
+
+    @dance_day.setter
+    def dance_day(self, value: dict) -> None:
+        self._set("player_dance_day", dict(value))
+
 
     @property
     def rename_on_save(self) -> bool:

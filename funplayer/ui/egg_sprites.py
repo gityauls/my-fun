@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from PyQt5.QtCore import QRect
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtGui import QColor, QImage, QPainter
 
 GRID = 64
 INK = "#2A2238"
@@ -319,6 +320,28 @@ def draw_ufo(p: QPainter, t: float, with_cover: bool = True) -> None:
         r(p, TILES[(i + f) % 5], x - 17 + i * 7, y + 4, 2, 2)
 
 
+# ---- 문워크 ----
+
+MOON_STRIP = Path(__file__).resolve().parent.parent / "assets" / "eggs" / "moonwalk.png"
+MOON_FRAMES = 29
+MOON_FPS = 28
+_moon_strip: QImage | None = None
+
+
+def moon_source(t: float, strip_width: int, strip_height: int) -> QRect:
+    w = strip_width // MOON_FRAMES
+    return QRect(int(t * MOON_FPS) % MOON_FRAMES * w, 0, w, strip_height)
+
+
+def draw_moon(p: QPainter, t: float, target: QRect = QRect(0, 0, GRID, GRID)) -> None:
+    """이 장면만 찍은 그림이 아니라 움짤의 프레임 줄이다. 흔들리지 않게 프레임마다 맞춰 두었다."""
+    global _moon_strip
+    if _moon_strip is None:
+        _moon_strip = QImage(str(MOON_STRIP))
+    if not _moon_strip.isNull():
+        p.drawImage(target, _moon_strip, moon_source(t, _moon_strip.width(), _moon_strip.height()))
+
+
 @dataclass(frozen=True)
 class Scene:
     draw: Callable[[QPainter, float], None]
@@ -332,4 +355,5 @@ SCENES = {
     "fuzz": Scene(draw_fuzz, 4.0, "GROOVE TIME!"),
     "ham": Scene(draw_ham, 4.0, "한 곡만 끝까지 들어봐!!", 1.5),
     "ufo": Scene(draw_ufo, 5.0, "음악 데이터 절취 중...", 1.0),
+    "moon": Scene(draw_moon, 6.0, "오늘 댄스 5곡째! 좀 치는데?", 1.0),
 }
